@@ -19,7 +19,6 @@ func TestFormatRejectsUnimplemented(t *testing.T) {
 		{"wrap mode", mdreflow.Options{Mode: mdreflow.ModeWrap}},
 		{"max width", mdreflow.Options{MaxWidth: 80}},
 		{"typography", mdreflow.Options{Typography: mdreflow.SmartQuotes}},
-		{"strip sentence terminal breaks", mdreflow.Options{StripSentenceTerminalBreaks: true}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -71,6 +70,29 @@ func TestFormatReader(t *testing.T) {
 	}
 	if out.String() != "One.\nTwo.\n" {
 		t.Errorf("FormatReader wrote %q, want %q", out.String(), "One.\nTwo.\n")
+	}
+}
+
+// TestStripSentenceTerminalBreaks checks that the option removes a
+// trailing double-space hard break only when it immediately follows
+// sentence-terminal punctuation, and leaves other hard breaks alone.
+func TestStripSentenceTerminalBreaks(t *testing.T) {
+	// Paragraph 1: the double-space break directly after "here." (sentence-
+	// terminal punctuation) is accidental and gets stripped; the ordinary
+	// segmenter still finds and re-inserts the same sentence boundary, just
+	// without a hard-break marker.
+	//
+	// Paragraph 2: the double-space break after "word" (no terminal
+	// punctuation) is a deliberate hard break and is kept, normalized to
+	// the default <br> style.
+	src := []byte("First sentence ends here.  \nSecond line continues normally.\n\nEnds with word  \nNext line.\n")
+	got, err := mdreflow.Format(src, mdreflow.Options{StripSentenceTerminalBreaks: true})
+	if err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+	want := "First sentence ends here.\nSecond line continues normally.\n\nEnds with word<br>\nNext line.\n"
+	if string(got) != want {
+		t.Errorf("Format with StripSentenceTerminalBreaks = %q, want %q", got, want)
 	}
 }
 

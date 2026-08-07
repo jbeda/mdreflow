@@ -119,6 +119,38 @@ func TestBreaks(t *testing.T) {
 			text: "Visit example.com for more info.",
 			want: nil,
 		},
+		{
+			// Mined regression class: sentence-ending punctuation inside a
+			// parenthetical aside, itself followed by a genuine sentence
+			// end — pragmatic_segmenter's "parenthesis" golden rule.
+			name: "parenthetical aside with its own terminal punctuation",
+			text: "He said it plainly (there was no doubt about it). Nobody argued.",
+			want: []Span{{49, 50}},
+		},
+		{
+			// Mined regression class: a quotation containing terminal
+			// punctuation, followed by a genuine sentence end outside the
+			// quote — pragmatic_segmenter's "quotation" golden rule.
+			name: "quotation containing its own period",
+			text: `She asked, "Is this really it?" He nodded and left.`,
+			want: []Span{{31, 32}},
+		},
+		{
+			// Mined regression class: multi-part initials (a name written
+			// as consecutive single-letter abbreviations) must not each be
+			// treated as sentence ends.
+			name: "multi-part initials in a name",
+			text: "J. R. R. Tolkien wrote it. Everyone agreed.",
+			want: []Span{{26, 27}},
+		},
+		{
+			// Mined regression class: an ordinal/decimal-looking number
+			// mid-sentence must not be confused with a list marker or a
+			// sentence end.
+			name: "decimal number mid sentence not a list marker",
+			text: "The part costs 3.5 dollars. That is the final price.",
+			want: []Span{{27, 28}},
+		},
 	}
 
 	seg := New(nil)

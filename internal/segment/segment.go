@@ -76,7 +76,19 @@ func (s *Segmenter) Breaks(text string) []Span {
 		}
 
 		// Guard: the next character must plausibly start a new sentence.
-		r, _ := utf8.DecodeRuneInString(text[e1:])
+		// A leading backslash escape is skipped first: "\[0]:" reads,
+		// once rendered, as starting with "[" — the backslash itself
+		// disappears — so the *escaped* character is what should decide
+		// this, not the backslash byte. Without this, a sentence-start
+		// candidate mdreflow's own escapeBlockInterrupt inserts (to
+		// defend against a different hazard — see reflow.escapeBlockInterrupt)
+		// stops being recognized as one on a second pass, which is an
+		// idempotency break: found by FuzzFormat on "[0]!  [0]:".
+		next := text[e1:]
+		if len(next) >= 2 && next[0] == '\\' && isASCIIPunctByte(next[1]) {
+			next = next[1:]
+		}
+		r, _ := utf8.DecodeRuneInString(next)
 		if !startsSentence(r) {
 			continue
 		}
@@ -99,6 +111,20 @@ func (s *Segmenter) Breaks(text string) []Span {
 		out = append(out, Span{Start: e0, End: e1})
 	}
 	return out
+}
+
+// isASCIIPunctByte reports whether b is one of CommonMark's escapable
+// ASCII punctuation characters (the set backslash-escaping recognizes).
+func isASCIIPunctByte(b byte) bool {
+	switch {
+	case b >= '!' && b <= '/':
+	case b >= ':' && b <= '@':
+	case b >= '[' && b <= '`':
+	case b >= '{' && b <= '~':
+	default:
+		return false
+	}
+	return true
 }
 
 // startsSentence reports whether r plausibly begins a new sentence:

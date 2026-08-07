@@ -33,7 +33,11 @@ func Format(src []byte, opts Options) ([]byte, error) {
 	}
 
 	doc := gm.New().Parser().Parse(text.NewReader(src))
-	return reflow.Format(src, doc, seg), nil
+	rOpts := reflow.Options{
+		HardBreaks:                  reflow.HardBreakStyle(opts.HardBreaks),
+		StripSentenceTerminalBreaks: opts.StripSentenceTerminalBreaks,
+	}
+	return reflow.Format(src, doc, seg, rOpts), nil
 }
 
 // Check reports whether Format would change src, without writing
@@ -83,9 +87,6 @@ func checkImplemented(opts Options) error {
 	}
 	if opts.Typography != 0 {
 		return errors.New("mdreflow: Typography not implemented (M5)")
-	}
-	if opts.StripSentenceTerminalBreaks {
-		return errors.New("mdreflow: StripSentenceTerminalBreaks not implemented (M2)")
 	}
 	return nil
 }

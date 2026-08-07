@@ -9,10 +9,10 @@
 // parser is used read-only to locate paragraph prose; output is produced
 // by splicing reflowed prose into the verbatim source bytes.
 //
-// M1 status: sentence mode only. ModePara, ModeWrap, MaxWidth, Typography,
-// and StripSentenceTerminalBreaks are declared here per the library's
-// full API but return an error from Format until a later milestone
-// implements them — see each field's doc comment.
+// M2 status: sentence mode only. ModePara, ModeWrap, MaxWidth, and
+// Typography are declared here per the library's full API but return an
+// error from Format until a later milestone implements them — see each
+// field's doc comment.
 package mdreflow
 
 import "github.com/jbeda/mdreflow/internal/segment"
@@ -34,12 +34,9 @@ const (
 )
 
 // HardBreakStyle selects how hard line breaks are normalized when
-// reflowed prose moves them to a new position in the source.
-//
-// M1 does not yet normalize hard-break style (that's M2): the original
-// marker bytes are always preserved verbatim, regardless of this option's
-// value. The type and constants exist now so the field can be added to
-// Options without a later breaking change.
+// reflowed prose moves them to a new position in the source. Every
+// preserved hard break (however it was originally spelled) is rewritten to
+// this style.
 type HardBreakStyle int
 
 const (
@@ -96,14 +93,16 @@ type Options struct {
 	// Not implemented until M5; Format returns an error if non-zero.
 	Typography Typography
 
-	// HardBreaks selects the normalized hard-break style. Not applied
-	// until M2 — see HardBreakStyle's doc comment.
+	// HardBreaks selects the normalized hard-break style every preserved
+	// hard break is rewritten to. Zero value is HardBreakBr.
 	HardBreaks HardBreakStyle
 
 	// StripSentenceTerminalBreaks treats a trailing double-space
 	// immediately after sentence-terminal punctuation as an accidental
-	// hard break and removes it. Not implemented until M2; Format
-	// returns an error if true.
+	// hard break and removes it — a documented, flag-reversible exception
+	// to render preservation. Only that syntax, only that position: a
+	// trailing backslash or <br>, or a double-space anywhere else, is
+	// always respected.
 	StripSentenceTerminalBreaks bool
 
 	// Abbreviations adds to (never replaces) the built-in segmenter's
