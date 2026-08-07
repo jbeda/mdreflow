@@ -1,0 +1,11 @@
+# Session handoff notes — local working context, never committed (see HANDOFF.md)
+HANDOFF.md
+
+# Local agent tooling
+skills-lock.json
+.agents/
+.claude/
+
+# Build output
+/mdreflow
+dist/
