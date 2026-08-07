@@ -113,16 +113,26 @@ existing rules rather than require new machinery:
 | `:::` directives | Docusaurus/remark | skip fence lines; interior prose reflows |
 | Math blocks (`$$`) | GFM, Docusaurus | skip block |
 | Hugo shortcodes (`{{< … >}}`, `{{% … %}}`) | Hugo | skip block / no-break span |
-| GitHub alert first-lines (`> [!NOTE]`) | GFM | line stays intact; rest of quote reflows |
+| GitHub alert first-lines (`> [!NOTE]`) | GFM | marker line is an immovable boundary (it fuses into the quote's paragraph in the AST — see M0 findings); rest of quote reflows |
 | Link reference definitions | CommonMark | skip lines |
 | Hard line breaks | CommonMark | immovable boundary (below) |
 
-**Known risk (spike M0):** goldmark does not parse MDX. JSX blocks and `{}`
-expressions may land in the AST as paragraphs or HTML in ways that would let
-the reflow pass corrupt them. The first implementation task is a spike feeding
-representative MDX/Docusaurus/Hugo files through goldmark and checking where
-their constructs land. Fallback if goldmark misclassifies: a line-scanning
-pre-pass that fences off JSX/shortcode regions before goldmark sees the text.
+**Spike M0 outcome** (details and evidence in
+[m0-spike-findings.md](m0-spike-findings.md)): goldmark does not parse MDX, and
+many dialect constructs do land as `Paragraph` nodes — but a general
+line-scanning pre-pass is *not* needed. The block-map derivation step grows
+content-pattern rules instead: (1) skip whole `Paragraph` nodes whose text
+matches a marker regex (`:::` fences, block shortcodes, block `{expr}`, `+++`
+TOML front matter); (2) within a `Paragraph`, treat any `Lines()` segment
+matching a marker regex as an immovable boundary — this handles fences fused
+with prose by lazy continuation (no-blank-line `:::`, `> [!NOTE]` markers,
+paired shortcodes, `$$` math); (3) adopt `goldmark-meta` for YAML front
+matter; (4) inline `{expr}`/shortcodes/math are invisible to the AST (plain
+`Text`) and need the already-planned regex scan for no-break spans. The one
+construct post-parse rules cannot recover is a multi-line JSX opening tag
+whose closing `>` sits alone on a line (goldmark consumes it as an empty
+blockquote) — documented as a known limitation, revisit with a narrow raw-line
+fence if it shows up in real content.
 
 ### Sentence segmentation
 
