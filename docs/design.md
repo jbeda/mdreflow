@@ -386,7 +386,12 @@ Small on purpose; additions require amending this doc.
   goldmark-meta drags in `yaml.v2` as an indirect dep — worth replacing with a
   ~40-line front-matter block parser of our own, since mdreflow never consumes
   the parsed metadata, only needs the block out of the AST.)
-- A gitignore matcher/walker (candidates above) — CLI layer only
+- `github.com/boyter/gocodewalker` — CLI layer only; used solely for its
+  vendored `go-gitignore` subpackage (nested-`.gitignore` semantics). The walk
+  itself is hand-rolled `filepath.WalkDir` (M4 decision; sabhiram/go-gitignore
+  was evaluated and dropped — no nested-file support).
+- `github.com/pmezard/go-difflib` — CLI layer only, unified diffs for
+  `--diff` (M4 addition; hand-rolling Myers diff wasn't worth the risk).
 - Stdlib `flag` for the CLI (single command; cobra buys weight, not function;
   the cost is shell completions, acceptable for now)
 

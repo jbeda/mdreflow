@@ -1,0 +1,135 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"io"
+)
+
+// printUsage is mdreflow's --help output. It is a first-class deliverable
+// (docs/design.md): an unattended agent should be able to use the tool
+// correctly from this text alone, without a README — complete flag
+// docs, the exit-code contract, a config-file summary, and worked
+// examples.
+func printUsage(w io.Writer, fs *flag.FlagSet) {
+	fmt.Fprint(w, `mdreflow reflows Markdown prose: it changes where lines break inside
+paragraph text and leaves everything else in the document untouched (no
+heading, list, table, or escaping changes). Its home mode is
+sentence-per-line (one sentence per source line, aka semantic line
+breaks); see https://sembr.org/.
+
+Usage:
+
+  mdreflow [flags] [path ...]
+  mdreflow [flags] < in.md > out.md
+
+Paths:
+
+  With one or more path arguments, mdreflow formats in place: each file
+  argument is formatted directly, and each directory argument is walked
+  recursively for Markdown files (.md, .mdx, .markdown). Excludes (see
+  below) apply to files discovered by a directory walk (skipped
+  silently) AND to files named explicitly on the command line (skipped
+  loudly, with an exit-3 refusal, unless --force is given).
+
+  With no path arguments, or a single "-", mdreflow reads Markdown from
+  stdin and writes the formatted result to stdout: a pipe/editor-filter
+  mode with no in-place writing, no excludes, and no config-file
+  discovery from a target file (config is discovered from the current
+  directory instead).
+
+Flags:
+
+`)
+	// PrintDefaults writes to fs.Output(), not w; retarget it so the whole
+	// help text lands on one stream (stdout for --help), then restore.
+	prev := fs.Output()
+	fs.SetOutput(w)
+	fs.PrintDefaults()
+	fs.SetOutput(prev)
+	fmt.Fprint(w, `
+Exit codes (a contract other tools and agents can branch on):
+
+  0  success — nothing needed to change (or, with --check/--diff,
+     nothing would change)
+  1  --check or --diff found at least one file that would be
+     reformatted; nothing was written
+  2  usage or config error (bad flags, bad flag combination, an
+     unreadable or invalid path argument, a .mdreflow.yaml that fails
+     to parse or has an unknown key, an internal formatting error).
+     Aborts the run immediately — no files after the failing one are
+     processed.
+  3  at least one input was refused: excluded (gitignore, config
+     exclude:, or a built-in .git/node_modules/vendor exclude) without
+     --force, or not recognized as Markdown (wrong extension, binary
+     content, or invalid UTF-8) without --force. Other targets in the
+     same run are still processed; a refusal only raises the run's
+     final exit code.
+
+  When more than one of these would apply in a single run, the most
+  severe wins: 2 > 3 > 1 > 0. In practice this means a config/usage
+  error stops everything immediately, while a per-file refusal among
+  several files still lets the rest of the batch be checked or
+  formatted before the run reports exit 3.
+
+Configuration (.mdreflow.yaml):
+
+  Discovered by walking upward from each target file's directory (from
+  the current directory for stdin), or read directly with --config.
+  Precedence is flags > config file > built-in defaults; a flag
+  explicitly given on the command line wins even if its value equals
+  the default. Unknown keys are a loud error (exit 2) rather than a
+  silent no-op — a typo'd key should not be ignored.
+
+    mode: sentence        # sentence | para | wrap
+    max-width: 0
+    hard-breaks: br        # br | spaces | backslash
+    abbreviations:          # additions to the built-in list
+      - "et al."
+    exclude:                # gitignore syntax, matched like a .gitignore
+      - "CHANGELOG.md"
+      - "generated/**"
+
+  typography: is a recognized key (reserved for smart quotes/ellipses)
+  but not implemented yet — a non-empty typography: list is a config
+  error (exit 2). There is no --smart-quotes/--ellipses flag for the
+  same reason: this build has nothing to wire them to.
+
+Excludes:
+
+  Checked in this order, first match wins: the built-in always-excludes
+  .git/, node_modules/, vendor/, then the repository's .gitignore files
+  (nested ones included; disable with --no-gitignore), then the config
+  file's exclude: patterns (gitignore syntax). A directory walk skips
+  excluded files and directories silently. A file named explicitly on
+  the command line is instead refused loudly: "<path>: skipped
+  (excluded by <gitignore|config|built-in>)", exit 3, unless --force.
+
+Examples:
+
+  Format a file in place:
+    mdreflow docs/README.md
+
+  Format everything in a directory tree in place:
+    mdreflow docs/
+
+  Pipe mode, e.g. an editor "filter selection through command" binding
+  (never redirect a file onto itself — the shell truncates it before
+  mdreflow reads it; use in-place mode for that):
+    mdreflow < draft.md > formatted.md
+
+  CI check that fails the build if anything needs reformatting:
+    mdreflow --check docs/ || exit 1
+
+  See what would change without writing anything:
+    mdreflow --diff README.md
+
+  An agent formatting one file and capturing the result without
+  touching disk (e.g. to review before committing):
+    mdreflow --stdout notes.md > /tmp/formatted.md
+
+  Force-format a file that excludes would otherwise refuse (e.g. a
+  generated file explicitly opted back in for one run):
+    mdreflow --force generated/CHANGELOG.md
+`)
+}

@@ -43,8 +43,8 @@ func TestRunRejectsUnknownMode(t *testing.T) {
 	if code != 2 {
 		t.Errorf("run(--mode=bogus) exited %d, want 2", code)
 	}
-	if !strings.Contains(errOut.String(), "unsupported --mode") {
-		t.Errorf("stderr = %q, want it to mention unsupported --mode", errOut.String())
+	if !strings.Contains(errOut.String(), "--mode") || !strings.Contains(errOut.String(), "unsupported mode") {
+		t.Errorf("stderr = %q, want it to mention --mode and unsupported mode", errOut.String())
 	}
 	if out.Len() != 0 {
 		t.Errorf("stdout = %q, want empty on error", out.String())
