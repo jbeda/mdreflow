@@ -1,0 +1,4 @@
+# mdreflow's own Markdown is sentence-per-line formatted with mdreflow.
+# Golden fixtures and fuzz seeds are byte-exact test data, never reformatted.
+exclude:
+  - "testdata/**"

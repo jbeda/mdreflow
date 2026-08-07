@@ -1,12 +1,12 @@
 # mdreflow design
 
-*2026-08-07. Status: pre-implementation. This is a living document: design changes land here first, then in code.*
+*2026-08-07.
+Status: M0–M4 implemented (all modes, full skip-list, CLI); M5 (typography, release packaging) remains.
+This is a living document: design changes land here first, then in code.*
 
-`mdreflow` is a Go library and CLI that reflows Markdown prose. Its home mode is
-sentence-per-line ([semantic line breaks](https://sembr.org/)), with
-paragraph-per-line and hard-wrap modes sharing the same pipeline. It is a
-*reflow* tool, not a formatter: it changes where lines break inside paragraph
-prose and touches nothing else.
+`mdreflow` is a Go library and CLI that reflows Markdown prose.
+Its home mode is sentence-per-line ([semantic line breaks](https://sembr.org/)), with paragraph-per-line and hard-wrap modes sharing the same pipeline.
+It is a *reflow* tool, not a formatter: it changes where lines break inside paragraph prose and touches nothing else.
 
 - Repo/module/package/binary: `github.com/jbeda/mdreflow` / `mdreflow`
 - License: Apache-2.0
@@ -33,30 +33,22 @@ design favors loud, machine-legible behavior (exit codes, refusals, complete
 
 Goals:
 
-- Reflow paragraph prose in three modes: sentence-per-line, paragraph-per-line,
-  hard wrap.
-- Be safe to run unattended: idempotent, render-preserving, loud about anything
-  surprising.
+- Reflow paragraph prose in three modes: sentence-per-line, paragraph-per-line, hard wrap.
+- Be safe to run unattended: idempotent, render-preserving, loud about anything surprising.
 - Work as a Go library first; the CLI is a thin wrapper.
-- Handle real-world dialect content (GFM, MDX/Docusaurus, Hugo) by skipping it,
-  not by parsing it.
+- Handle real-world dialect content (GFM, MDX/Docusaurus, Hugo) by skipping it, not by parsing it.
 
-Non-goals — these are hard principles, and changing them means amending this
-document first:
+Non-goals — these are hard principles, and changing them means amending this document first:
 
-- **No normalization.** mdreflow never rewrites block structure: no heading
-  style changes, list marker unification, table alignment, reference-link
-  consolidation, or escaping changes. Tools like rumdl do that tier well and
-  compose cleanly with mdreflow because the two touch disjoint constructs.
+- **No normalization.** mdreflow never rewrites block structure: no heading style changes, list marker unification, table alignment, reference-link consolidation, or escaping changes.
+  Tools like rumdl do that tier well and compose cleanly with mdreflow because the two touch disjoint constructs.
 - **No Markdown renderer.** The Markdown parser is used read-only to locate
   prose; output is produced by splicing reflowed prose into verbatim source
   bytes. This is what keeps the correctness surface small; the multi-year bug
   tails in normalizing formatters (Prettier's proseWrap, mdformat's escaping
   engine) live on the other side of this line.
 
-Explicitly deferred or unlikely (see [Future directions](#future-directions)):
-formatting Markdown embedded in YAML/JSON values, per-file options in front
-matter, a `--dialect` selector, content-based file-type sniffing.
+Explicitly deferred or unlikely (see [Future directions](#future-directions)): formatting Markdown embedded in YAML/JSON values, per-file options in front matter, a `--dialect` selector, content-based file-type sniffing.
 
 ## Modes
 
@@ -66,9 +58,8 @@ matter, a `--dialect` selector, content-based file-type sniffing.
 | `para` | Join each paragraph to a single line. |
 | `wrap` | Classic hard wrap at `--max-width` (default 80), breaking at word boundaries only. |
 
-All modes are one pipeline — join lines, compute break points, emit — differing
-only in the break-point strategy. Continuation lines inside list items and
-blockquotes are re-indented to match their container.
+All modes are one pipeline — join lines, compute break points, emit — differing only in the break-point strategy.
+Continuation lines inside list items and blockquotes are re-indented to match their container.
 
 ## Architecture
 
@@ -87,12 +78,9 @@ source bytes
 for recognition purposes) parses the document; its AST carries byte offsets
 into the source, which is all we need. From the AST we derive:
 
-- **Paragraph ranges**: the blocks eligible for reflow, with their container
-  context (list item, blockquote) for continuation indentation.
-- **No-break inline spans** within paragraphs: inline code, links and link
-  destinations, autolinks, images, inline math, footnote references, inline
-  HTML/JSX. Break points never land inside these; a span longer than any width
-  limit simply overflows.
+- **Paragraph ranges**: the blocks eligible for reflow, with their container context (list item, blockquote) for continuation indentation.
+- **No-break inline spans** within paragraphs: inline code, links and link destinations, autolinks, images, inline math, footnote references, inline HTML/JSX.
+  Break points never land inside these; a span longer than any width limit simply overflows.
 - **Skip ranges**: everything below.
 
 ### Dialect handling: the skip-list
@@ -155,21 +143,17 @@ type Segmenter interface {
 }
 ```
 
-The built-in segmenter ships with a solid default abbreviation list;
-`Options.Abbreviations` (and the config file) *add* to it. Wholesale
-replacement means providing your own `Segmenter`.
+The built-in segmenter ships with a solid default abbreviation list; `Options.Abbreviations` (and the config file) *add* to it.
+Wholesale replacement means providing your own `Segmenter`.
 
 ### Whitespace and hard breaks
 
 The formatter, not the segmenter, owns whitespace at boundaries:
 
-- At a sentence break, the entire inter-sentence whitespace run is consumed and
-  replaced by the newline. mdreflow never emits trailing whitespace — which
-  matters because trailing double-space is Markdown's hard-break syntax.
+- At a sentence break, the entire inter-sentence whitespace run is consumed and replaced by the newline. mdreflow never emits trailing whitespace — which matters because trailing double-space is Markdown's hard-break syntax.
 - On joins, inter-sentence whitespace normalizes to a single space (required
   for idempotency; also makes two-spaces-after-period typing invisible).
-- **Hard line breaks** (trailing double-space, trailing backslash, `<br>`)
-  carry rendered meaning and are immovable: a hard-break line never joins.
+- **Hard line breaks** (trailing double-space, trailing backslash, `<br>`) carry rendered meaning and are immovable: a hard-break line never joins.
   Joining is not "concatenate with spaces."
 
 Hard breaks are preserved but *normalized* to a configurable style:
@@ -183,14 +167,10 @@ const (
 )
 ```
 
-`<br>` is deliberately the default: it makes the invisible visible. An
-accidental double-space hard break survives, but shows up loudly in the diff as
-`<br>`, prompting the author to remove it or keep it knowingly. For authors who
-habitually type two spaces after periods, the opt-in
-`StripSentenceTerminalBreaks` option treats a trailing double-space
-*immediately after sentence-terminal punctuation* as accidental and removes it
-(a documented, flag-reversible exception to render preservation). Hard breaks
-anywhere else are always respected.
+`<br>` is deliberately the default: it makes the invisible visible.
+An accidental double-space hard break survives, but shows up loudly in the diff as `<br>`, prompting the author to remove it or keep it knowingly.
+For authors who habitually type two spaces after periods, the opt-in `StripSentenceTerminalBreaks` option treats a trailing double-space *immediately after sentence-terminal punctuation* as accidental and removes it (a documented, flag-reversible exception to render preservation).
+Hard breaks anywhere else are always respected.
 
 ### Typography (opt-in, off by default)
 
@@ -211,19 +191,15 @@ is its purpose).
 
 ## Guarantees
 
-Stated as testable promises, enforced by the harness in
-[Testing](#testing):
+Stated as testable promises, enforced by the harness in [Testing](#testing):
 
-1. **Idempotency.** `Format(Format(x)) == Format(x)` for all inputs and option
-   sets.
+1. **Idempotency.** `Format(Format(x)) == Format(x)` for all inputs and option sets.
 2. **Render preservation.** Reflow does not change the rendered document,
    verified by comparing goldmark HTML output before and after. Documented
    exceptions: typography flags, hard-break style normalization (renders the
    same `<br>`, different source), and `StripSentenceTerminalBreaks`.
-3. **Byte-identical pass-through.** Everything outside reflowed paragraph
-   prose is emitted byte-for-byte.
-4. **Check mode.** `--check` and `--diff` report unformatted files without
-   writing, with a stable exit-code contract for CI and agents.
+3. **Byte-identical pass-through.** Everything outside reflowed paragraph prose is emitted byte-for-byte.
+4. **Check mode.** `--check` and `--diff` report unformatted files without writing, with a stable exit-code contract for CI and agents.
 
 ## Library API
 
@@ -263,13 +239,10 @@ func FormatReader(dst io.Writer, src io.Reader, opts Options) error
 func DefaultAbbreviations() []string
 ```
 
-Every zero value is the default (`Options{}` is valid and sensible): zero
-`Mode` is sentence mode, zero `MaxWidth` is unbounded, zero `Typography` is
-off, zero `HardBreakStyle` is `<br>`. No constructor needed.
+Every zero value is the default (`Options{}` is valid and sensible): zero `Mode` is sentence mode, zero `MaxWidth` is unbounded, zero `Typography` is off, zero `HardBreakStyle` is `<br>`.
+No constructor needed.
 
-`[]byte` (not `string`, not streams) because goldmark's API and AST offsets
-are byte-based, `os.ReadFile` hands you bytes, and a string API would force
-copies both directions for no gain.
+`[]byte` (not `string`, not streams) because goldmark's API and AST offsets are byte-based, `os.ReadFile` hands you bytes, and a string API would force copies both directions for no gain.
 
 ## CLI
 
@@ -277,28 +250,20 @@ copies both directions for no gain.
 mdreflow [flags] [path ...]
 ```
 
-- **Paths**: files and/or directories; directories are walked recursively for
-  Markdown extensions (`.md`, `.mdx`, `.markdown`). Formatting is **in-place**
-  when paths are given — this is a batch tool for pre-commit hooks and agents,
-  where in-place is what you mean.
-- **stdin/stdout**: no paths (or `-`) reads stdin and writes stdout. This is
-  the pipe mode, and it gives any editor with a "filter through command"
-  binding format-on-demand without an extension.
-- **Flags**: `--mode`, `--max-width`, `--check`, `--diff`, `--stdout`,
-  `--force`, `--config`, `--no-gitignore`, plus flags mirroring the typography
-  and hard-break options. Stdlib `flag`; the surface is one command.
-- **Exit codes** (a contract, since agents branch on them): `0` success/clean;
-  `1` would-reformat (`--check`/`--diff` only); `2` usage or config error; `3`
-  refused input (not Markdown, or excluded without `--force`).
-- **`--help` is a first-class deliverable**: complete flag docs, the exit-code
-  contract, and examples in the help text itself, so an unattended agent can
-  self-serve without a README.
+- **Paths**: files and/or directories; directories are walked recursively for Markdown extensions (`.md`, `.mdx`, `.markdown`).
+  Formatting is **in-place** when paths are given — this is a batch tool for pre-commit hooks and agents, where in-place is what you mean.
+- **stdin/stdout**: no paths (or `-`) reads stdin and writes stdout.
+  This is the pipe mode, and it gives any editor with a "filter through command" binding format-on-demand without an extension.
+- **Flags**: `--mode`, `--max-width`, `--check`, `--diff`, `--stdout`, `--force`, `--config`, `--no-gitignore`, plus flags mirroring the typography and hard-break options.
+  Stdlib `flag`; the surface is one command.
+- **Exit codes** (a contract, since agents branch on them): `0` success/clean; `1` would-reformat (`--check`/`--diff` only); `2` usage or config error; `3` refused input (not Markdown, or excluded without `--force`).
+- **`--help` is a first-class deliverable**: complete flag docs, the exit-code contract, and examples in the help text itself, so an unattended agent can self-serve without a README.
 
 ### Configuration
 
-`.mdreflow.yaml`, discovered upward from each target file. Defaults should be
-good enough that most repos need no file. Precedence: flags > config file >
-built-in defaults.
+`.mdreflow.yaml`, discovered upward from each target file.
+Defaults should be good enough that most repos need no file.
+Precedence: flags > config file > built-in defaults.
 
 ```yaml
 mode: sentence        # sentence | para | wrap
@@ -314,14 +279,11 @@ exclude:              # gitignore syntax
 
 ### Excludes
 
-- The repo's `.gitignore` is respected by default (`--no-gitignore` disables) —
-  node_modules and build output are almost always already covered.
-- The config `exclude:` list (gitignore syntax) covers tracked-but-generated
-  files.
+- The repo's `.gitignore` is respected by default (`--no-gitignore` disables) — node_modules and build output are almost always already covered.
+- The config `exclude:` list (gitignore syntax) covers tracked-but-generated files.
 - Built-in always-excludes underneath: `.git/`, `node_modules/`, `vendor/`.
-- **Excludes apply even to explicitly named files** — the flowmark #43 failure,
-  designed out. A skipped explicit path prints `skipped (excluded by …)`;
-  `--force` overrides.
+- **Excludes apply even to explicitly named files** — the flowmark #43 failure, designed out.
+  A skipped explicit path prints `skipped (excluded by …)`; `--force` overrides.
 
 Candidate libraries (implementation-time decision; the behavior is the
 commitment, the library is a detail):
@@ -334,11 +296,10 @@ suite compares our matching against `git check-ignore` on a synthetic tree.
 
 ### Non-Markdown input detection
 
-The observed failure mode is an unattended agent running the formatter on a
-YAML or JSON file. V1 defense, deliberately cheap:
+The observed failure mode is an unattended agent running the formatter on a YAML or JSON file.
+V1 defense, deliberately cheap:
 
-- **Extension check** on explicitly named files: known-Markdown extensions
-  pass; known-other extensions (`.yaml`, `.json`, `.go`, …) are refused.
+- **Extension check** on explicitly named files: known-Markdown extensions pass; known-other extensions (`.yaml`, `.json`, `.go`, …) are refused.
 - **Binary sniff**: NUL bytes or invalid UTF-8 in the first 8&nbsp;KB → refused.
 
 Refusal is exit code `3` with a one-line explanation and no write; `--force`
@@ -352,28 +313,18 @@ actually seen.
 
 ## Testing
 
-The wrapping logic is heuristic; a deep test corpus is the only durable defense
-against regressions, and the guarantees above are only as real as this harness.
+The wrapping logic is heuristic; a deep test corpus is the only durable defense against regressions, and the guarantees above are only as real as this harness.
 
-1. **Golden-file fixtures** (`testdata/`): input → expected output pairs
-   covering every skip-list construct, every mode, every option. Fixture
-   content is synthetic (lorem-ipsum-style or purpose-written), reproducing
-   *structures* observed in real repos without lifting content.
-2. **Property tests over the corpus**: idempotency and render preservation
-   (goldmark HTML before == after, documented exceptions aside) run
-   automatically over every fixture — adding a fixture adds the property
-   checks for free.
-3. **Mined regression cases**: bugs from flowmark's, mdslw's, and rumdl's issue
-   trackers re-authored (not copied) as fixtures — e.g. flowmark #68's
-   `` `token`. `` boundary misses.
+1. **Golden-file fixtures** (`testdata/`): input → expected output pairs covering every skip-list construct, every mode, every option.
+   Fixture content is synthetic (lorem-ipsum-style or purpose-written), reproducing *structures* observed in real repos without lifting content.
+2. **Property tests over the corpus**: idempotency and render preservation (goldmark HTML before == after, documented exceptions aside) run automatically over every fixture — adding a fixture adds the property checks for free.
+3. **Mined regression cases**: bugs from flowmark's, mdslw's, and rumdl's issue trackers re-authored (not copied) as fixtures — e.g. flowmark #68's `` `token`. `` boundary misses.
 4. **Segmenter suite**: the sentence splitter tested standalone against a
    Golden-Rules-style case list (in the style of
    [pragmatic_segmenter](https://github.com/diasks2/pragmatic_segmenter)'s
    golden rules, cases our own).
-5. **Exclude parity**: our gitignore matching vs. `git check-ignore` output on
-   a synthetic tree.
-6. **Fuzzing**: Go native fuzzing on `Format` with crash, idempotency, and
-   render preservation as oracles.
+5. **Exclude parity**: our gitignore matching vs. `git check-ignore` output on a synthetic tree.
+6. **Fuzzing**: Go native fuzzing on `Format` with crash, idempotency, and render preservation as oracles.
 
 ## Dependencies
 
@@ -390,56 +341,40 @@ Small on purpose; additions require amending this doc.
   vendored `go-gitignore` subpackage (nested-`.gitignore` semantics). The walk
   itself is hand-rolled `filepath.WalkDir` (M4 decision; sabhiram/go-gitignore
   was evaluated and dropped — no nested-file support).
-- `github.com/pmezard/go-difflib` — CLI layer only, unified diffs for
-  `--diff` (M4 addition; hand-rolling Myers diff wasn't worth the risk).
+- `github.com/pmezard/go-difflib` — CLI layer only, unified diffs for `--diff` (M4 addition; hand-rolling Myers diff wasn't worth the risk).
 - Stdlib `flag` for the CLI (single command; cobra buys weight, not function;
   the cost is shell completions, acceptable for now)
 
 ## Milestones
 
-Vertical slice first — a thin end-to-end path that is immediately usable and
-carries the test harness from day one — then broaden.
+Vertical slice first — a thin end-to-end path that is immediately usable and carries the test harness from day one — then broaden.
 
-- **M0 — spike**: goldmark vs. MDX/Docusaurus/Hugo input. Where do JSX blocks,
-  `{}` expressions, `:::` directives, and shortcodes land in the AST? Decides
-  whether a fence-scanning pre-pass is needed. This is the load-bearing
-  unknown; it runs before any pipeline code hardens.
-- **M1 — vertical slice**: `mdreflow < in.md > out.md`. Sentence mode only;
-  pipeline (parse → paragraph map → join → segment → emit); minimal skip-list
-  (code fences, front matter); built-in segmenter with default abbreviations;
-  golden harness with idempotency + render-preservation properties. Usable via
-  pipes and editor filters from this point on.
-- **M2 — correctness breadth**: full skip-list, no-break inline spans,
-  hard-break styles and whitespace rules, list/blockquote continuation
-  indentation, mined regression fixtures, fuzzing.
+- **M0 — spike**: goldmark vs. MDX/Docusaurus/Hugo input.
+  Where do JSX blocks, `{}` expressions, `:::` directives, and shortcodes land in the AST?
+  Decides whether a fence-scanning pre-pass is needed.
+  This is the load-bearing unknown; it runs before any pipeline code hardens.
+- **M1 — vertical slice**: `mdreflow < in.md > out.md`.
+  Sentence mode only; pipeline (parse → paragraph map → join → segment → emit); minimal skip-list (code fences, front matter); built-in segmenter with default abbreviations; golden harness with idempotency + render-preservation properties.
+  Usable via pipes and editor filters from this point on.
+- **M2 — correctness breadth**: full skip-list, no-break inline spans, hard-break styles and whitespace rules, list/blockquote continuation indentation, mined regression fixtures, fuzzing.
 - **M3 — modes**: `para`, `wrap`, `--max-width` secondary clause breaks.
-- **M4 — CLI proper**: path/directory handling, in-place writes, config
-  discovery, excludes + gitignore, `--check`/`--diff`, input detection, exit
-  codes, agent-grade `--help`.
-- **M5 — ship**: typography flags, goreleaser binaries,
-  `.pre-commit-hooks.yaml`, README and docs polish.
+- **M4 — CLI proper**: path/directory handling, in-place writes, config discovery, excludes + gitignore, `--check`/`--diff`, input detection, exit codes, agent-grade `--help`.
+- **M5 — ship**: typography flags, goreleaser binaries, `.pre-commit-hooks.yaml`, README and docs polish.
 
-Versioning: v0.x until the library API has survived real use; v1.0.0 is an
-API-stability promise (Go module semantics make it binding). CI: GitHub
-Actions — test, vet, golangci-lint on push; goreleaser on tags.
+Versioning: v0.x until the library API has survived real use; v1.0.0 is an API-stability promise (Go module semantics make it binding).
+CI: GitHub Actions — test, vet, golangci-lint on push; goreleaser on tags.
 
 ## Future directions
 
 Recorded so the design doesn't preclude them; none are commitments.
 
-- **Markdown embedded in YAML/JSON values** — the original wishlist item, now
-  judged a large scope expansion of uncertain value. The hard part is knowing
-  *which* fields are Markdown; the shape would be caller-supplied yq/jq-style
-  path selectors plus comment-preserving YAML node surgery, with mdreflow
-  formatting the extracted strings. The bytes-in/bytes-out library API is the
-  only accommodation made now: it keeps this buildable from outside.
+- **Markdown embedded in YAML/JSON values** — the original wishlist item, now judged a large scope expansion of uncertain value.
+  The hard part is knowing *which* fields are Markdown; the shape would be caller-supplied yq/jq-style path selectors plus comment-preserving YAML node surgery, with mdreflow formatting the extracted strings.
+  The bytes-in/bytes-out library API is the only accommodation made now: it keeps this buildable from outside.
 - **Per-file options in front matter** — a reserved key (e.g.
   `mdreflow: {mode: para}`) slotting into the precedence chain as flags >
   front matter > config > defaults.
 - **`--dialect` flag** — subsets of the tagged skip-list rules.
 - **Content sniffing for unknown extensions** — gated on observed need.
-- **GitHub Action, Homebrew tap, editor extensions** — distribution beyond
-  goreleaser + pre-commit.
-- **Alternative segmenters** — NLP (e.g. jdkato/prose) or model-based
-  splitting behind the `Segmenter` interface, if the regex approach's ceiling
-  is ever actually hit.
+- **GitHub Action, Homebrew tap, editor extensions** — distribution beyond goreleaser + pre-commit.
+- **Alternative segmenters** — NLP (e.g. jdkato/prose) or model-based splitting behind the `Segmenter` interface, if the regex approach's ceiling is ever actually hit.

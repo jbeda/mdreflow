@@ -2,9 +2,7 @@
 
 *2026-08-07.*
 
-Answers the [design.md](design.md) skip-list question: where do MDX/Docusaurus/Hugo
-constructs land in goldmark's AST, and does any of them land as a `Paragraph`
-node (reflow's corruption risk) instead of `HTMLBlock`/other pass-through kinds?
+Answers the [design.md](design.md) skip-list question: where do MDX/Docusaurus/Hugo constructs land in goldmark's AST, and does any of them land as a `Paragraph` node (reflow's corruption risk) instead of `HTMLBlock`/other pass-through kinds?
 
 ## Method
 
@@ -54,9 +52,7 @@ file, not this doc.
 }
 ```
 
-No distinguishing marker; a naive sentence-per-line pass would treat `import
-Tabs from '@theme/Tabs';` as a sentence and could re-break it at the comma-free
-"boundary," or merge it with the next import line.
+No distinguishing marker; a naive sentence-per-line pass would treat `import Tabs from '@theme/Tabs';` as a sentence and could re-break it at the comma-free "boundary," or merge it with the next import line.
 
 ### MDX JSX block — clean when the tag closes on one line
 
@@ -124,8 +120,7 @@ With blank lines around the body (`:::note` / blank / prose / blank / `:::`):
 #96 Paragraph { line[153:156] = ":::" }
 ```
 
-Three clean, separate `Paragraph` nodes — the fence lines are trivially
-detectable by content (`^:::`) and each is its own whole node.
+Three clean, separate `Paragraph` nodes — the fence lines are trivially detectable by content (`^:::`) and each is its own whole node.
 
 Without blank lines (`:::tip[Custom Title]` directly against body directly
 against closing `:::`):
@@ -151,10 +146,7 @@ Worst case observed (`10-edge-cases.md`, fence immediately touching prose on
   line[412:487] = "Prose immediately after a closing fence..."
 }
 ```
-Here even the prose *after* the closing fence gets swallowed into the same
-node as the fence and the directive's interior prose — ordinary CommonMark
-lazy-paragraph-continuation, since nothing about `:::` is block-structural to
-goldmark.
+Here even the prose *after* the closing fence gets swallowed into the same node as the fence and the directive's interior prose — ordinary CommonMark lazy-paragraph-continuation, since nothing about `:::` is block-structural to goldmark.
 
 ### Front matter
 
@@ -167,8 +159,7 @@ YAML, plain goldmark+GFM — decomposes into unrelated blocks:
 #139 ThematicBreak { }
 ```
 
-`description: A synthetic sample used for the M0 spike probe.` is plain
-paragraph text — a reflow pass would sentence-split or rewrap a YAML value.
+`description: A synthetic sample used for the M0 spike probe.` is plain paragraph text — a reflow pass would sentence-split or rewrap a YAML value.
 
 YAML with `goldmark-meta` (`github.com/yuin/goldmark-meta v1.1.0`):
 
@@ -178,8 +169,7 @@ YAML with `goldmark-meta` (`github.com/yuin/goldmark-meta v1.1.0`):
 Meta: map[string]interface {}{"description":"...", "tags":[...], "title":"Sample Doc"}
 ```
 
-The front matter block is fully removed from the AST and parsed separately —
-no corruption risk, confirmed by direct test.
+The front matter block is fully removed from the AST and parsed separately — no corruption risk, confirmed by direct test.
 
 TOML (`+++`) — `goldmark-meta` does not trigger on it (its `Trigger()` is
 `-`, and the linked YAML unmarshal silently no-ops on TOML content):
@@ -193,8 +183,7 @@ TOML (`+++`) — `goldmark-meta` does not trigger on it (its `Trigger()` is
   line[111:114] = "+++"
 }
 ```
-Confirmed with the metaprobe run: `Meta: map[string]interface {}(nil)` for
-the TOML file — the whole block is one giant reflow-eligible `Paragraph`.
+Confirmed with the metaprobe run: `Meta: map[string]interface {}(nil)` for the TOML file — the whole block is one giant reflow-eligible `Paragraph`.
 
 ### Hugo shortcodes
 
@@ -213,8 +202,7 @@ Paired, no blank lines — same lazy-continuation merge as `:::`:
 }
 ```
 
-Inline, mid-sentence — plain `Text`, no marker: `{{< param foo >}}` shows up
-as ordinary text inside `#183 Text { "...like {{< param foo >}} right here" }`.
+Inline, mid-sentence — plain `Text`, no marker: `{{< param foo >}}` shows up as ordinary text inside `#183 Text { "...like {{< param foo >}} right here" }`.
 
 ### GFM math block — merges fence and content
 
@@ -227,17 +215,11 @@ as ordinary text inside `#183 Text { "...like {{< param foo >}} right here" }`.
   line[143:145] = "$$"
 }
 ```
-No math extension is enabled in `extension.GFM`; `$$` has zero special
-meaning to goldmark core, so this is ordinary lazy-continuation paragraph
-merging, identical mechanism to the `:::`/shortcode cases. Inline `$E =
-mc^2$` is likewise plain `Text` with no marker.
+No math extension is enabled in `extension.GFM`; `$$` has zero special meaning to goldmark core, so this is ordinary lazy-continuation paragraph merging, identical mechanism to the `:::`/shortcode cases. Inline `$E = mc^2$` is likewise plain `Text` with no marker.
 
 ### GitHub alert — contradicts design.md's assumption
 
-design.md's skip-list table says: *"line stays intact; rest of quote
-reflows."* The probe shows the marker line and body are **not** separated
-without a dedicated alert extension — goldmark (GFM extension set) has no
-concept of `[!NOTE]`:
+design.md's skip-list table says: *"line stays intact; rest of quote reflows."* The probe shows the marker line and body are **not** separated without a dedicated alert extension — goldmark (GFM extension set) has no concept of `[!NOTE]`:
 
 ```
 #205 Blockquote {
@@ -248,20 +230,16 @@ concept of `[!NOTE]`:
   }
 }
 ```
-One `Paragraph`, three `Lines()`. This needs the same line-boundary handling
-as the no-blank-line `:::` case, not the clean node-level skip design.md
-implies.
+One `Paragraph`, three `Lines()`.
+This needs the same line-boundary handling as the no-blank-line `:::` case, not the clean node-level skip design.md implies.
 
 ### Tables and footnotes — safe
 
-Table cell content lands directly as `Text` under `TableCell`, never wrapped
-in `Paragraph`:
+Table cell content lands directly as `Text` under `TableCell`, never wrapped in `Paragraph`:
 ```
 #216 TableCell { line[311:319] = "Column A" #217 Text{"Column"} #218 Text{" A"} }
 ```
-Footnote definition bodies are `Paragraph` — correctly so, since that prose
-*should* reflow; not a corruption case, just confirms the definition text is
-reachable like any other paragraph.
+Footnote definition bodies are `Paragraph` — correctly so, since that prose *should* reflow; not a corruption case, just confirms the definition text is reachable like any other paragraph.
 
 ## Recommendation
 
@@ -292,12 +270,8 @@ source text before goldmark ever sees it:
    rule 1, since the whole node's first line is always `+++` in the sample
    set) or a small custom `parser.BlockParser` modeled on it if pure
    text-sniffing proves fragile in practice.
-4. **Inline no-break spans are invisible to goldmark entirely** — `{expr}`,
-   Hugo inline shortcodes, and inline math never get a marker node; they're
-   plain `Text`. This isn't AST-derivable at all and was already anticipated
-   in design.md's "no-break inline spans" section — confirms that component
-   needs its own regex scan over inline `Text` content, independent of
-   goldmark's classification.
+4. **Inline no-break spans are invisible to goldmark entirely** — `{expr}`, Hugo inline shortcodes, and inline math never get a marker node; they're plain `Text`.
+   This isn't AST-derivable at all and was already anticipated in design.md's "no-break inline spans" section — confirms that component needs its own regex scan over inline `Text` content, independent of goldmark's classification.
 5. **The one case needing a true pre-parse workaround**: multi-line JSX
    opening tags whose closing `>` lands alone on its own line. goldmark
    misreads that `>` as blockquote syntax *before* mdreflow gets an AST, so
