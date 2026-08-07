@@ -1,0 +1,3 @@
+# Golden-file fixtures are byte-exact test inputs/outputs; never translate
+# line endings.
+testdata/** -text
