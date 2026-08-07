@@ -1,0 +1,25 @@
+version: "2"
+
+# Philosophy: correctness linters on, style-churn linters off. The default
+# set (errcheck, govet, staticcheck, unused, ineffassign) plus a curated
+# handful. Deliberately absent: line-length/complexity/naming linters —
+# they generate churn, not correctness.
+linters:
+  enable:
+    - errorlint # error wrapping/comparison mistakes (%w, errors.Is)
+    - exhaustive # switches over Mode/HardBreakStyle must cover every value
+    - gocritic # assorted correctness + simplification diagnostics
+    - misspell # docs-heavy repo; US spellings
+    - unconvert # redundant conversions
+    - unparam # unused function parameters
+  settings:
+    errcheck:
+      # Diagnostic writes to stderr/stdout; nothing sane to do on failure.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+    misspell:
+      locale: US
+    exhaustive:
+      default-signifies-exhaustive: true

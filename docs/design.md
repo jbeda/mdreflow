@@ -380,7 +380,12 @@ against regressions, and the guarantees above are only as real as this harness.
 Small on purpose; additions require amending this doc.
 
 - `github.com/yuin/goldmark` (+ GFM extension) — parsing, library core
-- `gopkg.in/yaml.v3` — config file, CLI layer only
+- `github.com/goccy/go-yaml` — config file, CLI layer only. (Amended
+  2026-08-07: originally `gopkg.in/yaml.v3`, which is no longer maintained;
+  goccy/go-yaml is actively maintained with better spec compliance. Note
+  goldmark-meta drags in `yaml.v2` as an indirect dep — worth replacing with a
+  ~40-line front-matter block parser of our own, since mdreflow never consumes
+  the parsed metadata, only needs the block out of the AST.)
 - A gitignore matcher/walker (candidates above) — CLI layer only
 - Stdlib `flag` for the CLI (single command; cobra buys weight, not function;
   the cost is shell completions, acceptable for now)
