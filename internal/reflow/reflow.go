@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/yuin/goldmark/ast"
 
@@ -40,9 +41,34 @@ const (
 	HardBreakBackslash
 )
 
+// Mode mirrors mdreflow.Mode (an internal package cannot import the root
+// package, which imports this one). format.go converts between the two;
+// the iota values are kept in lockstep.
+type Mode int
+
+// Mode constants, in the same order as mdreflow.Mode.
+const (
+	ModeSentence Mode = iota
+	ModePara
+	ModeWrap
+)
+
+// defaultWrapWidth is ModeWrap's effective width when Options.MaxWidth is
+// 0, matching the CLI's --max-width default for wrap mode (docs/design.md's
+// CLI table). This is the one place a zero MaxWidth does not mean
+// "unbounded" — see Options.MaxWidth's doc comment.
+const defaultWrapWidth = 80
+
 // Options configures the reflow pipeline. It mirrors the subset of
 // mdreflow.Options the pipeline needs.
 type Options struct {
+	// Mode selects the break-point strategy; see mdreflow.Mode.
+	Mode Mode
+	// MaxWidth bounds line length in runes; see mdreflow.Options.MaxWidth
+	// for its full, mode-dependent semantics. The caller (format.go) is
+	// responsible for rejecting MaxWidth != 0 with ModePara before this
+	// package ever sees it.
+	MaxWidth int
 	// HardBreaks selects the normalized hard-break style every preserved
 	// hard break is rewritten to.
 	HardBreaks HardBreakStyle
@@ -124,9 +150,9 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 		}
 		text := joinClusterLines(curLines)
 		curLines = nil
-		sentences := splitSentences(text, seg)
-		for i, s := range sentences {
-			if i == len(sentences)-1 {
+		clusterLines := computeLines(text, seg, opts)
+		for i, s := range clusterLines {
+			if i == len(clusterLines)-1 {
 				s = attachMarker(s, marker)
 			}
 			outLines = append(outLines, outLine{text: s})
@@ -228,6 +254,486 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 	if lastLineHasNewline {
 		buf.WriteByte('\n')
 	}
+}
+
+// computeLines computes one hard-break cluster's output lines according to
+// opts.Mode — the one place the three modes' break-point strategies
+// diverge (docs/design.md: "All modes are one pipeline — join lines,
+// compute break points, emit"). Everything else (joining, hard-break
+// handling, container re-indentation, block-interrupt escaping) is shared
+// and mode-independent.
+func computeLines(text string, seg Segmenter, opts Options) []string {
+	switch opts.Mode {
+	case ModePara:
+		// Join to a single line, unconditionally: no further splitting.
+		// format.go rejects MaxWidth != 0 with ModePara before this is
+		// ever reached.
+		return []string{text}
+	case ModeWrap:
+		width := opts.MaxWidth
+		if width == 0 {
+			width = defaultWrapWidth
+		}
+		if fitLen(text) <= width {
+			return []string{text}
+		}
+		return wrapRanked(text, width, filterUnsafeLineEnds(text, wordBreaks(text)), nil)
+	default: // ModeSentence
+		sentences := splitSentences(text, seg)
+		if opts.MaxWidth <= 0 {
+			return sentences
+		}
+		out := make([]string, 0, len(sentences))
+		for _, s := range sentences {
+			if fitLen(s) <= opts.MaxWidth {
+				out = append(out, s)
+				continue
+			}
+			out = append(out, wrapRanked(s, opts.MaxWidth, filterUnsafeLineEnds(s, clauseBreaks(s)), filterUnsafeLineEnds(s, wordBreaks(s)))...)
+		}
+		return out
+	}
+}
+
+// filterUnsafeLineEnds removes any candidate break whose Start position
+// would leave a dangerous pattern at the end of the line that ends there:
+//
+//   - An otherwise-literal single trailing backslash, or a literal
+//     <br>-shaped tag already present in the prose. Once a newline lands
+//     right after either, CommonMark (and detectHardBreak, on the next
+//     reformat) reads it as a real hard break — content the source author
+//     never intended, and something no sentence break can ever trigger (a
+//     sentence break only ever lands after recognized sentence-terminal
+//     punctuation), but a width-based cut can, since it may land after any
+//     word or clause boundary in the text. Found by FuzzFormat wrapping a
+//     line right after a literal mid-prose backslash in ModeWrap, turning
+//     an inert character into a real hard break on reparse.
+//   - A trailing bare '\r': goldmark's own line scanner does not treat a
+//     lone '\r' (one not immediately followed by '\n') as a line ending at
+//     all — it can sit as ordinary literal content in the middle of what
+//     goldmark still considers a single physical line (confirmed directly,
+//     not assumed: stripLineEnding's own doc comment already documents
+//     this quirk for a *trailing* run of them). A width-based cut landing
+//     right after such a '\r' would place mdreflow's own injected '\n'
+//     immediately after it, accidentally spelling out a real "\r\n" line
+//     ending that was never there in the source — found by FuzzFormat on
+//     an input with a lone mid-prose '\r', wrapped in ModeWrap, which lost
+//     content on reparse once the accidental "\r\n" changed how the line
+//     was split.
+//   - A *following* line that would itself open with a fenced-code-block
+//     opener shape (3+ backticks/tildes): escapeBlockInterrupt backslash-
+//     escapes every backtick/tilde of such a run individually wherever it
+//     lands at a line start (see its own doc comment for why every one,
+//     not just the first). That per-character escaping can retroactively
+//     change what segment.CodeSpans considers a *matched* code span
+//     elsewhere in the very same cluster text: an unmatched, dangling
+//     single backtick earlier in the text — one with no real partner
+//     anywhere, so codeSpans correctly does not protect anything around
+//     it — can spuriously "close" against one of the escaped run's
+//     individual backticks once they exist as separate length-1 runs,
+//     manufacturing a code span (and its no-break protection) that was
+//     never there when this candidate was first evaluated. Found by
+//     FuzzFormat on ModeSentence/MaxWidth input
+//     "!Xb0A!`C0B7“\t```0" (an unmatched backtick early on, then a
+//     fence-opener-shaped "```0" later): cutting at the tab was safe on
+//     the *pre-escape* text (no code span spanned it, since the fence
+//     run's length-3 backtick run didn't match the earlier length-1
+//     unmatched one), but the very act of that cut placed "```0" at a
+//     fresh line start, which escapeBlockInterrupt then escaped into
+//     three separate length-1 backtick runs — one of which reparsed as
+//     spuriously matching the earlier dangling backtick, newly protecting
+//     the space this same cut relied on being unprotected, so a second
+//     reformat pass no longer found any safe candidate at all and left
+//     the whole line unwrapped. Refusing to cut immediately before a
+//     fence-opener-shaped suffix in the first place sidesteps the
+//     escape-driven code-span reshuffling entirely, rather than trying to
+//     predict its effect on unrelated backticks elsewhere in the text.
+//
+// All three are instances of the same underlying risk: a width-based cut
+// can land anywhere a word or clause boundary exists, unlike a sentence
+// break (which only ever lands after recognized sentence-terminal
+// punctuation) or the original source's own line breaks (which mdreflow
+// never introduces mid-word).
+//
+// text must be the same string breaks's Start/End positions index into.
+func filterUnsafeLineEnds(text string, breaks []segment.Span) []segment.Span {
+	if len(breaks) == 0 {
+		return breaks
+	}
+	out := breaks[:0:0]
+	for _, b := range breaks {
+		before := text[:b.Start]
+		if trailingBackslashCount(before) == 1 || hardBreakBrRE.MatchString(before) || strings.HasSuffix(before, "\r") {
+			continue
+		}
+		after := text[b.End:]
+		if backtickFenceStart.MatchString(after) || tildeFenceStart.MatchString(after) {
+			continue
+		}
+		out = append(out, b)
+	}
+	return out
+}
+
+// canonicalRunRE matches a maximal run of spaces, tabs, and/or bare '\r'
+// bytes — the same shape wordBreaks and clauseBreaks scan (see
+// isWrapRunByte). Used by canonicalizeForWidth to measure width
+// consistently with how such a run actually behaves once a cut lands
+// there; canonicalizeForWidth itself applies the same "must contain a
+// real space/tab" rule wordBreaks does before treating a match as
+// collapsible (a pure '\r' run is ordinary, unbreakable literal content,
+// not one-rune-wide padding).
+var canonicalRunRE = regexp.MustCompile(`[ \t\r]+`)
+
+// canonicalizeForWidth returns text with every canonicalRunRE match
+// collapsed to a single space, except inside a no-break span
+// (segment.NoBreakSpans) — e.g. a run of spaces inside inline code is
+// significant, literal content, not padding it would be safe to measure
+// as narrower than it really is. It is used only by fitLen, purely to
+// decide *whether and where* a cut is needed; it never produces real
+// output text (see fitLen's doc comment for why the actual, uncollapsed
+// bytes must reach wrapRanked instead).
+//
+// This measurement-only indirection — not literally rewriting the text
+// wrapRanked cuts — is required, not just a simplification: an earlier
+// version of this pipeline *did* rewrite the real cluster text before
+// wrapping (to fix exactly the width-consistency problem described
+// below), which in turn broke a different, narrower case — a cluster
+// ending in a multi-character run immediately before a hard-break marker
+// gets attached (see attachMarker): rewriting that trailing run to a
+// literal ' ' changed how the marker re-attached on the *next* reformat
+// (hardBreakBrRE only skips leading space/tab before "<br>", never a bare
+// '\r'), an idempotency break found by FuzzFormat on a ModeWrap input
+// whose trailing whitespace run (2 spaces, a bare '\r', 2 more spaces)
+// sat directly before a hard break. Measuring width against a canonical
+// form while cutting the real, unmodified text sidesteps that: wordBreaks
+// already fully consumes whatever a chosen cut's run actually contains
+// (see its own doc comment), so the *real* text only ever loses a run
+// that is genuinely cut, never one left to become a line's trailing edge
+// through a rewrite that never needed to happen there.
+//
+// The width-consistency problem itself: a raw source line can carry a
+// literal multi-character whitespace run mid-line that mdreflow never had
+// a reason to touch before — joinClusterLines only normalizes whitespace
+// *between* joined lines (to exactly one space), never within a single
+// one. That is fine as long as nothing else in the pipeline measures
+// distances across it. But wrapRanked's cuts do: any multi-character run
+// wrapRanked happens to choose as a cut point already collapses to a
+// single space once rejoined (an inter-line boundary, per
+// joinClusterLines) — while a *different*, uncut run elsewhere in the
+// same cluster text stays exactly as wide as it started. On reparse, the
+// first run is gone (it is now between two separate output lines, joined
+// back to one space) but the second is still there, so the two passes
+// would measure different rune widths for the same logical content and
+// could land a cut in a different place — found by FuzzFormat on a
+// ModeSentence/MaxWidth input with two multi-space runs, one at the
+// eventual cut point and one not. Measuring every non-protected run as
+// canonically one rune wide, everywhere, removes the asymmetry: both
+// passes then measure the same effective width, regardless of how many
+// literal whitespace bytes either pass's real text happens to have there.
+func canonicalizeForWidth(text string) string {
+	noBreak := segment.NoBreakSpans(text)
+	var b strings.Builder
+	b.Grow(len(text))
+	last := 0
+	for _, m := range canonicalRunRE.FindAllStringIndex(text, -1) {
+		start, end := m[0], m[1]
+		b.WriteString(text[last:start])
+		hasCore := strings.ContainsAny(text[start:end], " \t")
+		if hasCore && end-start > 1 && !spanContains(noBreak, start) {
+			b.WriteByte(' ')
+		} else {
+			b.WriteString(text[start:end])
+		}
+		last = end
+	}
+	b.WriteString(text[last:])
+	return b.String()
+}
+
+// wrapRanked repeatedly cuts text into lines no wider than maxWidth runes,
+// consuming a break candidate (rather than emitting it) at each cut —
+// matching how a sentence break or a wrapped word boundary both discard the
+// whitespace/punctuation-space they cut at, replacing it with a newline.
+// primary and secondary are both candidate-break lists, sorted by Start and
+// non-overlapping; primary is preferred whenever a primary candidate fits
+// within the current line's width budget, and secondary is only consulted
+// when no primary candidate does (this is how ModeSentence's MaxWidth
+// prefers a clause boundary over a plain word boundary — see computeLines).
+//
+// Each candidate line's width is measured *as if escapeBlockInterrupt will
+// escape it* (fitLen, not a plain rune count): the render loop in
+// writeParagraph backslash-escapes any output line that would otherwise be
+// misparsed as a new block on reparse (e.g. a line reflow made start with
+// "* ", which would misparse as a bullet marker) — an escape that adds a
+// byte *after* this function has already decided where to cut. Budgeting
+// for that up front, rather than measuring the pre-escape text, is what
+// keeps wrapping idempotent: found by FuzzFormat on ":::\n*\n0" in
+// ModeWrap at width 3, where the pre-escape cluster text "* 0" fit
+// exactly at the limit and was kept on one line, but the escaped output
+// "\* 0" (one byte longer) no longer fit on reparse, so the second pass
+// wrapped it differently than the first. Simulating the escape with
+// isFirstLine always true (see fitLen) is deliberately the conservative
+// direction — it can only make a line's simulated width an over-estimate
+// of its real one, never an under-estimate, so a line this function
+// accepts as fitting is guaranteed to actually fit once truly escaped,
+// on every pass, regardless of that line's real position in the
+// paragraph.
+//
+// When nothing in either list fits within maxWidth (a single word, or
+// no-break span, already wider than the limit — design.md: "overflow"),
+// the earliest remaining candidate from either list is used as a forced
+// cut, so the line does not grow without bound merely because it already
+// overflowed once; if no candidate remains at all, the rest of text is
+// emitted as one final (possibly overlong) line.
+func wrapRanked(text string, maxWidth int, primary, secondary []segment.Span) []string {
+	var out []string
+	lineStart := 0
+	pi, si := 0, 0
+	for {
+		for pi < len(primary) && primary[pi].Start < lineStart {
+			pi++
+		}
+		for si < len(secondary) && secondary[si].Start < lineStart {
+			si++
+		}
+
+		if fitLen(text[lineStart:]) <= maxWidth {
+			// Everything left already fits on one line: no more cuts are
+			// needed, regardless of how many break candidates remain.
+			break
+		}
+
+		bestPrimary := -1
+		for i := pi; i < len(primary); i++ {
+			if fitLen(text[lineStart:primary[i].Start]) > maxWidth {
+				continue // A later, longer candidate might still fit once escaped — fitLen is not guaranteed monotonic (see its doc comment), so later candidates must still be checked.
+			}
+			bestPrimary = i
+		}
+		bestSecondary := -1
+		for i := si; i < len(secondary); i++ {
+			if fitLen(text[lineStart:secondary[i].Start]) > maxWidth {
+				continue
+			}
+			bestSecondary = i
+		}
+
+		if bestPrimary >= 0 {
+			cut := primary[bestPrimary]
+			out = append(out, text[lineStart:cut.Start])
+			lineStart = cut.End
+			pi = bestPrimary + 1
+			continue
+		}
+		if bestSecondary >= 0 {
+			cut := secondary[bestSecondary]
+			out = append(out, text[lineStart:cut.Start])
+			lineStart = cut.End
+			si = bestSecondary + 1
+			continue
+		}
+
+		// Nothing fits within maxWidth: force a cut at the earliest
+		// remaining candidate from either list, if any.
+		fromPrimary := pi < len(primary)
+		fromSecondary := si < len(secondary)
+		switch {
+		case fromPrimary && (!fromSecondary || primary[pi].Start <= secondary[si].Start):
+			cut := primary[pi]
+			out = append(out, text[lineStart:cut.Start])
+			lineStart = cut.End
+			pi++
+		case fromSecondary:
+			cut := secondary[si]
+			out = append(out, text[lineStart:cut.Start])
+			lineStart = cut.End
+			si++
+		default:
+			// No candidates left at all: the remainder overflows as one
+			// final line; stop, the post-loop append below emits it.
+			return appendTail(out, text, lineStart)
+		}
+	}
+	return appendTail(out, text, lineStart)
+}
+
+// appendTail appends text[lineStart:] to out as one final line, unless a
+// cut already consumed all the way to the end of text (lineStart ==
+// len(text)): appending an empty string there would add a spurious,
+// content-free trailing line that then absorbs a hard-break marker
+// (attachMarker attaches to wrapRanked's *last* returned line) instead of
+// the real last word — an idempotency break found by FuzzFormat on
+// "1BACA9 07+  \r" in ModeWrap at width 2, where the final forced cut's
+// span reached exactly to len(text), and the resulting spurious empty
+// line took the "<br>" marker meant for "07+", producing a paragraph's
+// worth of lines that a second reformat pass consolidated differently.
+func appendTail(out []string, text string, lineStart int) []string {
+	if lineStart == len(text) {
+		return out
+	}
+	return append(out, text[lineStart:])
+}
+
+// wordBreaks returns text's word-boundary break candidates: every maximal
+// run of one or more ASCII spaces and/or tabs not inside a no-break span.
+// A run, not a single space byte, is required: joinClusterLines collapses
+// all *inter-line* whitespace in a hard-break cluster's joined text to
+// exactly one space, but whitespace *within* a single original source line
+// passes through untouched, so a real source line like "a  b" (two spaces)
+// still reaches here with its double space intact. Treating each space
+// byte in that run as its own one-byte break candidate — an earlier
+// version of this function did — cuts inside the run instead of consuming
+// all of it, leaving a leftover leading space on the next line: an
+// idempotency break found by FuzzFormat on "a%  BBa2y*x)00" in ModeWrap.
+//
+// Tabs are included in the run for the same reason: CommonMark strips a
+// paragraph continuation line's entire leading run of spaces/tabs as
+// insignificant, however it is spelled, so a cut that left a literal tab
+// as the first byte of a new line would silently lose that tab on reparse
+// — an idempotency break found by FuzzFormat on ModeWrap input containing
+// a " \t" run at a cut point, where the space was consumed as the break
+// but the tab, not being ' ', was left as the next line's leading byte and
+// then vanished when goldmark reparsed the output.
+//
+// A break's run may also contain bare '\r' bytes (ones not immediately
+// followed by '\n') interleaved with the space/tab, even though a bare
+// '\r' is not itself insignificant CommonMark whitespace: goldmark's own
+// line scanner already treats a lone '\r' as ordinary literal content
+// wherever it doesn't interact with a line boundary (see
+// filterUnsafeLineEnds's doc comment), but it behaves unpredictably once
+// mdreflow's own injected '\n' lands immediately next to one — found by
+// FuzzFormat on ModeWrap input with a " \r" run at a cut point: the space
+// was consumed as the break, leaving '\r' as the next line's leading
+// byte, and that leading '\r' silently vanished when goldmark reparsed
+// the output (apparently absorbed as part of a multi-byte line-ending
+// sequence with mdreflow's own adjacent '\n', the same quirky
+// concatenation stripLineEnding's doc comment already documents for a
+// *trailing* run of these).
+//
+// A run must contain at least one real space or tab to count as a break
+// at all — a run of *only* '\r' characters is not a real word boundary
+// and must not be treated as one: found by FuzzFormat on "T h\r\rucraZ"
+// (an earlier version of this function treated bare '\r' as a break
+// character in its own right) treating "\r\r" between "h" and "ucraZ" —
+// content with no actual separating whitespace at all — as a break,
+// silently discarding it as if it were insignificant padding and gluing
+// "h" and "ucraZ" together with nothing between them, which a second
+// reformat pass then rejoined with a real inserted space instead. And the
+// run must be the *maximal* contiguous stretch of space/tab/'\r' bytes,
+// not just a space/tab core plus CR touching only one identified core: an
+// earlier version that only extended a discovered space/tab run outward
+// over adjacent '\r' bytes missed a run like " \r " (space, CR, space) —
+// the extension reached the CR but stopped there, leaving the second
+// space to start a *separate* one-byte break candidate, which (if
+// wrapRanked picked the first candidate as its cut) left that second
+// space dangling as the next line's leading byte — a byte CommonMark
+// again treats as insignificant continuation-line whitespace and so
+// silently drops on reparse, found by FuzzFormat on "B00CA077 \r 80...".
+// Scanning the whole run in one pass (isWrapRunByte) up front avoids
+// needing to reconcile adjacent candidates after the fact.
+//
+// This is ModeWrap's break-point strategy, and ModeSentence's MaxWidth
+// fallback when no clause boundary is available.
+func wordBreaks(text string) []segment.Span {
+	noBreak := segment.NoBreakSpans(text)
+	var out []segment.Span
+	i := 0
+	for i < len(text) {
+		if !isWrapRunByte(text[i]) {
+			i++
+			continue
+		}
+		start := i
+		hasCore := false
+		for i < len(text) && isWrapRunByte(text[i]) {
+			if text[i] == ' ' || text[i] == '\t' {
+				hasCore = true
+			}
+			i++
+		}
+		if !hasCore || spanContains(noBreak, start) {
+			continue
+		}
+		out = append(out, segment.Span{Start: start, End: i})
+	}
+	return out
+}
+
+// isWrapRunByte reports whether b is one of the bytes a wordBreaks or
+// clauseBreaks whitespace run may contain: an ASCII space, a tab, or a
+// bare '\r' — see wordBreaks's doc comment for why a bare '\r' is
+// included, and why a run needs at least one real space/tab to actually
+// count as a break.
+func isWrapRunByte(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\r'
+}
+
+// clauseBreaksRE matches a comma or semicolon followed by a maximal run
+// of one or more spaces, tabs, and/or bare '\r' bytes: the clause-
+// boundary candidates ModeSentence's MaxWidth prefers over a plain word
+// boundary (docs/design.md's Modes table). The punctuation itself stays
+// at the end of the preceding line; the entire following run is consumed
+// as the break, provided it contains at least one real space or tab (see
+// clauseBreaks) — a single space is not enough on its own to justify a
+// dedicated regex capture, for the same reasons given in wordBreaks's doc
+// comment (a source line can carry more than one literal whitespace byte
+// here, untouched by joinClusterLines, and a run left partly uncut can
+// silently misbehave on reparse).
+var clauseBreaksRE = regexp.MustCompile(`[,;][ \t\r]+`)
+
+// clauseBreaks returns text's clause-boundary break candidates, excluding
+// any match whose run is pure '\r' (see wordBreaks's doc comment — that
+// is not a real clause boundary) or that lands inside a no-break span
+// (e.g. a comma inside inline code).
+func clauseBreaks(text string) []segment.Span {
+	noBreak := segment.NoBreakSpans(text)
+	var out []segment.Span
+	for _, m := range clauseBreaksRE.FindAllStringIndex(text, -1) {
+		start, end := m[0]+1, m[1]
+		if !strings.ContainsAny(text[start:end], " \t") || spanContains(noBreak, start) {
+			continue
+		}
+		out = append(out, segment.Span{Start: start, End: end})
+	}
+	return out
+}
+
+// spanContains reports whether pos falls inside any of spans.
+func spanContains(spans []segment.Span, pos int) bool {
+	for _, sp := range spans {
+		if pos >= sp.Start && pos < sp.End {
+			return true
+		}
+	}
+	return false
+}
+
+// runeLen returns the rune count of s: mdreflow measures MaxWidth in
+// runes, not bytes or Unicode grapheme clusters / East-Asian display width
+// — a pragmatic simplification documented on mdreflow.Options.MaxWidth,
+// the same choice every shipping line-wrap tool starts from. Full
+// grapheme-cluster/width-aware measurement is a documented future
+// refinement, not implemented here.
+func runeLen(s string) int {
+	return utf8.RuneCountInString(s)
+}
+
+// fitLen returns the rune count s would effectively have once (a) any
+// whitespace run measures as canonicalizeForWidth would measure it — see
+// its doc comment for why *measuring* a run as one rune wide, without
+// literally rewriting the real text to match, is required — and (b) the
+// result is emitted as a paragraph output line and escapeBlockInterrupt
+// escapes it. isFirstLine is always passed as true: that is the more
+// conservative of escapeBlockInterrupt's two behaviors (it only ever
+// escapes a strict superset of what isFirstLine=false does, via the extra
+// htmlBlockAnyOpenerRE check), so the simulated length here is always >=
+// the real, final escaped length of any line s could become, whatever its
+// actual position in the paragraph turns out to be. Never an
+// under-estimate, so a candidate this accepts is guaranteed to still fit
+// after the real escaping pass.
+func fitLen(s string) int {
+	return runeLen(escapeBlockInterrupt(canonicalizeForWidth(s), true))
 }
 
 // splitSentences takes one cluster's already-joined prose, asks seg for
@@ -917,10 +1423,7 @@ func detectHardBreak(content string, opts Options, isLastLine, insideSpan bool) 
 		// "\\\\\\\n0" (3 backslashes): treating the run as hard-break-
 		// eligible (old odd-count rule) invented a break that changes
 		// the rendered content, not just its style.
-		n := 0
-		for n < len(content) && content[len(content)-1-n] == '\\' {
-			n++
-		}
+		n := trailingBackslashCount(content)
 		if n == 1 {
 			return normalizedMarker(opts), content[:len(content)-1]
 		}
@@ -975,11 +1478,17 @@ func detectHardBreak(content string, opts Options, isLastLine, insideSpan bool) 
 // trailing backslashes — i.e. the last one is itself unescaped and would
 // escape whatever comes immediately after s.
 func endsInUnescapedBackslash(s string) bool {
+	return trailingBackslashCount(s)%2 == 1
+}
+
+// trailingBackslashCount returns the number of consecutive backslash
+// characters s ends in.
+func trailingBackslashCount(s string) int {
 	n := 0
 	for n < len(s) && s[len(s)-1-n] == '\\' {
 		n++
 	}
-	return n%2 == 1
+	return n
 }
 
 // normalizedMarker returns the hard-break marker bytes for opts.HardBreaks,

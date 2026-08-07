@@ -1,0 +1,9 @@
+- item
+  > nested
+  > quote
+  > body
+  > with
+  > several
+  > words
+  > to
+  > wrap

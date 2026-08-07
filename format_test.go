@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -41,42 +42,118 @@ func fixtures(t *testing.T) []string {
 func TestGoldenFixtures(t *testing.T) {
 	for _, name := range fixtures(t) {
 		t.Run(name, func(t *testing.T) {
-			src, err := os.ReadFile(filepath.Join("testdata", name+".md"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			golden, err := os.ReadFile(filepath.Join("testdata", name+".golden.md"))
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			got, err := mdreflow.Format(src, mdreflow.Options{})
-			if err != nil {
-				t.Fatalf("Format: %v", err)
-			}
-			if !bytes.Equal(got, golden) {
-				t.Errorf("Format(%s.md) does not match golden.\n--- got ---\n%s\n--- want ---\n%s", name, got, golden)
-			}
-
-			t.Run("idempotent", func(t *testing.T) {
-				twice, err := mdreflow.Format(got, mdreflow.Options{})
-				if err != nil {
-					t.Fatalf("Format(Format(x)): %v", err)
-				}
-				if !bytes.Equal(twice, got) {
-					t.Errorf("Format is not idempotent.\n--- Format(x) ---\n%s\n--- Format(Format(x)) ---\n%s", got, twice)
-				}
-			})
-
-			t.Run("render-preserving", func(t *testing.T) {
-				before := normalizeWhitespace(renderHTML(t, src))
-				after := normalizeWhitespace(renderHTML(t, got))
-				if before != after {
-					t.Errorf("rendered HTML changed.\n--- before ---\n%s\n--- after ---\n%s", before, after)
-				}
-			})
+			runGoldenCase(t, filepath.Join("testdata", name+".md"), filepath.Join("testdata", name+".golden.md"), mdreflow.Options{})
 		})
 	}
+}
+
+// runGoldenCase formats srcPath under opts, diffs the result against
+// goldenPath, and checks the two guarantees that hold automatically for
+// every fixture regardless of mode: idempotency and render preservation.
+func runGoldenCase(t *testing.T, srcPath, goldenPath string, opts mdreflow.Options) {
+	t.Helper()
+	src, err := os.ReadFile(srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	golden, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := mdreflow.Format(src, opts)
+	if err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+	if !bytes.Equal(got, golden) {
+		t.Errorf("Format(%s) does not match golden.\n--- got ---\n%s\n--- want ---\n%s", srcPath, got, golden)
+	}
+
+	t.Run("idempotent", func(t *testing.T) {
+		twice, err := mdreflow.Format(got, opts)
+		if err != nil {
+			t.Fatalf("Format(Format(x)): %v", err)
+		}
+		if !bytes.Equal(twice, got) {
+			t.Errorf("Format is not idempotent.\n--- Format(x) ---\n%s\n--- Format(Format(x)) ---\n%s", got, twice)
+		}
+	})
+
+	t.Run("render-preserving", func(t *testing.T) {
+		before := normalizeWhitespace(renderHTML(t, src))
+		after := normalizeWhitespace(renderHTML(t, got))
+		if before != after {
+			t.Errorf("rendered HTML changed.\n--- before ---\n%s\n--- after ---\n%s", before, after)
+		}
+	})
+}
+
+// modeWidthRE extracts a fixture's encoded MaxWidth from its base name:
+// wrap and sentence-maxwidth fixtures are named "w<N>-..." /
+// "mw<N>-...", the number their family's shared generator (and this test)
+// both read as Options.MaxWidth. Fixtures whose behavior doesn't depend on
+// a specific width (e.g. the para family) need no such prefix.
+var modeWidthRE = regexp.MustCompile(`^m?w(\d+)-`)
+
+// TestGoldenFixturesModes runs the mode-specific fixture families under
+// testdata/modes/<family>/ through the same golden/idempotency/render-
+// preservation checks as TestGoldenFixtures, each under the Options that
+// family exercises: para mode (no width), wrap mode (width encoded in the
+// filename as "w<N>-..."), and sentence mode with MaxWidth (width encoded
+// as "mw<N>-...").
+func TestGoldenFixturesModes(t *testing.T) {
+	families := []struct {
+		dir     string
+		optsFor func(t *testing.T, base string) mdreflow.Options
+	}{
+		{"para", func(t *testing.T, base string) mdreflow.Options {
+			return mdreflow.Options{Mode: mdreflow.ModePara}
+		}},
+		{"wrap", func(t *testing.T, base string) mdreflow.Options {
+			return mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: mustModeWidth(t, base)}
+		}},
+		{"sentence-maxwidth", func(t *testing.T, base string) mdreflow.Options {
+			return mdreflow.Options{MaxWidth: mustModeWidth(t, base)}
+		}},
+	}
+
+	for _, fam := range families {
+		t.Run(fam.dir, func(t *testing.T) {
+			dir := filepath.Join("testdata", "modes", fam.dir)
+			matches, err := filepath.Glob(filepath.Join(dir, "*.golden.md"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(matches) == 0 {
+				t.Fatalf("no golden fixtures found under %s", dir)
+			}
+			for _, goldenPath := range matches {
+				base := filepath.Base(goldenPath)
+				name := base[:len(base)-len(".golden.md")]
+				t.Run(name, func(t *testing.T) {
+					srcPath := filepath.Join(dir, name+".md")
+					opts := fam.optsFor(t, name)
+					runGoldenCase(t, srcPath, goldenPath, opts)
+				})
+			}
+		})
+	}
+}
+
+// mustModeWidth extracts and parses the "w<N>-"/"mw<N>-" width prefix from
+// a mode-fixture base name (see modeWidthRE), failing the test if the
+// fixture is misnamed.
+func mustModeWidth(t *testing.T, base string) int {
+	t.Helper()
+	m := modeWidthRE.FindStringSubmatch(base)
+	if m == nil {
+		t.Fatalf("fixture %q has no w<N>-/mw<N>- width prefix in its name", base)
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		t.Fatalf("fixture %q: invalid width prefix: %v", base, err)
+	}
+	return n
 }
 
 // renderHTML renders src with the same goldmark configuration the reflow

@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("b2&9 '\r 2yA0\r1")

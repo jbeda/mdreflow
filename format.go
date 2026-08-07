@@ -18,12 +18,11 @@ import (
 // lists, blockquotes, tables, and so on — is returned byte-for-byte (see
 // docs/design.md's "Guarantees" section).
 //
-// Format returns an error, without partial output, if opts selects
-// behavior M1 does not implement yet: see the doc comments on Mode,
-// Options.MaxWidth, Options.Typography, and
-// Options.StripSentenceTerminalBreaks.
+// Format returns an error, without partial output, if opts is invalid or
+// selects behavior not implemented yet: see the doc comments on Mode,
+// Options.MaxWidth, and Options.Typography.
 func Format(src []byte, opts Options) ([]byte, error) {
-	if err := checkImplemented(opts); err != nil {
+	if err := validateOptions(opts); err != nil {
 		return nil, err
 	}
 
@@ -34,6 +33,8 @@ func Format(src []byte, opts Options) ([]byte, error) {
 
 	doc := gm.New().Parser().Parse(text.NewReader(src))
 	rOpts := reflow.Options{
+		Mode:                        reflow.Mode(opts.Mode),
+		MaxWidth:                    opts.MaxWidth,
 		HardBreaks:                  reflow.HardBreakStyle(opts.HardBreaks),
 		StripSentenceTerminalBreaks: opts.StripSentenceTerminalBreaks,
 	}
@@ -68,22 +69,22 @@ func FormatReader(dst io.Writer, src io.Reader, opts Options) error {
 	return err
 }
 
-// checkImplemented rejects any option combination M1's pipeline doesn't
-// implement yet, loudly and without partial output — consistent with
-// mdreflow's "loud, machine-legible behavior" design principle for
-// unattended/agent use.
-func checkImplemented(opts Options) error {
+// validateOptions rejects any invalid option value or combination, and any
+// option combination not implemented yet, loudly and without partial
+// output — consistent with mdreflow's "loud, machine-legible behavior"
+// design principle for unattended/agent use.
+func validateOptions(opts Options) error {
 	switch opts.Mode {
-	case ModeSentence:
-	case ModePara:
-		return errors.New("mdreflow: mode para not implemented (M3)")
-	case ModeWrap:
-		return errors.New("mdreflow: mode wrap not implemented (M3)")
+	case ModeSentence, ModePara, ModeWrap:
 	default:
 		return fmt.Errorf("mdreflow: unknown Mode value %d", opts.Mode)
 	}
-	if opts.MaxWidth != 0 {
-		return errors.New("mdreflow: MaxWidth not implemented (M3)")
+	if opts.Mode == ModePara && opts.MaxWidth != 0 {
+		// ModePara joins a paragraph to a single line unconditionally
+		// (see its doc comment); MaxWidth has nothing to apply to.
+		// Rejecting loudly, rather than silently ignoring it, matches
+		// design.md's "loud, machine-legible behavior" principle.
+		return errors.New("mdreflow: MaxWidth must be 0 with ModePara (para mode always joins to a single line)")
 	}
 	if opts.Typography != 0 {
 		return errors.New("mdreflow: Typography not implemented (M5)")

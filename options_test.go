@@ -7,24 +7,45 @@ import (
 	"github.com/jbeda/mdreflow"
 )
 
-// TestFormatRejectsUnimplemented checks that every M1-unimplemented option
-// combination fails loudly, per Format's doc comment, instead of silently
-// ignoring the option or producing wrong output.
+// TestFormatRejectsUnimplemented checks that every still-unimplemented or
+// invalid option combination fails loudly, per Format's doc comment,
+// instead of silently ignoring the option or producing wrong output.
 func TestFormatRejectsUnimplemented(t *testing.T) {
 	cases := []struct {
 		name string
 		opts mdreflow.Options
 	}{
-		{"para mode", mdreflow.Options{Mode: mdreflow.ModePara}},
-		{"wrap mode", mdreflow.Options{Mode: mdreflow.ModeWrap}},
-		{"max width", mdreflow.Options{MaxWidth: 80}},
+		{"para mode with max width", mdreflow.Options{Mode: mdreflow.ModePara, MaxWidth: 80}},
 		{"typography", mdreflow.Options{Typography: mdreflow.SmartQuotes}},
+		{"unknown mode", mdreflow.Options{Mode: mdreflow.Mode(99)}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := mdreflow.Format([]byte("Some text.\n"), tc.opts)
 			if err == nil {
 				t.Fatalf("Format with %s: want error, got nil", tc.name)
+			}
+		})
+	}
+}
+
+// TestFormatAcceptsModesAndMaxWidth checks that para mode, wrap mode, and
+// sentence-mode MaxWidth — all implemented in M3 — no longer error.
+func TestFormatAcceptsModesAndMaxWidth(t *testing.T) {
+	cases := []struct {
+		name string
+		opts mdreflow.Options
+	}{
+		{"para mode", mdreflow.Options{Mode: mdreflow.ModePara}},
+		{"wrap mode", mdreflow.Options{Mode: mdreflow.ModeWrap}},
+		{"wrap mode zero width", mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 0}},
+		{"sentence mode max width", mdreflow.Options{MaxWidth: 40}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := mdreflow.Format([]byte("Some text.\n"), tc.opts)
+			if err != nil {
+				t.Fatalf("Format with %s: %v", tc.name, err)
 			}
 		})
 	}

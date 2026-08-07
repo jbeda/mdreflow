@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("1BACA9 07+  \r  \nA00")

@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("!Xb0A!`C0B7``\t```0")

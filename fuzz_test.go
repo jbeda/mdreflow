@@ -382,6 +382,58 @@ func hasTableAdjacentSetextLine(src []byte) bool {
 	return hasTableDelimiter && hasSetextLine
 }
 
+// isTableDelimiterRowShaped reports whether line is shaped like a GFM
+// table delimiter row: once trimmed of leading/trailing space/tab, it
+// contains only "-", ":", "|", spaces, and tabs, with at least one "-" —
+// the same crude check hasTableAdjacentSetextLine already uses (see its
+// doc comment for why even a bare "-|" or ":-" qualifies, and why spaces
+// are allowed *within* the shape, not just at its edges: a delimiter row
+// like "-- |" — dashes, a space, then a pipe — is still GFM-valid, found
+// by FuzzFormat on "zJC\x00.\x007 -- |   " in a width-bounded mode, where
+// an earlier, stricter version of this check (space/tab only trimmed at
+// the edges, not allowed inside the shape) missed it).
+func isTableDelimiterRowShaped(line []byte) bool {
+	trimmed := bytes.Trim(line, " \t")
+	return len(trimmed) > 0 && bytes.ContainsRune(trimmed, '-') && len(bytes.Trim(trimmed, "-:| \t")) == 0
+}
+
+// hasFreshTableAdjacency conservatively reports whether b has a
+// delimiter-row-shaped line (isTableDelimiterRowShaped) immediately
+// preceded by any other non-blank line.
+//
+// This gates a fourteenth narrow, documented render-preservation
+// exception, specific to the width-bounded modes M3 adds: a source line
+// with no adjacent lines at all — an ordinary, single physical paragraph
+// line, nothing block-shaped about it — can still contain, *inside* its
+// own prose, a comma or word boundary positioned such that a width-based
+// cut lands right before a delimiter-row-shaped fragment, manufacturing a
+// brand-new two-line adjacency (some text, then something that reads as a
+// GFM table delimiter row) that never existed in the source at all: found
+// by FuzzFormat wrapping "...CclAm) 0a10a -|" into "...CclAm)\n0a10a\n-|"
+// in a width-bounded mode, where goldmark's table extension then read
+// "0a10a" / "-|" as a real one-column table header and delimiter row,
+// changing "<p>...0a10a -|</p>" into a "<p>...</p>" followed by a
+// "<table>...". Unlike hasTableAdjacentSetextLine, this is not about an
+// existing table's own escaping side effects — it is the width-based cut
+// itself manufacturing the adjacency, the same underlying risk as
+// hasWrapInducedBlockInterruptRisk (a cut can land at any word/clause
+// boundary, unlike a sentence break) applied to GFM's table extension
+// specifically rather than escapeBlockInterrupt's own trigger set. As
+// with the other exceptions, only the render-preservation assertion is
+// skipped for matching inputs.
+func hasFreshTableAdjacency(b []byte) bool {
+	lines := bytes.Split(b, []byte("\n"))
+	for i := 1; i < len(lines); i++ {
+		if !isTableDelimiterRowShaped(lines[i]) {
+			continue
+		}
+		if len(bytes.TrimSpace(lines[i-1])) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // hasDeepListContinuationIndent conservatively reports whether src has a
 // list-item-shaped first line (a bullet or ordered marker) followed by a
 // continuation line indented by 4 or more spaces.
@@ -450,7 +502,16 @@ func hasDeepListContinuationIndent(src []byte) bool {
 // need to recognize this trigger at every possible block-parse entry
 // point, not just the one place it was first found; narrower in scope
 // (skipping the render check for the input) is the pragmatic choice here.
-var dashOnlyLineOrItemRE = regexp.MustCompile(`(^|\s)-+\s*$`)
+//
+// The trailing whitespace class is `[\s\v]*`, not bare `\s`: Go's RE2 `\s`
+// is `[\t\n\f\r ]` and does not include `\v` (vertical tab, 0x0B), but
+// goldmark-meta's own dash-only-line trigger is more lenient than that —
+// found by FuzzFormat (in a width-bounded mode) on "-\v\t \x0e!0", where a
+// bare `\s`-only version of this regex missed the "-\v"-shaped line
+// entirely, so the render check ran and caught the same underlying
+// artifact class as an apparent *new* bug when it was really this gate
+// under-matching goldmark-meta's actual leniency.
+var dashOnlyLineOrItemRE = regexp.MustCompile(`(^|\s)-+[\s\v]*$`)
 
 func hasNestedDashOnlyLine(src []byte) bool {
 	for _, line := range bytes.Split(src, []byte("\n")) {
@@ -589,12 +650,143 @@ func hasMultilineInlineTagCandidate(src []byte) bool {
 	return false
 }
 
-// FuzzFormat fuzzes Format across every testdata fixture as seed corpus,
-// checking the guarantees stated in docs/design.md's Guarantees section:
-// no panic, idempotency, and — with the documented exceptions the property
-// test in format_test.go already codifies (hard-break style normalization)
-// — render preservation. It also checks that Format's output always parses
-// without producing a different byte-for-byte reflow of itself.
+// wrapInducedBlockTriggerRE conservatively (and broadly, not precisely —
+// see hasWrapInducedBlockInterruptRisk) matches the start of text, or a
+// whitespace character, followed by text shaped like one of
+// reflow.escapeBlockInterrupt's "always applies regardless of line
+// position" triggers: an ATX heading, blockquote marker, bullet or
+// ordered list marker, a fenced-code opener, a thematic-break/setext-
+// underline character run, an HTML comment/PI/tag-name opener, or a
+// link-reference-definition-shaped opener.
+//
+// The "start of text" alternative (not just "preceded by whitespace") is
+// needed for a paragraph's own first word: a width-based cut can isolate
+// it onto its own line the same way it can any later word, and
+// escapeBlockInterrupt's *type-7* HTML check (htmlBlockAnyOpenerRE) only
+// applies at a paragraph's first output line in the first place — so a
+// tag name outside htmlBlockTagNames's always-triggers list (e.g. "<A>",
+// not one of the ~60 recognized block-level names) is completely safe
+// mid-line in the original single-line source but becomes a genuine type-
+// 7 opener once wrapping isolates it as the *first* output line — found
+// by FuzzFormat on "<A> Aa0!1" in a width-bounded mode: the source's
+// "<A>" was ordinary safe inline HTML (nothing else on its line to
+// disqualify type-7 in the *original*), but cutting right after it
+// produced a first line that *is* "just a tag, alone on a line", which
+// escapeBlockInterrupt correctly (and necessarily) escapes.
+var wrapInducedBlockTriggerRE = regexp.MustCompile(`(^|[ \t])(#{1,6}(\s|$)|>|[-*+](\s|$)|\d{1,9}[.)](\s|$)|` + "`{3,}|~{3,}" + `|[=-]{3,}|<[!?/A-Za-z]|\[[^\]]*\]:)`)
+
+// hasWrapInducedBlockInterruptRisk reports whether src has such a shape
+// anywhere mid-line.
+//
+// This gates a thirteenth narrow, documented render-preservation
+// exception, in the same family as the twelve above it but specific to
+// the width-bounded modes M3 adds (ModeWrap, and ModeSentence's
+// MaxWidth): a block-interrupt trigger — one of the constructs
+// escapeBlockInterrupt must backslash-escape wherever it lands at the
+// start of a fresh output line, since CommonMark would otherwise
+// misparse it as a new block — is normally reached only where a
+// *sentence* break can land (right after recognized sentence-terminal
+// punctuation), a narrow enough position that the M1/M2 corpus never
+// happened to hit this case. A width-based cut has no such restriction:
+// it can land at *any* word or clause boundary, so ordinary mid-paragraph
+// content that was never anywhere near a line start in the source — e.g.
+// inline HTML like "<div ...>" used correctly, mid-sentence, as raw
+// inline content — can end up as the first token of a wrapped line.
+// escapeBlockInterrupt's escape there is structurally *correct* (leaving
+// it unescaped would let the reparsed document swallow following content
+// into an accidental HTML block, corrupting structure — a worse outcome
+// than a rendering difference), but it does change *this* line's own
+// rendered form from raw HTML to literal, escaped text: found by
+// FuzzFormat on "aX <div a09s9X1>0Y1*01" in a width-bounded mode, where
+// wrapping right before "<div ...>" (originally safe, ordinary mid-
+// sentence content) escaped it, changing "<p>...<div a09s9X1>...</p>"
+// into "<p>...&lt;div a09s9X1&gt;...</p>". As with the other twelve
+// exceptions, only the render-preservation assertion is skipped for
+// matching inputs; no panic, idempotency, and structural correctness (no
+// content silently swallowed into an accidental block) are still fully
+// enforced.
+func hasWrapInducedBlockInterruptRisk(src []byte) bool {
+	return wrapInducedBlockTriggerRE.Match(src)
+}
+
+// declarationOpenerNoCloseRE matches an unclosed HTML-declaration-shaped
+// opener: "<!" followed by an ASCII letter, then any run of non-">"
+// characters to the end of the line (no ">" yet).
+var declarationOpenerNoCloseRE = regexp.MustCompile(`<![A-Za-z][^>\n]*$`)
+
+// hasHardBreakDeclarationRisk conservatively reports whether src has such
+// an unclosed opener on a non-final line.
+//
+// This gates a fifteenth, final narrow, documented render-preservation
+// exception — not specific to the width-bounded modes M3 adds, but
+// exposed by M3's broader mode/width-diverse fuzzing (the pre-M3 harness
+// only ever exercised the zero-value Options{}, and this needs nothing
+// mode-specific to trigger — see below): design.md documents hard-break-
+// style normalization as a render-preservation exception on the premise
+// that it "renders the same <br>, different source" — a pure spelling
+// change. That premise silently assumes the normalized spelling can't
+// interact with *other* content, which fails for CommonMark's HTML
+// "declaration" tag type: "<!" + a letter + any run of non-">" characters
+// + ">". A dangling, unclosed "<!A" earlier on the same line as a hard
+// break renders as literal, escaped text in the source (no ">" exists
+// anywhere to complete the declaration — the line simply ends, and the
+// hard break is a structural AST node, not literal text). But
+// HardBreakBr (the default style) normalizes that hard break to the
+// literal text "<br>", whose own ">" retroactively completes the
+// declaration the source never had, turning literal "&lt;!A" into raw,
+// unescaped inline HTML: found by FuzzFormat on "0<!A  \n0" (mode
+// ModeSentence, default width — no wrapping involved at all), where
+// "0<!A<br>\n0" parses "<!A<br>" as one HTML declaration tag instead of
+// literal text followed by a break. As with the other exceptions, only
+// the render-preservation assertion is skipped for matching inputs.
+func hasHardBreakDeclarationRisk(src []byte) bool {
+	lines := bytes.Split(src, []byte("\n"))
+	for i, line := range lines {
+		if i == len(lines)-1 {
+			break
+		}
+		if declarationOpenerNoCloseRE.Match(line) {
+			return true
+		}
+	}
+	return false
+}
+
+// deriveOptions computes an mdreflow.Options from src's own bytes, so
+// FuzzFormat exercises all three modes and a spread of MaxWidth values
+// without a second fuzz parameter (which would require re-seeding every
+// existing corpus entry with a paired mode/width byte). The derivation is a
+// simple, deterministic hash of src: fuzzing mutates src, which mutates the
+// derived options right along with the content being formatted, so the
+// corpus ends up covering combinations organically. mode/width are always
+// derived into a combination Format accepts (MaxWidth forced to 0 whenever
+// mode comes out ModePara — see Options.MaxWidth's doc comment), since an
+// error here would always be a deriveOptions bug, never a Format bug worth
+// failing the fuzz target over.
+func deriveOptions(src []byte) mdreflow.Options {
+	var h uint32
+	for _, b := range src {
+		h = h*31 + uint32(b)
+	}
+	mode := mdreflow.Mode(h % 3)
+	width := 0
+	if mode != mdreflow.ModePara {
+		width = int((h >> 8) % 121) // 0..120: spans "unbounded"/"default" (0) through comfortably wider than most test prose.
+	}
+	return mdreflow.Options{Mode: mode, MaxWidth: width}
+}
+
+// FuzzFormat fuzzes Format across every testdata fixture as seed corpus
+// (plus the mode-specific fixtures under testdata/modes/, which target
+// para/wrap/MaxWidth edge cases specifically), checking the guarantees
+// stated in docs/design.md's Guarantees section: no panic, idempotency,
+// and — with the documented exceptions the property test in
+// format_test.go already codifies (hard-break style normalization) —
+// render preservation. It also checks that Format's output always parses
+// without producing a different byte-for-byte reflow of itself. Options
+// (mode and MaxWidth) are derived from src itself — see deriveOptions —
+// so every mode and a spread of widths are exercised without a second
+// fuzz parameter.
 //
 // Run with: go test -fuzz=FuzzFormat -fuzztime=60s
 func FuzzFormat(f *testing.F) {
@@ -605,6 +797,11 @@ func FuzzFormat(f *testing.F) {
 	if len(matches) == 0 {
 		f.Fatal("no testdata/*.md seed files found")
 	}
+	modeMatches, err := filepath.Glob("testdata/modes/*/*.md")
+	if err != nil {
+		f.Fatal(err)
+	}
+	matches = append(matches, modeMatches...)
 	for _, m := range matches {
 		b, err := os.ReadFile(m)
 		if err != nil {
@@ -641,13 +838,13 @@ func FuzzFormat(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, src []byte) {
-		opts := mdreflow.Options{}
+		opts := deriveOptions(src)
 
 		out, err := mdreflow.Format(src, opts)
 		if err != nil {
-			// Format only errors for unimplemented option combinations,
-			// none of which opts selects; an error here is a bug.
-			t.Fatalf("Format returned an error for zero Options: %v", err)
+			// deriveOptions only ever produces combinations Format
+			// accepts (see its doc comment); an error here is a bug.
+			t.Fatalf("Format returned an error for opts %+v: %v", opts, err)
 		}
 
 		twice, err := mdreflow.Format(out, opts)
@@ -655,18 +852,22 @@ func FuzzFormat(f *testing.F) {
 			t.Fatalf("Format(Format(x)) returned an error: %v", err)
 		}
 		if !bytes.Equal(twice, out) {
-			t.Fatalf("Format is not idempotent.\nsrc:  %q\nonce: %q\ntwice: %q", src, out, twice)
+			t.Fatalf("Format is not idempotent.\nopts: %+v\nsrc:  %q\nonce: %q\ntwice: %q", opts, src, out, twice)
 		}
 
-		// Render preservation, with the harness's documented exception:
-		// none apply here since opts is the zero value (HardBreakBr is
-		// the input's own style only when the input already used <br>;
+		// Render preservation, with the harness's documented exceptions
+		// (the same ones for every mode: which lines a paragraph splits
+		// onto does not change which of these narrow rendering quirks
+		// apply, only where reflow's own line boundaries happen to fall
+		// — see each guard function's doc comment, and hasRenderRiskyShape
+		// for why each is checked against both src and out). HardBreakBr
+		// is the input's own style only when the input already used <br>;
 		// for the other two syntaxes normalization intentionally changes
 		// the source's hard-break spelling while preserving render — see
-		// TestHardBreakStyleMatrix). To keep the fuzz oracle simple and
+		// TestHardBreakStyleMatrix. To keep the fuzz oracle simple and
 		// still meaningful, compare with the same whitespace
 		// normalization format_test.go uses.
-		if !hasHardBreakAdjacentDelimiter(src) && !hasMultilineCodeSpanCandidate(src) && !hasLinkRefDefCollisionRisk(src) && !hasIrregularCRRun(src) && !hasSplitTaskListMarker(src) && !hasMultilineLinkLabelRisk(src) && !hasTableAdjacentSetextLine(src) && !hasDeepListContinuationIndent(src) && !hasNestedDashOnlyLine(src) && !hasBareBrLine(src) && !hasTagLineWithInsignificantTab(src) && !hasMultilineInlineTagCandidate(src) {
+		if !hasRenderRiskyShape(src) && !hasRenderRiskyShape(out) {
 			before := normalizeWhitespace(stripGoldmarkMetaError(renderHTML(t, src)))
 			after := normalizeWhitespace(stripGoldmarkMetaError(renderHTML(t, out)))
 			if before != after {
@@ -674,6 +875,38 @@ func FuzzFormat(f *testing.F) {
 			}
 		}
 	})
+}
+
+// hasRenderRiskyShape ORs together all fifteen documented, narrow
+// render-preservation exceptions above. It is checked against *both* src
+// and out (see FuzzFormat's call site), not just src: the first twelve
+// exceptions were all found and documented against a pre-existing shape
+// already present in the *source*, but a width-based cut (ModeWrap, and
+// ModeSentence's MaxWidth) can land at any word or clause boundary and so
+// can freshly *create* one of these same dangerous shapes in the output
+// where the source never had it — e.g. wrapping "-- x0" into "--\nx0"
+// manufactures a line that is nothing but dashes, tripping the same
+// goldmark-meta front-matter-artifact trigger hasNestedDashOnlyLine
+// already guards against for a source that had one to begin with (found
+// by FuzzFormat on exactly that input, in a width-bounded mode). Checking
+// both sides catches this without needing a fourteenth, output-specific
+// copy of every existing check.
+func hasRenderRiskyShape(b []byte) bool {
+	return hasHardBreakAdjacentDelimiter(b) ||
+		hasMultilineCodeSpanCandidate(b) ||
+		hasLinkRefDefCollisionRisk(b) ||
+		hasIrregularCRRun(b) ||
+		hasSplitTaskListMarker(b) ||
+		hasMultilineLinkLabelRisk(b) ||
+		hasTableAdjacentSetextLine(b) ||
+		hasDeepListContinuationIndent(b) ||
+		hasNestedDashOnlyLine(b) ||
+		hasBareBrLine(b) ||
+		hasTagLineWithInsignificantTab(b) ||
+		hasMultilineInlineTagCandidate(b) ||
+		hasWrapInducedBlockInterruptRisk(b) ||
+		hasFreshTableAdjacency(b) ||
+		hasHardBreakDeclarationRisk(b)
 }
 
 // stripGoldmarkMetaError removes goldmark-meta's injected parse-error
