@@ -1,0 +1,176 @@
+package segment
+
+import (
+	"reflect"
+	"testing"
+)
+
+// TestBreaks is a Golden-Rules-style table of standalone Breaks cases (in
+// the spirit of pragmatic_segmenter's golden rules, but our own), covering
+// the exceptions and guards documented on Segmenter.Breaks.
+func TestBreaks(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		want []Span
+	}{
+		{
+			name: "simple two sentences",
+			text: "This is one. This is two.",
+			want: []Span{{12, 13}},
+		},
+		{
+			name: "three sentences",
+			text: "One. Two. Three.",
+			want: []Span{{4, 5}, {9, 10}},
+		},
+		{
+			name: "no terminal punctuation",
+			text: "Just one sentence with no end",
+			want: nil,
+		},
+		{
+			name: "exclamation and question marks",
+			text: "Wait! Really? Yes.",
+			want: []Span{{5, 6}, {13, 14}},
+		},
+		{
+			name: "abbreviation Mr not a break",
+			text: "Mr. Smith arrived.",
+			want: nil,
+		},
+		{
+			name: "abbreviation followed by more text",
+			text: "Dr. Jones and Mrs. Jones came. Then they left.",
+			want: []Span{{30, 31}},
+		},
+		{
+			name: "e.g. mid sentence",
+			text: "Bring supplies, e.g. rope and water, before noon.",
+			want: nil,
+		},
+		{
+			name: "etc. followed by capitalized next sentence still suppressed",
+			text: "Pack food, water, etc. We leave soon.",
+			want: nil,
+		},
+		{
+			name: "decimal point never a candidate",
+			text: "The value is 3.14 exactly.",
+			want: nil,
+		},
+		{
+			name: "ellipsis followed by lowercase does not split",
+			text: "Wait... what happens next.",
+			want: nil,
+		},
+		{
+			name: "ellipsis followed by uppercase does split",
+			text: "Hold on... Something changed.",
+			want: []Span{{10, 11}},
+		},
+		{
+			name: "closing double quote after period",
+			text: `She said "I am done." Then she left.`,
+			want: []Span{{21, 22}},
+		},
+		{
+			name: "closing paren after period",
+			text: "This is true (I checked it.) Moving on.",
+			want: []Span{{28, 29}},
+		},
+		{
+			name: "trailing punctuation with no following text",
+			text: "This is the only sentence.",
+			want: nil,
+		},
+		{
+			name: "next char lowercase suppresses break",
+			text: "This looks like a break. but is not capitalized.",
+			want: nil,
+		},
+		{
+			name: "next char digit starts a sentence",
+			text: "See section one. 2 is the next section.",
+			want: []Span{{16, 17}},
+		},
+		{
+			name: "next char opening quote starts a sentence",
+			text: `He finished. "Now what?" She asked.`,
+			want: []Span{{12, 13}, {24, 25}},
+		},
+		{
+			name: "U.S. abbreviation with internal periods",
+			text: "She works for the U.S. government now.",
+			want: nil,
+		},
+		{
+			name: "multiple spaces after period collapse into one gap",
+			text: "First sentence.   Second sentence.",
+			want: []Span{{15, 18}},
+		},
+		{
+			name: "abbreviation at very end of text",
+			text: "They packed supplies, etc.",
+			want: nil,
+		},
+		{
+			name: "period directly followed by lowercase word no space",
+			text: "Visit example.com for more info.",
+			want: nil,
+		},
+	}
+
+	seg := New(nil)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := seg.Breaks(tc.text)
+			if len(got) == 0 && len(tc.want) == 0 {
+				return
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Breaks(%q) = %v, want %v", tc.text, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBreaksSingleInitial isolates the "J. Beda" case (a malformed
+// duplicate entry above was left out of the table intentionally): the
+// initial itself must not produce a break, but a genuine sentence end
+// later in the text still does.
+func TestBreaksSingleInitial(t *testing.T) {
+	seg := New(nil)
+	text := "J. Beda wrote this. It is a test."
+	got := seg.Breaks(text)
+	want := []Span{{19, 20}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Breaks(%q) = %v, want %v", text, got, want)
+	}
+}
+
+// TestBreaksCustomAbbreviations checks that Options.Abbreviations-style
+// additions (via New's extra parameter) suppress a break that the default
+// list alone would not.
+func TestBreaksCustomAbbreviations(t *testing.T) {
+	seg := New([]string{"cont."})
+	text := "See page 12 cont. For details, read the appendix."
+	if got := seg.Breaks(text); got != nil {
+		t.Errorf("Breaks(%q) = %v, want nil (custom abbreviation should suppress the break)", text, got)
+	}
+
+	// Without the custom addition, the same text does break.
+	def := New(nil)
+	if got := def.Breaks(text); len(got) != 1 {
+		t.Errorf("Breaks(%q) with default abbreviations = %v, want exactly one break", text, got)
+	}
+}
+
+func TestDefaultAbbreviationsIsACopy(t *testing.T) {
+	a := DefaultAbbreviations()
+	a[0] = "mutated"
+	b := DefaultAbbreviations()
+	if b[0] == "mutated" {
+		t.Fatal("DefaultAbbreviations must return a fresh copy each call")
+	}
+}
