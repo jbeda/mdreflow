@@ -84,7 +84,7 @@ func (s *Segmenter) Breaks(text string) []Span {
 
 		// Whitespace run immediately after the punctuation.
 		e1 := e0
-		for e1 < len(text) && (text[e1] == ' ' || text[e1] == '\t') {
+		for e1 < len(text) && isBoundaryWhitespaceByte(text[e1]) {
 			e1++
 		}
 		if e1 == e0 || e1 >= len(text) {
@@ -112,7 +112,7 @@ func (s *Segmenter) Breaks(text string) []Span {
 		// Token immediately preceding the punctuation run, e.g. "Mr." or
 		// "J." — used for the abbreviation and single-initial exceptions.
 		wordStart := m0
-		for wordStart > 0 && text[wordStart-1] != ' ' && text[wordStart-1] != '\t' {
+		for wordStart > 0 && !isBoundaryWhitespaceByte(text[wordStart-1]) {
 			wordStart--
 		}
 		token := text[wordStart:e0]
@@ -127,6 +127,49 @@ func (s *Segmenter) Breaks(text string) []Span {
 		out = append(out, Span{Start: e0, End: e1})
 	}
 	return out
+}
+
+// isBoundaryWhitespaceByte reports whether b is one of the bytes the
+// segmenter treats as inter-word whitespace when scanning for a token
+// boundary: space, tab, or a bare carriage return.
+//
+// This must be a strict function of bytes reflow's own join/canonicalize
+// step also treats as whitespace — never of how many of them there are,
+// or their exact composition beyond membership in this set — because a
+// boundary verdict that depends on more than that is not stable across a
+// reflow round-trip. joinClusterLines normalizes any run of inter-line
+// whitespace to exactly one space, and canonicalizeForWidth (package
+// reflow) treats `[ \t\r]+` as the one whitespace class every pass
+// measures identically; this set matches that one deliberately, byte for
+// byte, so the segmenter agrees with what reflow will actually preserve.
+//
+// The bare '\r' member specifically fixes issue #10: mdreflow's line
+// splitting does not treat a lone '\r' (unpaired with '\n') as a line
+// ending, so it can survive as a literal byte in the middle of a joined
+// cluster's text — e.g. "pad \rA." — sitting directly against the
+// preceding token. Before this fix, the backward token-boundary scan
+// only stopped at ' ' or '\t', so that stray '\r' was swept into the
+// token ("\rA." instead of "A."), which broke the single-initial check
+// (isSingleInitial) and the abbreviation lookup: "A." no longer looked
+// like an initial, so the '.' was treated as a real sentence-terminal
+// break. On the next pass, that '\r' is gone (the reformatted output's
+// line ending is a real '\n', which *does* get recognized and cleanly
+// joined to a single space), so the same "A." now reads as a bare
+// initial and the boundary disappears — an idempotency break entirely
+// driven by an incidental byte in the whitespace run, not by anything
+// about the sentence itself. Recognizing '\r' as whitespace here, the
+// same way reflow's own canonicalization does, keeps the token clean
+// ("A.") on every pass, so the verdict no longer depends on it.
+//
+// The forward post-punctuation whitespace-run scan uses the same set for
+// the same reason, symmetrically: the *width* of that run was already
+// irrelevant to the verdict (isSingleInitial and the abbreviation lookup
+// never inspected it), but a bare '\r' inside it should be consumed as
+// part of the break's whitespace like any other member of reflow's
+// whitespace class, not left dangling as a character the "does the next
+// rune plausibly start a sentence" guard then has to see and reject.
+func isBoundaryWhitespaceByte(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\r'
 }
 
 // isASCIIPunctByte reports whether b is one of CommonMark's escapable
