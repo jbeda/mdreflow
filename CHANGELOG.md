@@ -9,22 +9,20 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+Hardening and simplification. A day-long fuzzing campaign fixed the whole family of edge cases where reflowed output could parse differently than the input — splits manufacturing accidental tables, definitions, or headings; escapes re-pairing code spans; typography flipping raw-HTML recognition. All were pathological shapes that never occur in normal prose; each is now pinned by a regression seed. Alongside the fixes, some deliberately over-clever handling was descoped in favor of simpler, safer rules.
+
 ### Fixed
 
-- Paragraphs with a parenthetical spanning a line break but no `[` anywhere (`A torus (a portal\nyou pass through) here.`) are no longer silently skipped (#14): the link-hazard guard's paren check now requires a bracket, since every hazard it protects against needs one. Hard-wrapped prose with parentheticals reflows again; anything containing a `[` keeps the conservative skip.
-- A valid UTF-8 file is no longer refused when a multi-byte character happens to straddle the 8 KB sniff boundary (#15); the sniff now drops at most one partial trailing rune before validating, and real corruption at the tail still refuses.
-- A width- or sentence-forced split can no longer land a table-delimiter-shaped line (`-:`, `-|-|-`, …) directly under a non-blank line, which made the reflowed paragraph parse as a GFM table (#5, #13); such lines are now backslash-escaped the same way setext underlines already were.
-- A paragraph containing, or sitting directly against (no blank line), a link-reference-definition-shaped `[label]: ...` line now always passes through unchanged (#11) — simpler and safer than the previous partial handling, which tried to tell a self-complete one-line definition apart from one whose label, destination, or title reaches into the following paragraph. Definitions in their own blank-line-separated block (the common layout) were already skipped, so typical documents are unaffected; a paragraph directly adjacent to a one-line definition like `[foo]: /url` no longer reflows (it used to).
-- Footnote definition bodies (`[^label]: ...`) still reflow — they're ordinary prose — and their continuation lines are now indented four spaces, the one spelling every Markdown renderer keeps inside the footnote.
-- A paragraph containing a control character other than tab (form feed, vertical tab, a bare carriage return outside a CRLF pair, …) now passes through unchanged; these never appear in real documents and sit in exactly the grammar corners that differ between parser implementations.
-- Sentence-mode splits no longer flip between runs when a lone carriage return sits mid-paragraph (#10).
-- `--smart-quotes` no longer curls a quote sitting inside a malformed HTML-tag-shaped run (`<A A=">"…`): curling such a quote could make goldmark recognize the run as a real raw-HTML tag, changing what renders. Quotes between valid tags, and in ordinary prose around them, curl exactly as before.
-- Escaping a fence-opener-shaped run at a wrapped line start no longer lets its backticks re-pair with unrelated backticks on the next run (which could flip hard-break handling or typography decisions between runs): backticks in that position are now written as `&#96;` — rendering identically — and smart-quote protection is decided against the text as it will actually be emitted (#6, #8, #12).
+- Two field reports from real docsets: hard-wrapped prose with a parenthetical spanning a line break is no longer silently skipped (#14), and a valid UTF-8 file is no longer refused when a multi-byte character straddles the 8 KB detection boundary (#15).
+- Roughly twenty fuzz-found idempotency and render-preservation corners (#4–#8, #10–#13 and successors), none affecting normal documents.
 
 ### Changed
 
-- `Format`, `Check`, and `FormatReader` now reject invalid UTF-8 anywhere in the input with the typed error `mdreflow.ErrInvalidUTF8`; the CLI refuses such files (exit 3) even under `--force` and even when the bad bytes sit past the first 8 KB its quick sniff covers.
-- `Format`'s output is now always a fixpoint: formatting a second time returns it unchanged, even on pathological inputs where a single reflow pass is not yet self-consistent (the fuzz-found corners in issues #4–#8, #10–#13). In the never-observed case where reflow will not stabilize at all, the document is returned unchanged rather than churned.
+- **Formatting is now guaranteed stable**: `Format`'s output is a fixpoint — running the tool twice never produces a second diff, even on adversarial input.
+- **Invalid UTF-8 is rejected outright** with the typed error `mdreflow.ErrInvalidUTF8` (CLI: exit 3, even under `--force`); Markdown is text, and bytes with no character interpretation have nothing meaningful to reflow.
+- **Simpler scope around link reference definitions**: any paragraph containing or directly touching a `[label]:`-shaped line now passes through unchanged, replacing subtle partial handling. Definitions in their own blank-line-separated block — the common layout — were already skipped, so typical documents are unaffected.
+- **Footnote bodies** (`[^label]: ...`) still reflow as ordinary prose, and their continuation lines are now indented four spaces — the one spelling every Markdown renderer keeps inside the footnote.
+- Paragraphs containing control characters (form feed, vertical tab, …) pass through unchanged.
 
 ## v0.1.3 (2026-08-08)
 
