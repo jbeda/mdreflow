@@ -2,6 +2,8 @@ module github.com/jbeda/mdreflow
 
 go 1.24.4
 
+toolchain go1.25.8
+
 require (
 	github.com/boyter/gocodewalker v1.5.1
 	github.com/goccy/go-yaml v1.19.2
