@@ -242,6 +242,51 @@ func mustTypographyBits(t *testing.T, base string) mdreflow.Typography {
 	return 0
 }
 
+// TestReflowAfterSelfCompleteLinkRefDef pins a driver-review regression: an
+// earlier version of blockmap's precededByLinkRefDef guard (added to fix
+// issue #11's "[\\]\n]:0" verdict flip) skipped reflowing *every* paragraph
+// directly after *any* link reference definition, including the common
+// case where the definition is fully specified on its own opening line
+// ("[foo]: /url", consuming nothing from what follows) — silently
+// un-reflowing prose that v0.1.2 correctly reflowed. Only a definition
+// whose own match genuinely reaches past its opening line (a label split
+// across a line break, as in issue #11) puts the following paragraph at
+// risk; see blockmap.isSelfCompleteLinkRefDef.
+//
+// testdata/link-ref-def-no-blank.md golden-pins the same two shapes; this
+// test asserts the specific property more directly (each paragraph
+// actually gets split at its sentence boundary, not just "the golden
+// bytes still match").
+func TestReflowAfterSelfCompleteLinkRefDef(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			name: "bare destination",
+			src:  "[foo]: /url\nThis is a long paragraph. It has two sentences that should reflow.",
+			want: "[foo]: /url\nThis is a long paragraph.\nIt has two sentences that should reflow.",
+		},
+		{
+			name: "destination with title",
+			src:  "[foo]: /url \"Title\"\nThis is a long paragraph. It has two sentences that should reflow.",
+			want: "[foo]: /url \"Title\"\nThis is a long paragraph.\nIt has two sentences that should reflow.",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := mdreflow.Format([]byte(tc.src), mdreflow.Options{})
+			if err != nil {
+				t.Fatalf("Format: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("Format(%q) = %q, want %q", tc.src, got, tc.want)
+			}
+		})
+	}
+}
+
 // corpusFixtures returns every fixture input in testdata/ — the top-level
 // family, the mode families, and the typography family — as paths.
 func corpusFixtures(t *testing.T) []string {
@@ -313,7 +358,10 @@ func TestTypographyOverCorpus(t *testing.T) {
 					}
 
 					if hasRenderRiskyShape(src) || hasRenderRiskyShape(once) {
-						return
+						// Visible, not a bare return: a green run should
+						// say when a fixture's render oracle was dark
+						// (go-quality review S5).
+						t.Skip("render-preservation check skipped: fixture matches a documented risky shape")
 					}
 					before := normalizeForRender(renderHTML(t, src), set.opts)
 					after := normalizeForRender(renderHTML(t, once), set.opts)

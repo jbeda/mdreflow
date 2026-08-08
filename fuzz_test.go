@@ -84,17 +84,24 @@ func hasHardBreakAdjacentDelimiter(src []byte) bool {
 		if len(trimmed) > 0 && isDelim(trimmed[len(trimmed)-1]) {
 			return true
 		}
-		// A container prefix (blockquote ">", list padding, or — as the
-		// fuzzer kept demonstrating by growing one past any fixed window
-		// this checked — arbitrary junk bytes a malformed nesting
-		// attempt produces) can sit between the start of the next line
-		// and its real content, of unbounded width; scan the whole line
-		// rather than capping how far in to look.
-		next := lines[i+1]
-		if bytes.ContainsAny(next, "*_~") {
-			return true
-		}
-		if len(next) > 0 && next[0] == '\\' {
+		// For the following line, only a delimiter run (or backslash)
+		// immediately adjacent to the joined boundary matters: emphasis
+		// flanking looks at a delimiter run's direct neighbors, and a
+		// join replaces exactly one line ending with one space — a
+		// delimiter deeper inside the line keeps both its neighbors and
+		// cannot flank differently. "Adjacent" means the first content
+		// byte after the container prefix a join would strip: blockquote
+		// markers, whitespace (a former fixed-window scan here kept
+		// getting outgrown by junk-byte prefixes, but junk bytes are
+		// *content* — they survive the join and sit between the boundary
+		// and any later delimiter, breaking adjacency — so an exact
+		// first-content-byte check is both tighter and unboundedly wide).
+		// This deliberately still marks list bullets ("* item"), whose
+		// first content byte is a real delimiter shape; every "-" bullet,
+		// snake_case word, and mid-line emphasis span now stays under the
+		// render oracle instead of going dark (go-quality review S5).
+		next := bytes.TrimLeft(lines[i+1], " \t>")
+		if len(next) > 0 && (isDelim(next[0]) || next[0] == '\\') {
 			return true
 		}
 	}
@@ -663,7 +670,26 @@ func hasMultilineInlineTagCandidate(src []byte) bool {
 // disqualify type-7 in the *original*), but cutting right after it
 // produced a first line that *is* "just a tag, alone on a line", which
 // escapeBlockInterrupt correctly (and necessarily) escapes.
-var wrapInducedBlockTriggerRE = regexp.MustCompile(`(^|[ \t])(#{1,6}(\s|$)|>|[-*+](\s|$)|\d{1,9}[.)](\s|$)|` + "`{3,}|~{3,}" + `|[=-]{3,}|<[!?/A-Za-z]|\[[^\]]*\]:)`)
+// Only the trigger classes whose escape actually *changes rendering* gate
+// the render check (narrowed for go-quality review S5 — this predicate
+// alone used to darken the render oracle for 26 of 63 corpus fixtures):
+//
+//   - "<" + tag/comment/PI/closer shape: source-side it can render as raw
+//     inline HTML; escaped ("\<div") it renders as literal escaped text —
+//     a real render difference (the "aX <div a09s9X1>0Y1*01" find below).
+//   - 3+ backtick/tilde runs: escaping them character-by-character can
+//     change inline code-span pairing, so text that rendered as <code>
+//     renders as literal backticks (the #6/#8/#12 escape/re-pair family).
+//
+// The dropped alternatives — ATX "#", blockquote ">", bullet/ordered list
+// markers, setext/thematic [=-] runs, and "[label]:" openers — are
+// escaped with a plain backslash before an ASCII punctuation character,
+// which CommonMark renders as exactly the character itself: the escaped
+// line renders as the same literal text the unwrapped source rendered,
+// so those escapes are render-preserving by construction and never
+// needed to disable the oracle. (They can still be *idempotency* hazards;
+// that assertion always runs.)
+var wrapInducedBlockTriggerRE = regexp.MustCompile(`(^|[ \t])(` + "`{3,}|~{3,}" + `|<[!?/A-Za-z])`)
 
 // hasWrapInducedBlockInterruptRisk reports whether src has such a shape
 // anywhere mid-line.
