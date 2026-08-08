@@ -18,8 +18,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/text"
 
 	"github.com/jbeda/mdreflow/internal/blockmap"
+	"github.com/jbeda/mdreflow/internal/gm"
 	"github.com/jbeda/mdreflow/internal/segment"
 	"github.com/jbeda/mdreflow/internal/typography"
 )
@@ -1251,7 +1253,7 @@ func filterBreaks(breaks, noBreak []segment.Span) []segment.Span {
 // fits a single linear regex alternative here. (Setext heading underlines
 // share the "-"/"=" triggers already covered by isThematicBreak.) A link
 // reference definition's "[label]: destination" opener is also handled
-// separately (linkRefDefOpenerRE), not folded in here: unlike every other
+// separately (isCompleteLinkRefDefLine), not folded in here: unlike every other
 // trigger in this list, it needs an end anchor as well as a start anchor
 // — see that variable's doc comment for why.
 //
@@ -1358,7 +1360,12 @@ const htmlBlockTagNames = `address|article|aside|base|basefont|blockquote|body|c
 // (allowing only trailing whitespace there) did not match at all.
 var htmlBlockAnyOpenerRE = regexp.MustCompile(`(?i)^(<[A-Za-z][A-Za-z0-9-]*( [^<>\t]*)?/?>|</ *[A-Za-z][A-Za-z0-9-]*( [^<>\t]*)?/?>) *$`)
 
-// linkRefDefOpenerRE matches a link-reference-definition-shaped
+// The empirical notes below were accumulated on linkRefDefOpenerRE, the
+// hand-mirrored-grammar predecessor of isCompleteLinkRefDefLine (which
+// answers the same question by parsing the line with goldmark itself).
+// They remain the record of WHY the question is subtle:
+//
+// linkRefDefOpenerRE matched a link-reference-definition-shaped
 // "[label]: destination" line that is *complete on this line alone*: the
 // whole remainder after "[label]:" is (optional space) one bare
 // destination token (no ASCII whitespace, doesn't start with "<") and
@@ -1429,14 +1436,14 @@ var htmlBlockAnyOpenerRE = regexp.MustCompile(`(?i)^(<[A-Za-z][A-Za-z0-9-]*( [^<
 // FuzzFormat on " [^X]:\f!y 00" (seed 617a8c27848709db), whose split-off
 // first line " [^X]:\f!y" reparsed as a complete definition that this
 // regex, anchored at column 0 with space/tab-only runs, failed to escape.
-var linkRefDefOpenerRE = regexp.MustCompile(`^[ \t]{0,3}\[[^\[\]]*\]:[ \t\f\v]*[^\s<][^\s]*[ \t\f\v]*$`)
 
 // bareLinkRefDefOpenerLineRE matches an emitted line that is ONLY a
 // link-reference-definition opener — "[label]:" plus optional trailing
 // whitespace, no destination. Such a line is incomplete rather than
 // inert: CommonMark completes the definition using the following line as
 // its destination, so leaving one at a line start lets the reparse
-// swallow the next line's text (see linkRefDefOpenerRE's doc comment,
+// swallow the next line's text (see the notes above isCompleteLinkRefDefLine's
+// history block,
 // third bullet, for the fuzz find). Escaping the bracket renders as the
 // same literal text the paragraph showed before.
 var bareLinkRefDefOpenerLineRE = regexp.MustCompile(`^[ \t]{0,3}\[[^\[\]]*\]:[ \t\f\v]*$`)
@@ -1564,9 +1571,9 @@ func fenceEscapeNeutralize(text string) string {
 	// SmartQuotes (seed 38cbdf400862101d). Neutralize the leading "["
 	// (length-preserving, same rationale as the fence case below) so the
 	// protection decision matches the escaped output's reparse.
-	if linkRefDefOpenerRE.MatchString(text) || bareLinkRefDefOpenerLineRE.MatchString(text) {
+	if isCompleteLinkRefDefLine(text) || bareLinkRefDefOpenerLineRE.MatchString(text) {
 		// The opener bracket may sit after up to 3 columns of indent
-		// (see linkRefDefOpenerRE); neutralize the bracket itself.
+		// (up to 3 columns of indent); neutralize the bracket itself.
 		b := []byte(text)
 		i := 0
 		for i < len(b) && (b[i] == ' ' || b[i] == '\t') {
@@ -1766,13 +1773,34 @@ func escapeBlockInterrupt(line string, isFirstLine bool, firstLinePrefix string,
 		// '~'), so they stay backslash-escaped.
 		return escapeFenceOpenerRun(line)
 	}
-	if isThematicBreak(firstLinePrefix+line) || isSetextUnderline(line) || blockInterruptTriggers.MatchString(line) || linkRefDefOpenerRE.MatchString(line) || bareLinkRefDefOpenerLineRE.MatchString(line) || (prevLineNonBlank && isTableDelimiterRowShaped(line)) {
+	if isThematicBreak(firstLinePrefix+line) || isSetextUnderline(line) || blockInterruptTriggers.MatchString(line) || isCompleteLinkRefDefLine(line) || bareLinkRefDefOpenerLineRE.MatchString(line) || (prevLineNonBlank && isTableDelimiterRowShaped(line)) {
 		return escapeAfterIndent(line)
 	}
 	if isFirstLine && htmlBlockAnyOpenerRE.MatchString(line) {
 		return escapeAfterIndent(line)
 	}
 	return line
+}
+
+// isCompleteLinkRefDefLine reports whether line, parsed by goldmark in
+// total isolation, is a complete link reference definition — the
+// authoritative form of the question linkRefDefOpenerRE used to
+// approximate with a hand-mirrored grammar. The mirroring kept losing to
+// goldmark's implementation details (seed 617a8c27848709db: up to 3
+// columns of indent and \f accepted as separator whitespace; seed
+// afe8aadcbee7bf0d: yet \f INSIDE a destination token continues it — the
+// skip-before and end-of-token whitespace classes simply differ), so the
+// emitted line is now judged by the same parser whose reparse the escape
+// exists to control. The "]:" pre-filter keeps the parse off the hot
+// path for ordinary prose. An already-escaped "\[label]:" line parses as
+// a paragraph and correctly answers false, so escapes never stack.
+func isCompleteLinkRefDefLine(line string) bool {
+	if !strings.Contains(line, "]:") {
+		return false
+	}
+	doc := gm.New().Parser().Parse(text.NewReader([]byte(line)))
+	first := doc.FirstChild()
+	return first != nil && first.Kind() == ast.KindLinkReferenceDefinition && first.NextSibling() == nil
 }
 
 // escapeAfterIndent backslash-escapes line's first non-space/tab byte —
