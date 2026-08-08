@@ -2019,12 +2019,21 @@ func joinClusterLines(frags []lineFrag, hasTrailingMarker bool) string {
 	lastPieceEnd := ""
 	for _, f := range frags {
 		piece := f.text
+		// The trim set includes '\r': a fragment's bytes have had their
+		// real line ending stripped already, so any trailing '\r' here is
+		// a bare carriage return in content — part of reflow's [ \t\r]
+		// whitespace class (see segment.isBoundaryWhitespaceByte) — and
+		// leaving it exposed at a fragment edge manufactures a CRLF on
+		// emission: found by FuzzFormat on "0\r \n:::" (seed
+		// 555aadec1740c6ec), where trimming only the trailing space left
+		// "0\r" whose emitted "\r\n" the next pass read as a CRLF line
+		// ending and stripped — an idempotency flip from the trim itself.
 		if !f.leadingProtected {
-			piece = strings.TrimLeft(piece, " \t")
+			piece = strings.TrimLeft(piece, " \t\r")
 		}
 		trimmed := false
 		if !f.trailingProtected {
-			t := strings.TrimRight(piece, " \t")
+			t := strings.TrimRight(piece, " \t\r")
 			trimmed = t != piece
 			piece = t
 		}
