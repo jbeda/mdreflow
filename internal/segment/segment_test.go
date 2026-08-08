@@ -198,6 +198,79 @@ func TestBreaksCustomAbbreviations(t *testing.T) {
 	}
 }
 
+// TestIsBoundaryWhitespaceByte tables isBoundaryWhitespaceByte's doc
+// comment: space, tab, and bare '\r' are boundary whitespace; nothing
+// else is, including '\n' (Breaks is only ever called on already-joined,
+// newline-free cluster text).
+func TestIsBoundaryWhitespaceByte(t *testing.T) {
+	cases := []struct {
+		name string
+		b    byte
+		want bool
+	}{
+		{"space", ' ', true},
+		{"tab", '\t', true},
+		{"bare carriage return", '\r', true},
+		{"newline is not boundary whitespace", '\n', false},
+		{"ordinary letter", 'A', false},
+		{"digit", '0', false},
+		{"punctuation", '.', false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isBoundaryWhitespaceByte(tc.b); got != tc.want {
+				t.Errorf("isBoundaryWhitespaceByte(%q) = %v, want %v", tc.b, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBreaksBareCarriageReturn covers issue #10's fix: a bare '\r'
+// (unpaired with '\n', so it survives as literal content mid-cluster)
+// sitting directly against a token must be treated as boundary whitespace
+// on both the backward token-boundary scan (so a single-initial like "A."
+// is still recognized as one, not swept into "\rA.") and the forward
+// post-punctuation whitespace-run scan (so the '\r' is consumed as part
+// of the break, not left dangling for the sentence-start guard to choke
+// on).
+func TestBreaksBareCarriageReturn(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		want []Span
+	}{
+		{
+			// Backward scan: '\r' must stop the token scan the same way
+			// ' ' does, so "A." reads as a single-initial (no break), not
+			// "\rA." (which would not match isSingleInitial and so would
+			// wrongly produce a break).
+			name: "bare CR before a single initial suppresses the break",
+			text: "pad \rA. BC",
+			want: nil,
+		},
+		{
+			// Forward scan: '\r' in the post-punctuation whitespace run is
+			// consumed as part of the break, not left as a leading byte
+			// the sentence-start guard has to see.
+			name: "bare CR in the post-punctuation whitespace run is consumed",
+			text: "One.\rTwo.",
+			want: []Span{{4, 5}},
+		},
+	}
+	seg := New(nil)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := seg.Breaks(tc.text)
+			if len(got) == 0 && len(tc.want) == 0 {
+				return
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Breaks(%q) = %v, want %v", tc.text, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDefaultAbbreviationsIsACopy(t *testing.T) {
 	a := DefaultAbbreviations()
 	a[0] = "mutated"
