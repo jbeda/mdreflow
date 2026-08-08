@@ -738,7 +738,11 @@ func registeredRefs(src []byte) []string {
 // anything after. Any label, caret-leading included: to mdreflow's parser
 // configuration those are ordinary definitions (see linkRefDefOpenerRE in
 // package reflow).
-var lrdShapedLineRE = regexp.MustCompile(`^[ \t>]*\\?\[[^\[\]]*\]:`)
+// Same whitespace left boundary as bareLinkRefDefLineRE, same reason:
+// reflow's own join can rewrite this neighbor line to "text [label]:...",
+// and the verdict must survive that spelling (seed e3c349b37f164215, the
+// empty-label twin of ec99ee890331d9f8).
+var lrdShapedLineRE = regexp.MustCompile(`(^|[ \t])[ \t>]*\\?\[[^\[\]]*\]:`)
 
 // startsWithTitleOpenerUnderLRDShapedLine reports whether the paragraph
 // whose first content segment is seg sits directly (no blank line) under
