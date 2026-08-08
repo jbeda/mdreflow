@@ -1422,7 +1422,14 @@ var htmlBlockAnyOpenerRE = regexp.MustCompile(`(?i)^(<[A-Za-z][A-Za-z0-9-]*( [^<
 // escaping it anyway, besides being unnecessary, changed how the rest of
 // the line's autolink recognition behaved, found by FuzzFormat on exactly
 // that input.
-var linkRefDefOpenerRE = regexp.MustCompile(`^\[[^\[\]]*\]:[ \t]*[^\s<][^\s]*[ \t]*$`)
+// The `[ \t]{0,3}` leading-indent and `[ \t\f\v]` whitespace classes track
+// goldmark's actual acceptance, wider than the spec's space/tab: a
+// definition indented up to three columns is still a definition, and a
+// form feed after the colon still separates the destination — found by
+// FuzzFormat on " [^X]:\f!y 00" (seed 617a8c27848709db), whose split-off
+// first line " [^X]:\f!y" reparsed as a complete definition that this
+// regex, anchored at column 0 with space/tab-only runs, failed to escape.
+var linkRefDefOpenerRE = regexp.MustCompile(`^[ \t]{0,3}\[[^\[\]]*\]:[ \t\f\v]*[^\s<][^\s]*[ \t\f\v]*$`)
 
 // bareLinkRefDefOpenerLineRE matches an emitted line that is ONLY a
 // link-reference-definition opener — "[label]:" plus optional trailing
@@ -1432,7 +1439,7 @@ var linkRefDefOpenerRE = regexp.MustCompile(`^\[[^\[\]]*\]:[ \t]*[^\s<][^\s]*[ \
 // swallow the next line's text (see linkRefDefOpenerRE's doc comment,
 // third bullet, for the fuzz find). Escaping the bracket renders as the
 // same literal text the paragraph showed before.
-var bareLinkRefDefOpenerLineRE = regexp.MustCompile(`^\[[^\[\]]*\]:[ \t]*$`)
+var bareLinkRefDefOpenerLineRE = regexp.MustCompile(`^[ \t]{0,3}\[[^\[\]]*\]:[ \t\f\v]*$`)
 
 // backtickFenceStart and tildeFenceStart match a fenced-code-block opener's
 // leading run of 3+ backticks or tildes, so isFenceOpener can inspect what
@@ -1558,8 +1565,16 @@ func fenceEscapeNeutralize(text string) string {
 	// (length-preserving, same rationale as the fence case below) so the
 	// protection decision matches the escaped output's reparse.
 	if linkRefDefOpenerRE.MatchString(text) || bareLinkRefDefOpenerLineRE.MatchString(text) {
+		// The opener bracket may sit after up to 3 columns of indent
+		// (see linkRefDefOpenerRE); neutralize the bracket itself.
 		b := []byte(text)
-		b[0] = '~'
+		i := 0
+		for i < len(b) && (b[i] == ' ' || b[i] == '\t') {
+			i++
+		}
+		if i < len(b) && b[i] == '[' {
+			b[i] = '~'
+		}
 		return string(b)
 	}
 	if !isFenceOpener(text) {
@@ -1752,12 +1767,31 @@ func escapeBlockInterrupt(line string, isFirstLine bool, firstLinePrefix string,
 		return escapeFenceOpenerRun(line)
 	}
 	if isThematicBreak(firstLinePrefix+line) || isSetextUnderline(line) || blockInterruptTriggers.MatchString(line) || linkRefDefOpenerRE.MatchString(line) || bareLinkRefDefOpenerLineRE.MatchString(line) || (prevLineNonBlank && isTableDelimiterRowShaped(line)) {
-		return "\\" + line
+		return escapeAfterIndent(line)
 	}
 	if isFirstLine && htmlBlockAnyOpenerRE.MatchString(line) {
-		return "\\" + line
+		return escapeAfterIndent(line)
 	}
 	return line
+}
+
+// escapeAfterIndent backslash-escapes line's first non-space/tab byte —
+// not byte 0: several trigger shapes tolerate leading indent (a link
+// reference definition up to 3 columns, a setext underline, a table
+// delimiter row), and a backslash placed BEFORE that whitespace is an
+// escaped space, i.e. a literal backslash character in the rendered
+// output — the escape itself would break render preservation. Escaping
+// the first content byte renders as exactly the original text for every
+// trigger class here (all begin with escapable ASCII punctuation).
+func escapeAfterIndent(line string) string {
+	i := 0
+	for i < len(line) && (line[i] == ' ' || line[i] == '\t') {
+		i++
+	}
+	if i >= len(line) {
+		return line
+	}
+	return line[:i] + "\\" + line[i:]
 }
 
 // isThematicBreak reports whether line (ignoring up to 3 leading spaces)
