@@ -25,7 +25,7 @@ HTML attributes"), not commit-message terms.
    The Release workflow refuses tags whose commit is not on `main` (push the branch first, then the tag).
 6. Watch both tag-triggered workflows (Release and govulncheck): `gh run list -R jbeda/mdreflow --branch vX.Y.Z`.
    - If govulncheck fails on a **stdlib** vulnerability, the fix is bumping the `toolchain` directive in go.mod (not deps) and cutting a patch release; this happened for v0.1.1 / GO-2026-4602.
-7. `task release-verify VERSION=vX.Y.Z` — downloads a real asset, verifies the checksum, and smoke-tests the binary.
+7. `task release-verify VERSION=vX.Y.Z` — downloads a real asset, verifies the checksum, smoke-tests the binary, then pulls the version through proxy.golang.org (so `go install @latest` sees it) and asks pkg.go.dev to index it.
 
 ## Versioning
 
