@@ -4,15 +4,30 @@ version: "3"
 
 vars:
   FUZZTIME: '{{ .FUZZTIME | default "300s" }}'
+  # Stamp local builds so --version says exactly what you're running
+  # (e.g. v0.1.1-2-gb22590b-dirty). goreleaser stamps releases with the
+  # tag instead; a plain `go build` leaves the dev/none/unknown defaults.
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+  COMMIT:
+    sh: git rev-parse --short HEAD 2>/dev/null || echo none
+  DATE:
+    sh: date +%Y-%m-%dT%H:%M:%S%z
+  LDFLAGS: "-X main.version={{ .VERSION }} -X main.commit={{ .COMMIT }} -X main.date={{ .DATE }}"
 
 tasks:
   default:
     deps: [verify]
 
   build:
-    desc: "Build ./bin/mdreflow for local use (reports version dev; releases stamp real versions)"
+    desc: "Build ./bin/mdreflow for local use, version-stamped from git describe"
     cmds:
-      - go build -o bin/mdreflow ./cmd/mdreflow
+      - go build -ldflags "{{ .LDFLAGS }}" -o bin/mdreflow ./cmd/mdreflow
+
+  install:
+    desc: "go install mdreflow into GOBIN, version-stamped from git describe"
+    cmds:
+      - go install -ldflags "{{ .LDFLAGS }}" ./cmd/mdreflow
 
   verify:
     desc: "Full verification chain: build, vet, gofmt, lint, tests"
