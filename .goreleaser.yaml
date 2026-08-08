@@ -79,8 +79,10 @@ homebrew_casks:
 # Release notes are curated in CHANGELOG.md and passed in by the release
 # workflow via --release-notes (scripts/release-notes.sh); the raw commit
 # list is reachable through the compare link those notes end with.
-changelog:
-  disable: true
+# Do NOT set changelog.disable here: it also discards --release-notes and
+# publishes an empty release body (bit v0.1.3; see goreleaser's changelog
+# docs). Leaving the changelog enabled is harmless — --release-notes
+# overrides whatever it generates.
 
 release:
   # v0.x: every release is a pre-release-grade API promise (design.md's
