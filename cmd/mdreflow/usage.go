@@ -71,7 +71,10 @@ Exit codes (a contract other tools and agents can branch on):
   severe wins: 2 > 3 > 1 > 0. In practice this means a config/usage
   error stops everything immediately, while a per-file refusal among
   several files still lets the rest of the batch be checked or
-  formatted before the run reports exit 3.
+  formatted before the run reports exit 3. The numbers follow Unix
+  convention (diff-style 1 for "differences found", 2 for usage errors,
+  as grep and diff use), so severity deliberately does not track
+  numeric order.
 
 Configuration (.mdreflow.yaml):
 
