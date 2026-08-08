@@ -69,7 +69,8 @@ type Paragraph struct {
 // the exact bytes that were parsed, since the returned ranges index into it.
 func Paragraphs(doc ast.Node, source []byte) []Paragraph {
 	var out []Paragraph
-	collect(doc, doc, source, false, 0, &out)
+	fmEnd := frontMatterEnd(source)
+	collect(doc, source, false, 0, fmEnd, &out)
 	return out
 }
 
@@ -82,9 +83,9 @@ const maxContainerDepth = 2
 // collect walks n's children (block-level only; a Paragraph's own inline
 // children are never visited, since goldmark never nests a Paragraph inside
 // another Paragraph's inline tree). inBlockquote is true if n itself, or
-// any ancestor already visited, is a *ast.Blockquote. doc is the document
-// root, passed through unchanged, so build can special-case a document's
-// very first child (see isUnterminatedFrontMatterArtifact).
+// any ancestor already visited, is a *ast.Blockquote. fmEnd is the
+// document's front-matter end offset (frontMatterEnd(source), or -1 if
+// none) — see build's use of it.
 //
 // depth counts List and Blockquote ancestors (each entered increments it
 // by one; ListItem does not, since a List/ListItem pair is one level of
@@ -102,11 +103,10 @@ const maxContainerDepth = 2
 // through untouched — no reflow is always render-preserving by
 // construction. Found by FuzzFormat on "000000000000000000\n>* >! 0"
 // (blockquote > list > blockquote, three levels).
-func collect(doc, n ast.Node, source []byte, inBlockquote bool, depth int, out *[]Paragraph) {
+func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int, out *[]Paragraph) {
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
 		switch c.(type) {
 		case *ast.Paragraph, *ast.TextBlock:
-			isDocFirstChild := n == doc && c == doc.FirstChild()
 			if depth > maxContainerDepth {
 				continue // pass through byte-for-byte; see collect's doc comment
 			}
@@ -123,7 +123,7 @@ func collect(doc, n ast.Node, source []byte, inBlockquote bool, depth int, out *
 			if prev := c.PreviousSibling(); prev != nil && prev.Kind() == gfmast.KindTable && !c.HasBlankPreviousLines() {
 				precededByTable = true
 			}
-			if pp, skip := build(c, source, inBlockquote, isDocFirstChild, precededByTable); !skip {
+			if pp, skip := build(c, source, inBlockquote, fmEnd, precededByTable); !skip {
 				*out = append(*out, pp)
 			}
 			continue
@@ -137,16 +137,17 @@ func collect(doc, n ast.Node, source []byte, inBlockquote bool, depth int, out *
 		case *ast.List:
 			childDepth++
 		}
-		collect(doc, c, source, childInBQ, childDepth, out)
+		collect(c, source, childInBQ, childDepth, fmEnd, out)
 	}
 }
 
 // build derives a Paragraph from p (an *ast.Paragraph or *ast.TextBlock),
 // or reports skip == true if a whole-node dialect rule matches p's text.
-// isDocFirstChild is true when p is the very first block-level child of
-// the document. precededByTable is true when p's immediately preceding
-// sibling in the AST is a GFM *ast.Table — see its use below for why.
-func build(p ast.Node, source []byte, inBlockquote bool, isDocFirstChild bool, precededByTable bool) (pp Paragraph, skip bool) {
+// fmEnd is the document's front-matter end offset (frontMatterEnd(source),
+// or -1 if source has no front matter) — see its use below. precededByTable
+// is true when p's immediately preceding sibling in the AST is a GFM
+// *ast.Table — see its use below for why.
+func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTable bool) (pp Paragraph, skip bool) {
 	lines := p.Lines()
 	n := lines.Len()
 	if n == 0 {
@@ -183,75 +184,27 @@ func build(p ast.Node, source []byte, inBlockquote bool, isDocFirstChild bool, p
 		// legitimate content — goldmark's own blank-line test (space/tab
 		// only) would already have ended the paragraph there — so when it
 		// does happen, it is always some kind of parser artifact (the
-		// same family as allBlank's control-character case, or — found by
-		// FuzzFormat on "* -\n\t  \n\t0" — a side effect of goldmark-meta
-		// consuming an earlier "-"-only line invisibly, leaving a
-		// TextBlock whose own first line is a bare, zero-width soft-break
-		// segment, combined with tab-stop padding on a later line whose
-		// Value() synthesizes leading space bytes that do not exist at
-		// its own raw [Start,Stop) — package reflow's join logic already
-		// tolerates an empty line by dropping it (see joinClusterLines),
-		// but that alone was not enough to make this exact input
-		// reproduce byte-for-byte on a second pass. Skipping the whole
-		// paragraph is the safe, general answer once again.
+		// same family as allBlank's control-character case). Package
+		// reflow's join logic already tolerates an empty line by dropping
+		// it (see joinClusterLines), but that alone is not enough to
+		// guarantee byte-for-byte reproduction on a second pass for every
+		// shape a parser artifact can take. Skipping the whole paragraph
+		// is the safe, general answer once again.
 		return Paragraph{}, true
 	}
 	if wholeNodeSkip(trimmed) {
 		return Paragraph{}, true
 	}
-	if hasInjectedArtifactChild(p) {
-		// The direct, general fix for the whole goldmark-meta-artifact
-		// family isAllDashes and isUnterminatedFrontMatterArtifact chase
-		// by content shape: every fuzz find in this family (document
-		// root, nested inside a tight list item, nested inside a
-		// blockquote, with or without a blank line or trailing
-		// whitespace nearby) shares one concrete AST signature — an
-		// *ast.String child goldmark-meta injects, containing its own
-		// "yaml: ..." parse-error text, directly inside the
-		// Paragraph/TextBlock whose content it also silently altered.
-		// Checking for that signature directly, instead of continuing to
-		// guess at which surface byte pattern (a lone "-", a run of
-		// them, a specific container, specific whitespace) triggers it
-		// this time, is the fix that actually generalizes — found
-		// necessary after FuzzFormat kept finding new shapes the
-		// content-based checks missed, most recently ">-\n>#0\n>00" (a
-		// blockquote, where the dash-only line is consumed leaving a
-		// Paragraph whose own first line is "#0", not a dash, so
-		// isAllDashes never even sees anything to match). ast.KindString
-		// is a generic node kind that *could*, in principle, appear for
-		// some unrelated reason in a future goldmark version or
-		// extension; skipping reflow on it regardless is still always
-		// safe (just conservative), matching this file's general
-		// philosophy of preferring "don't touch it" over risking
-		// content loss.
-		return Paragraph{}, true
-	}
-	if isAllDashes(trimmed[0]) {
-		// Fuzz-found content-loss hazard, a nested-context relative of
-		// isUnterminatedFrontMatterArtifact below: goldmark-meta's block
-		// parser triggers on any line consisting solely of "-"
-		// characters — any *run* of them, not just a single "-" (its own
-		// isSeparator test trims the line then checks every remaining
-		// byte is '-'; found broadened from an earlier, single-dash-only
-		// version of this check by FuzzFormat on "0) --\n   0  ": an
-		// ordered list item whose own first line is "--" hit the same
-		// artifact a lone "-" does) — and it turns out this fires
-		// wherever such a line opens *any* block's first line, not only
-		// the document's own root (which is all
-		// isUnterminatedFrontMatterArtifact, below, actually guards).
-		// Originally found by FuzzFormat on "* -\n\t  \n\t0": a tight
-		// list item whose own first line (after its "* " marker, which
-		// is container prefix and not part of Lines() content) is just
-		// "-" triggered the same injected-parse-error / silently-
-		// altered-content artifact inside a nested TextBlock, corrupting
-		// output (confirmed as a real idempotency break, not merely a
-		// cosmetic render difference this package's fuzz-harness
-		// exceptions would normally absorb). Skipping any paragraph/
-		// text-block whose own first line is nothing but dashes avoids
-		// ever reflowing content goldmark-meta might reinterpret, at the
-		// cost of not reflowing the vanishingly rare legitimate prose
-		// that opens with a bare dash run and nothing else on its first
-		// line.
+	if fmEnd >= 0 && lines.At(0).Start < fmEnd {
+		// Front matter's interior lines: excluded from reflow by a pure
+		// byte-range test against blockmap's own front-matter pre-scan
+		// (frontMatterEnd), not by any goldmark parser hook — see
+		// frontmatter.go. Whatever node shape goldmark's stock block
+		// parsing happened to make of these lines (Paragraph, a List's
+		// TextBlock, ...) is irrelevant: none of them can straddle the
+		// closing delimiter line, so this paragraph's own first line
+		// starting before fmEnd is sufficient to know it is entirely
+		// contained in the front-matter block.
 		return Paragraph{}, true
 	}
 	if hasPossibleLinkRefDefOpener(trimmed) || hasUnbalancedBracket(trimmed) || hasUnbalancedParen(trimmed) {
@@ -323,9 +276,6 @@ func build(p ast.Node, source []byte, inBlockquote bool, isDocFirstChild bool, p
 		return Paragraph{}, true
 	}
 	start0 := lines.At(0).Start
-	if isDocFirstChild && isUnterminatedFrontMatterArtifact(source, start0) {
-		return Paragraph{}, true
-	}
 	if precededByTable {
 		// Fuzz-found idempotency hazard: whether a GFM table forms at all
 		// for a given header+delimiter-row pair turns out to be sensitive
@@ -398,58 +348,6 @@ func build(p ast.Node, source []byte, inBlockquote bool, isDocFirstChild bool, p
 		ContPrefix: continuationPrefix(source, start0),
 		Boundary:   boundary,
 	}, false
-}
-
-// isUnterminatedFrontMatterArtifact reports whether source's very first
-// line consists solely of '-' characters (goldmark-meta's own separator
-// test: any run of dashes, not just "---", triggers it — see
-// goldmark-meta's isSeparator).
-//
-// goldmark-meta's block parser triggers on such a line and then reads
-// every following line, up to a matching closing separator or EOF, as
-// attempted YAML. If no closing separator ever appears (malformed input —
-// real front matter always closes), it swallows the rest of the document
-// and either (a) removes it from the AST if the collected text happens to
-// parse as YAML, or (b) leaves a fallback *ast.TextBlock with the original
-// content when it doesn't. Case (b) is a fuzz-discovered hazard: since
-// mdreflow would otherwise treat that fallback TextBlock as ordinary
-// reflow-eligible prose, joining its lines can change whether the result
-// happens to parse as valid YAML — flipping a document from "malformed
-// front matter, content visible" to "well-formed front matter, content
-// silently removed" purely as a side effect of reflow, which is a real
-// (if exceedingly narrow — no real front-matter convention uses an
-// unterminated dash fence) content-preservation violation. Treating any
-// document-first-child paragraph/text-block preceded by a dash-only line
-// as a whole-node skip avoids it entirely, mirroring how the TOML rule
-// already treats a front-matter-shaped block as non-prose. See the M2
-// report for the fuzz input that found this ("-\n0: \n0").
-//
-// contentStart must be the candidate paragraph's own first-line content
-// start offset. This is required, not just "is it the document's first
-// child": a *successfully* parsed "---"-delimited YAML front matter block
-// is entirely removed from the AST by goldmark-meta, so the real prose
-// paragraph that follows it also becomes the document's first remaining
-// child — and would otherwise be misidentified as this same artifact,
-// since its preceding line (now gone from the tree but still present in
-// source) is also dash-only. The distinguishing fact is proximity: the
-// fallback TextBlock in the failure case starts capturing on the line
-// immediately after the dash line, with nothing removed in between, so
-// contentStart must equal the byte right after that line's newline.
-func isUnterminatedFrontMatterArtifact(source []byte, contentStart int) bool {
-	nl := bytes.IndexByte(source, '\n')
-	if nl < 0 || contentStart != nl+1 {
-		return false
-	}
-	t := strings.TrimSpace(string(source[:nl]))
-	if t == "" {
-		return false
-	}
-	for i := 0; i < len(t); i++ {
-		if t[i] != '-' {
-			return false
-		}
-	}
-	return true
 }
 
 // continuationPrefix derives the container-prefix bytes for every output
@@ -622,33 +520,6 @@ func hasUnbalancedParen(trimmedLines []string) bool {
 // close), which looks balanced, but the "(" is structurally still open at
 // the end of the line (the leading ")" is just stray, unmatched text
 // before it, not its partner) and does span into line two.
-// isAllDashes reports whether s is non-empty and consists solely of '-'
-// characters — goldmark-meta's own isSeparator test, which any such line
-// satisfies regardless of length (a single "-" and a run like "---" are
-// equally a match).
-// hasInjectedArtifactChild reports whether p has any descendant of kind
-// ast.KindString — see hasInjectedArtifactChild's call site in build for
-// what this detects and why.
-func hasInjectedArtifactChild(p ast.Node) bool {
-	for c := p.FirstChild(); c != nil; c = c.NextSibling() {
-		if c.Kind() == ast.KindString || hasInjectedArtifactChild(c) {
-			return true
-		}
-	}
-	return false
-}
-
-func isAllDashes(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		if s[i] != '-' {
-			return false
-		}
-	}
-	return true
-}
 
 // hasEmptyLine reports whether any of trimmedLines is the empty string.
 func hasEmptyLine(trimmedLines []string) bool {

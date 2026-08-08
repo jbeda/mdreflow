@@ -7,16 +7,21 @@ package gm
 
 import (
 	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark-meta"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/renderer/html"
 )
 
 // New returns a freshly configured goldmark instance: CommonMark plus the
 // GFM extension bundle (tables, strikethrough, linkify, task lists) for
-// dialect recognition, and goldmark-meta for YAML front matter (removed
-// from the AST so it passes through byte-for-byte). See docs/design.md and
-// docs/m0-spike-findings.md for why this specific set.
+// dialect recognition. See docs/design.md and docs/m0-spike-findings.md
+// for why this specific set.
+//
+// No front-matter extension is registered: mdreflow never consumes front
+// matter's parsed metadata, only needs the block kept out of reflow and
+// emitted byte-for-byte, which package blockmap does with its own
+// byte-range pre-scan (see blockmap's frontMatterEnd) rather than a
+// goldmark parser hook — see docs/design.md's Dependencies section for why
+// this replaced github.com/yuin/goldmark-meta.
 //
 // html.WithUnsafe() is set because this same instance renders HTML for the
 // render-preservation property check (see format_test.go): without it,
@@ -31,7 +36,6 @@ func New() goldmark.Markdown {
 	return goldmark.New(
 		goldmark.WithExtensions(
 			extension.GFM,
-			meta.Meta,
 		),
 		goldmark.WithRendererOptions(
 			html.WithUnsafe(),

@@ -114,8 +114,9 @@ matches a marker regex (`:::` fences, block shortcodes, block `{expr}`, `+++`
 TOML front matter); (2) within a `Paragraph`, treat any `Lines()` segment
 matching a marker regex as an immovable boundary — this handles fences fused
 with prose by lazy continuation (no-blank-line `:::`, `> [!NOTE]` markers,
-paired shortcodes, `$$` math); (3) adopt `goldmark-meta` for YAML front
-matter; (4) inline `{expr}`/shortcodes/math are invisible to the AST (plain
+paired shortcodes, `$$` math); (3) recognize YAML front matter ourselves via a
+byte-range pre-scan (originally goldmark-meta, replaced — see Dependencies);
+(4) inline `{expr}`/shortcodes/math are invisible to the AST (plain
 `Text`) and need the already-planned regex scan for no-break spans. The one
 construct post-parse rules cannot recover is a multi-line JSX opening tag
 whose closing `>` sits alone on a line (goldmark consumes it as an empty
@@ -333,10 +334,14 @@ Small on purpose; additions require amending this doc.
 - `github.com/yuin/goldmark` (+ GFM extension) — parsing, library core
 - `github.com/goccy/go-yaml` — config file, CLI layer only. (Amended
   2026-08-07: originally `gopkg.in/yaml.v3`, which is no longer maintained;
-  goccy/go-yaml is actively maintained with better spec compliance. Note
-  goldmark-meta drags in `yaml.v2` as an indirect dep — worth replacing with a
-  ~40-line front-matter block parser of our own, since mdreflow never consumes
-  the parsed metadata, only needs the block out of the AST.)
+  goccy/go-yaml is actively maintained with better spec compliance.)
+- YAML front matter is recognized by our own byte-range pre-scan
+  (`internal/blockmap`), not a parser extension. (Amended 2026-08-07: this was
+  goldmark-meta at first, but mdreflow never consumes the parsed metadata —
+  it only needs the block excluded from reflow — and goldmark-meta's YAML
+  parsing dragged in unmaintained `yaml.v2` plus parser-hook artifacts the
+  fuzz harness had to defend against. Opener is exactly `---` at byte 0;
+  unterminated front matter is not front matter.)
 - `github.com/boyter/gocodewalker` — CLI layer only; used solely for its
   vendored `go-gitignore` subpackage (nested-`.gitignore` semantics). The walk
   itself is hand-rolled `filepath.WalkDir` (M4 decision; sabhiram/go-gitignore
