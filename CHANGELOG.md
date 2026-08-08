@@ -9,7 +9,10 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
-Nothing yet.
+### Fixed
+
+- Width-constrained modes (`wrap`, and `sentence` with `--max-width`) were roughly cubic in paragraph length: a 1600-word paragraph took 19 seconds to wrap and now takes about 2 milliseconds.
+  Output is unchanged (verified byte-identical across the full test corpus and all fuzz seeds).
 
 ## v0.1.2 (2026-08-08)
 

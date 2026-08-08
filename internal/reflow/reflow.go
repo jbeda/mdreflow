@@ -13,6 +13,7 @@ package reflow
 import (
 	"bytes"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -409,10 +410,35 @@ func filterUnsafeLineEnds(text string, breaks []segment.Span) []segment.Span {
 	if len(breaks) == 0 {
 		return breaks
 	}
+	// Precompute every prefix length that ends with a <br>-shaped tag plus
+	// optional trailing whitespace — the positions where the $-anchored
+	// hardBreakBrRE would match text[:p]. Running that regex per candidate
+	// rescans the whole prefix each time (quadratic, and the dominant cost
+	// of width-constrained modes once wrapRanked stopped rescanning); one
+	// pass with the unanchored tag core is equivalent: a prefix satisfies
+	// hardBreakBrRE exactly when it ends inside [tagEnd, tagEnd+wsRun] for
+	// some tag match (the pattern's leading [ \t]* never affects whether a
+	// match ending at $ exists).
+	var brEnds []segment.Span // prefix lengths in [Start, End] end with a <br> tag
+	for _, m := range brTagCoreRE.FindAllStringIndex(text, -1) {
+		e := m[1]
+		j := e
+		for j < len(text) && (text[j] == ' ' || text[j] == '\t') {
+			j++
+		}
+		brEnds = append(brEnds, segment.Span{Start: e, End: j})
+	}
+	bi := 0
 	out := breaks[:0:0]
 	for _, b := range breaks {
+		for bi < len(brEnds) && brEnds[bi].End < b.Start {
+			bi++
+		}
+		if bi < len(brEnds) && brEnds[bi].Start <= b.Start {
+			continue // prefix ends with a <br> tag (+ trailing ws)
+		}
 		before := text[:b.Start]
-		if trailingBackslashCount(before) == 1 || hardBreakBrRE.MatchString(before) || strings.HasSuffix(before, "\r") {
+		if trailingBackslashCount(before) == 1 || strings.HasSuffix(before, "\r") {
 			continue
 		}
 		after := text[b.End:]
@@ -423,6 +449,11 @@ func filterUnsafeLineEnds(text string, breaks []segment.Span) []segment.Span {
 	}
 	return filterLineStartHazards(text, out)
 }
+
+// brTagCoreRE is hardBreakBrRE's tag shape without the surrounding
+// whitespace or the $ anchor; see filterUnsafeLineEnds for how it stands
+// in for the anchored form.
+var brTagCoreRE = regexp.MustCompile(`(?i)<br[ \t]*/?>`)
 
 // linkifyTokenStart matches the start of a token GFM's linkify extension
 // turns into a bare link with no delimiters at all: a scheme-prefixed
@@ -570,6 +601,150 @@ func canonicalizeForWidth(text string) string {
 	return b.String()
 }
 
+// widthMeasurer answers fitLen-shaped width queries for slices of one
+// cluster text in O(1)-ish time after an O(n) setup, replacing the
+// per-candidate re-parse that made wrapRanked roughly cubic (30s on a
+// 2000-word paragraph). It computes segment.NoBreakSpans and a prefix-sum
+// table of canonicalized rune widths ONCE for the whole text, so a
+// candidate line's canonical width is a subtraction rather than a rescan.
+//
+// Measurement semantics differ from fitLen in one deliberate way: run
+// protection is decided by the CLUSTER-GLOBAL no-break spans, not by
+// re-parsing each truncated candidate substring. The two agree everywhere
+// a construct's closing delimiter falls on the same side of the cut as
+// its opener — and a cut can never land inside a global span, since
+// candidates are filtered against those same spans before wrapRanked
+// runs — so disagreement is confined to link-shaped text whose
+// interpretation depends on bytes beyond the truncation point (e.g. an
+// unbalanced "](…" that a truncation happens to balance). Global spans
+// are also the *consistent* choice: both format passes measure identical
+// widths for identical content, which is what idempotency wants.
+// Verified against the previous implementation by a full-corpus
+// differential run (fixtures + fuzz seeds, byte-identical) plus a fuzz
+// soak.
+type widthMeasurer struct {
+	text    string
+	noBreak []segment.Span
+	prefix  []int // prefix[i] = canonical rune width of text[:i]
+}
+
+func newWidthMeasurer(text string) *widthMeasurer {
+	m := &widthMeasurer{
+		text:    text,
+		noBreak: segment.NoBreakSpans(text),
+		prefix:  make([]int, len(text)+1),
+	}
+	w := 0
+	fillLiteral := func(from, to int) {
+		for i := from; i < to; {
+			_, size := utf8.DecodeRuneInString(text[i:])
+			for j := i + 1; j <= i+size; j++ {
+				m.prefix[j] = w + 1
+			}
+			w++
+			i += size
+		}
+	}
+	last := 0
+	for _, match := range canonicalRunRE.FindAllStringIndex(text, -1) {
+		start, end := match[0], match[1]
+		fillLiteral(last, start)
+		hasCore := strings.ContainsAny(text[start:end], " \t")
+		if hasCore && end-start > 1 && !spanContains(m.noBreak, start) {
+			// Collapsible run: measures as a single space, exactly as
+			// canonicalizeForWidth rewrites it.
+			w++
+			for j := start + 1; j <= end; j++ {
+				m.prefix[j] = w
+			}
+		} else {
+			fillLiteral(start, end)
+		}
+		last = end
+	}
+	fillLiteral(last, len(text))
+	return m
+}
+
+// width returns the canonical rune width of text[a:b]. Exact whenever a
+// and b sit on the run/rune boundaries wrapRanked queries (cut ends, run
+// starts, len(text)).
+func (m *widthMeasurer) width(a, b int) int { return m.prefix[b] - m.prefix[a] }
+
+// canonSlice is canonicalizeForWidth for text[a:b], with run protection
+// decided by the global spans (see the type comment). a and b fall on
+// run boundaries for every wrapRanked query, so no run straddles either
+// end.
+func (m *widthMeasurer) canonSlice(a, b int) string {
+	sub := m.text[a:b]
+	var sb strings.Builder
+	sb.Grow(len(sub))
+	last := 0
+	for _, match := range canonicalRunRE.FindAllStringIndex(sub, -1) {
+		start, end := match[0], match[1]
+		sb.WriteString(sub[last:start])
+		hasCore := strings.ContainsAny(sub[start:end], " \t")
+		if hasCore && end-start > 1 && !spanContains(m.noBreak, a+start) {
+			sb.WriteByte(' ')
+		} else {
+			sb.WriteString(sub[start:end])
+		}
+		last = end
+	}
+	sb.WriteString(sub[last:])
+	return sb.String()
+}
+
+// escapeDeltaMax bounds how many runes escapeBlockInterrupt can add to
+// any line starting at byte a: a fence-opener-shaped line gains one
+// backslash per backtick/tilde in its leading run (see the escape loop in
+// escapeBlockInterrupt), every other trigger gains exactly one. The
+// leading run depends only on the line's start, so the bound does too.
+func (m *widthMeasurer) escapeDeltaMax(a int) int {
+	n := 0
+	for i := a; i < len(m.text) && (m.text[i] == '`' || m.text[i] == '~'); i++ {
+		n++
+	}
+	return max(n, 1)
+}
+
+// fits reports whether the line text[a:b] fits within maxWidth once
+// escaped: the prefix-table width answers all but the ambiguous band
+// [maxWidth-escapeDeltaMax, maxWidth], where the real escape is simulated
+// exactly as fitLen would.
+func (m *widthMeasurer) fits(a, b, maxWidth int) bool {
+	w := m.width(a, b)
+	if w > maxWidth {
+		return false
+	}
+	if w+m.escapeDeltaMax(a) <= maxWidth {
+		return true
+	}
+	return runeLen(escapeBlockInterrupt(m.canonSlice(a, b), true, "")) <= maxWidth
+}
+
+// lastFit returns the largest i >= from with fits(a, cands[i].Start), or
+// -1. Canonical width is strictly increasing across candidates (any two
+// are separated by at least one non-run rune), so the width cutoff is
+// found by binary search and only the escape-delta band below it — at
+// most escapeDeltaMax+1 candidates — needs exact evaluation.
+func (m *widthMeasurer) lastFit(cands []segment.Span, from, a, maxWidth int) int {
+	hi := sort.Search(len(cands)-from, func(k int) bool {
+		return m.width(a, cands[from+k].Start) > maxWidth
+	}) + from - 1
+	dmax := m.escapeDeltaMax(a)
+	for i := hi; i >= from; i-- {
+		w := m.width(a, cands[i].Start)
+		if w+dmax <= maxWidth {
+			return i
+		}
+		if runeLen(escapeBlockInterrupt(m.canonSlice(a, cands[i].Start), true, "")) <= maxWidth {
+			return i
+		}
+	}
+	return -1
+}
+
 // wrapRanked repeatedly cuts text into lines no wider than maxWidth runes,
 // consuming a break candidate (rather than emitting it) at each cut —
 // matching how a sentence break or a wrapped word boundary both discard the
@@ -581,7 +756,9 @@ func canonicalizeForWidth(text string) string {
 // prefers a clause boundary over a plain word boundary — see computeLines).
 //
 // Each candidate line's width is measured *as if escapeBlockInterrupt will
-// escape it* (fitLen, not a plain rune count): the render loop in
+// escape it* (widthMeasurer.fits — fitLen's semantics answered from a
+// per-cluster prefix table, see widthMeasurer's doc comment — not a plain
+// rune count): the render loop in
 // writeParagraph backslash-escapes any output line that would otherwise be
 // misparsed as a new block on reparse (e.g. a line reflow made start with
 // "* ", which would misparse as a bullet marker) — an escape that adds a
@@ -606,6 +783,7 @@ func canonicalizeForWidth(text string) string {
 // overflowed once; if no candidate remains at all, the rest of text is
 // emitted as one final (possibly overlong) line.
 func wrapRanked(text string, maxWidth int, primary, secondary []segment.Span) []string {
+	m := newWidthMeasurer(text)
 	var out []string
 	lineStart := 0
 	pi, si := 0, 0
@@ -617,26 +795,14 @@ func wrapRanked(text string, maxWidth int, primary, secondary []segment.Span) []
 			si++
 		}
 
-		if fitLen(text[lineStart:]) <= maxWidth {
+		if m.fits(lineStart, len(text), maxWidth) {
 			// Everything left already fits on one line: no more cuts are
 			// needed, regardless of how many break candidates remain.
 			break
 		}
 
-		bestPrimary := -1
-		for i := pi; i < len(primary); i++ {
-			if fitLen(text[lineStart:primary[i].Start]) > maxWidth {
-				continue // A later, longer candidate might still fit once escaped — fitLen is not guaranteed monotonic (see its doc comment), so later candidates must still be checked.
-			}
-			bestPrimary = i
-		}
-		bestSecondary := -1
-		for i := si; i < len(secondary); i++ {
-			if fitLen(text[lineStart:secondary[i].Start]) > maxWidth {
-				continue
-			}
-			bestSecondary = i
-		}
+		bestPrimary := m.lastFit(primary, pi, lineStart, maxWidth)
+		bestSecondary := m.lastFit(secondary, si, lineStart, maxWidth)
 
 		if bestPrimary >= 0 {
 			cut := primary[bestPrimary]
