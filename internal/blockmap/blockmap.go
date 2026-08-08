@@ -560,7 +560,18 @@ func lineStart(source []byte, pos int) int {
 // straight) and reflowed on pass 2 (quote curled): found by FuzzFormat
 // on "[^0]:\n+ 0\"00" (seed 9dd134290a276e11), an idempotency flip in
 // the guard's own verdict rather than in anything the guard looks at.
-var bareLinkRefDefLineRE = regexp.MustCompile(`^[ \t>]*\\?\[[^\[\]][^\[\]]*\]:[ \t]*$`)
+// The `(^|[ \t])` left boundary (rather than a hard line-start anchor):
+// reflow's own para-mode join can rewrite the neighbor line this guard
+// keys on from "[label]:" to "text [label]:", and the guard must give
+// the same verdict for the joined spelling it gave for the original —
+// otherwise the paragraph it protects is skipped on pass 1 and reflowed
+// on pass 2 (found by FuzzFormat on "0\n[^0]:\n* \"0", seed
+// ec99ee890331d9f8: the quote stayed straight, then curled). A trailing
+// opener after joined text cannot actually absorb the next line (a
+// definition must start at its line's start), so this is deliberate
+// over-conservatism traded for verdict stability, the same trade as the
+// escaped-spelling match above.
+var bareLinkRefDefLineRE = regexp.MustCompile(`(^|[ \t])[ \t>]*\\?\[[^\[\]][^\[\]]*\]:[ \t]*$`)
 
 // isSelfCompleteLinkRefDef reports whether lrd (a real
 // *ast.LinkReferenceDefinition, confirmed by its caller) is fully specified
