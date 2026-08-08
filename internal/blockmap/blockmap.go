@@ -392,8 +392,8 @@ func hasControlByte(b []byte) bool {
 	return false
 }
 
-// nonCaretLabelBody and anyLabelBody are the label-content sub-patterns
-// shared by the def-shape regexes below: a run of characters excluding
+// nonCaretLabelBody is the label-content sub-pattern shared by the
+// def-shape regexes below: a run of characters excluding
 // literal brackets, except that a backslash-escaped bracket ("\[" or "\]")
 // is treated as literal label content rather than a boundary — matching
 // CommonMark's own backslash-escape handling closely enough to recognize a
@@ -401,14 +401,12 @@ func hasControlByte(b []byte) bool {
 // embedded in what precedes a paragraph (needed for the "spans the
 // boundary" case in inLinkRefDefZone's doc comment; found necessary by
 // FuzzFormat/issue#11's "[\]\n]:0" shape, which a plain "no brackets at
-// all" class missed). nonCaretLabelBody additionally excludes a leading
-// '^' (a footnote label — see design.md's "Footnote definitions are
-// exempt and keep reflowing"); anyLabelBody does not, for the cases where
-// a caret-led label is not exempt (see inLinkRefDefZone).
-const (
-	nonCaretLabelBody = `(?:\\.|[^\^\[\]])(?:\\.|[^\[\]])*`
-	anyLabelBody      = `(?:\\.|[^\[\]])*`
-)
+// all" class missed). It excludes a leading '^' (a footnote label —
+// design.md's "Footnote definitions are exempt and keep reflowing"): the
+// caret exemption applies uniformly to every zone check, contains and
+// neighbor alike, because verdict stability demands it (see
+// defLineOpenerRE's doc comment).
+const nonCaretLabelBody = `(?:\\.|[^\^\[\]])(?:\\.|[^\[\]])*`
 
 // nonCaretDefShapeRE matches a non-footnote link-reference-definition-
 // shaped "[label]:" opener: an optional reflow-escape backslash, "[", an
@@ -428,21 +426,23 @@ const (
 // shape the neighbor itself was allowed to reshape.
 var nonCaretDefShapeRE = regexp.MustCompile(`\\?\[(?:` + nonCaretLabelBody + `)?\]:`)
 
-// anyDefLineOpenerRE is nonCaretDefShapeRE's counterpart for judging the
-// raw source line directly above a paragraph (see inLinkRefDefZone): it
-// does NOT exclude a caret-led label. mdreflow's goldmark configuration
-// does not enable the footnote extension at all (see package reflow's
-// isCompleteLinkRefDefLine doc comment), so "[^label]:" is nothing special
-// to the parser when it belongs to a *different*, already-parsed sibling —
-// the exact same multi-line-destination-reaching-in hazard
-// nonCaretDefShapeRE guards against applies whether or not the label
-// carries a caret. The caret exemption is real, but it protects a
-// paragraph that is *itself* a footnote body (its own first line — see
-// footnoteDefFirstLineRE and inLinkRefDefZone's early return), not an
-// adjacent line belonging to something else.
-var anyDefLineOpenerRE = regexp.MustCompile(`^[ \t>]*\\?\[` + anyLabelBody + `\]:`)
+// defLineOpenerRE is nonCaretDefShapeRE's counterpart for judging the
+// raw source line directly above a paragraph (see inLinkRefDefZone). It
+// excludes caret-led labels, the same exemption as the contains check —
+// NOT because an adjacent "[^label]:" line is harmless (to a parser with
+// no footnote extension it is an ordinary definition shape), but because
+// deferring to a caret line can never be verdict-stable: a footnote body
+// is exempt from the zone precisely so it can reflow, and its reflow
+// legitimately rewrites the physical line a neighbor would key on — found
+// by FuzzFormat on ")B[^1]: 78\n  + ,b X2nx1" (seed 86487504c2bddd82),
+// where the list deferred on pass 1 to a caret line the exempt paragraph
+// above then split. Caret-shape hazards are owned instead by the
+// emission escapes (package reflow's isCompleteLinkRefDefLine and the
+// bare-opener escape), the harness's documented caret scope gate, and
+// the public convergence backstop — see design.md's zone section.
+var defLineOpenerRE = regexp.MustCompile(`^[ \t>]*\\?\[(?:` + nonCaretLabelBody + `)?\]:`)
 
-// anyDefShapeAnywhereRE is anyDefLineOpenerRE's counterpart with no left-
+// defShapeAnywhereRE is defLineOpenerRE's counterpart with no left-
 // boundary requirement at all — used only for the "spans the boundary"
 // check (see inLinkRefDefZone's (c)): a chain of link reference
 // definitions can legitimately continue immediately after a previous one's
@@ -453,12 +453,12 @@ var anyDefLineOpenerRE = regexp.MustCompile(`^[ \t>]*\\?\[` + anyLabelBody + `\]
 // definition's own destination scan reaches into a following paragraph
 // that is otherwise just a lone quote character, sitting directly after
 // "[00]:0" with no separating whitespace at all. Broader than
-// anyDefLineOpenerRE on purpose: the boundary requirement that keeps rules
+// defLineOpenerRE on purpose: the boundary requirement that keeps rules
 // (a)/(b) from flagging ordinary prose like "word[key]: text" doesn't hold
 // once a definition can start immediately after another already-consumed
 // one, so this check accepts some extra false-positive skips as the price
 // of staying blunt rather than tracking definition-chain state.
-var anyDefShapeAnywhereRE = regexp.MustCompile(`\\?\[` + anyLabelBody + `\]:`)
+var defShapeAnywhereRE = regexp.MustCompile(`\\?\[(?:` + nonCaretLabelBody + `)?\]:`)
 
 // footnoteDefFirstLineRE matches a footnote definition's own opening
 // "[^label]:" marker at the start of a paragraph's first (trimmed) line,
@@ -470,6 +470,22 @@ var anyDefShapeAnywhereRE = regexp.MustCompile(`\\?\[` + anyLabelBody + `\]:`)
 // second-pass first line ("\[^1]: !Y") stopped matching an earlier,
 // escape-blind version of this regex.
 var footnoteDefFirstLineRE = regexp.MustCompile(`^\\?\[\^[^\[\]]*\]:`)
+
+// bareCaretOpenerRE matches a BARE footnote-shaped opener — "[^label]:"
+// with nothing after the colon but whitespace, at a line's end. A bare
+// caret opener is not a footnote body (there is no body): to mdreflow's
+// footnote-less parser it is an incomplete definition opener that
+// completes using the NEXT line as its destination, i.e. exactly the
+// multi-line-reach hazard the zone exists for, and it flips join verdicts
+// with no typography involved (seeds 02389d5efed7d524 "[^0]:\n0\n\"\"0"
+// and ead78c541f590c87). So bare caret openers join the zone — contains
+// and neighbor checks alike — while caret openers WITH content after the
+// colon (real footnote bodies) stay exempt: a body line with two or more
+// tokens after the colon can never itself be a complete definition
+// (trailing content disqualifies it), and a single-token "[^1]: word"
+// line is already a LinkReferenceDefinition node that never reaches
+// reflow as a paragraph.
+var bareCaretOpenerRE = regexp.MustCompile(`(^|[ \t])[ \t>]*\\?\[\^[^\[\]]*\]:[ \t]*$`)
 
 // inLinkRefDefZone reports whether the paragraph whose trimmed lines are
 // trimmed, starting at contentStart, sits in design.md's link-reference-
@@ -509,7 +525,7 @@ var footnoteDefFirstLineRE = regexp.MustCompile(`^\\?\[\^[^\[\]]*\]:`)
 // "[0]:0\n\"0\"[00]:0\n\"\n\"[0]:0", seed a651ae68822c7c5c).
 func inLinkRefDefZone(source []byte, trimmed []string, contentStart int) bool {
 	for _, t := range trimmed {
-		if nonCaretDefShapeRE.MatchString(t) {
+		if nonCaretDefShapeRE.MatchString(t) || bareCaretOpenerRE.MatchString(t) {
 			return true
 		}
 	}
@@ -522,12 +538,12 @@ func inLinkRefDefZone(source []byte, trimmed []string, contentStart int) bool {
 	}
 	prevStart := lineStart(source, ls-1)
 	prevLine := bytes.TrimRight(source[prevStart:ls], "\r\n")
-	if anyDefLineOpenerRE.Match(prevLine) {
+	if defLineOpenerRE.Match(prevLine) || bareCaretOpenerRE.Match(prevLine) {
 		return true
 	}
 	if len(trimmed) > 0 {
 		window := string(prevLine) + "\n" + trimmed[0]
-		if anyDefShapeAnywhereRE.MatchString(window) {
+		if defShapeAnywhereRE.MatchString(window) {
 			return true
 		}
 	}

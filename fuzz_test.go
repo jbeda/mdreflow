@@ -943,7 +943,8 @@ func FuzzFormat(f *testing.F) {
 		if err != nil {
 			t.Fatalf("Format(Format(x)) returned an error: %v", err)
 		}
-		if opts.Typography != 0 && (hasCaretDefTypographyAmbiguity(src) || hasCaretDefTypographyAmbiguity(out)) {
+		caretGated := opts.Typography != 0 && (hasCaretDefTypographyAmbiguity(src) || hasCaretDefTypographyAmbiguity(out))
+		if caretGated {
 			// docs/design.md, Testing's documented scope gate: a footnote-
 			// shaped "[^label]:" opener sitting next to typography-
 			// substitutable quote characters is a caret-zone corner
@@ -991,7 +992,7 @@ func FuzzFormat(f *testing.F) {
 		// "nothing changed except what typography is licensed to
 		// change", not "skip the check entirely" — see
 		// normalizeForRender's doc comment.
-		if !hasRenderRiskyShape(src) && !hasRenderRiskyShape(out) {
+		if !caretGated && !hasRenderRiskyShape(src) && !hasRenderRiskyShape(out) {
 			before := normalizeForRender(renderHTML(t, src), opts)
 			after := normalizeForRender(renderHTML(t, out), opts)
 			if before != after {

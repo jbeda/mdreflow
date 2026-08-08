@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte(")B[^1]: 78\n  + ,b X2nx1")

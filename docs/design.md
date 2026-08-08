@@ -442,7 +442,7 @@ The wrapping logic is heuristic; a deep test corpus is the only durable defense 
 5. **Exclude parity**: our gitignore matching vs. `git check-ignore` output on a synthetic tree.
 6. **Fuzzing**: Go native fuzzing on `Format` with crash, idempotency, and render preservation as oracles.
    Invalid-UTF-8 inputs assert only the `ErrInvalidUTF8` refusal (that path must still never panic); the reflow oracles run on accepted inputs.
-   One documented scope gate: inputs mixing a footnote-shaped `[^label]:` opener with typography-substitutable quote characters assert idempotency of the *public* (backstop-included) `Format` rather than the single-pass core — the caret zone's residual adversarial corners are owned by the backstop by design (see the link-reference-definition zone section), and a gate is honest where a seventh adjacency guard would not be.
+   One documented scope gate: inputs mixing a footnote-shaped `[^label]:` opener with typography-substitutable quote characters assert idempotency of the *public* (backstop-included) `Format` rather than the single-pass core, and skip the render-preservation comparison — the caret zone is fully exempt from blockmap's definition-zone checks (verdict stability demands the exemption be uniform: a reflowing footnote body legitimately rewrites the lines a neighbor check would key on), so its residual adversarial corners are owned by the emission escapes and the backstop by design (see the link-reference-definition zone section). A gate is honest where an eighth adjacency guard would not be.
 
 ## Dependencies
 
