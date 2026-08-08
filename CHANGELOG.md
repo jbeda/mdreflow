@@ -9,6 +9,14 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+## v0.1.3 (2026-08-08)
+
+Performance fix: width-constrained wrapping no longer blows up on long paragraphs.
+Formatting output is unchanged from v0.1.2.
+
+Known caveat: fuzzing has surfaced a family of pre-existing idempotency and render-preservation edge cases (issues [#4–#8, #10–#13](https://github.com/jbeda/mdreflow/issues)), all present since v0.1.0 and hit only on pathological inputs, not normal prose.
+They are the next work planned; none affect default sentence mode in normal use.
+
 ### Fixed
 
 - Width-constrained modes (`wrap`, and `sentence` with `--max-width`) were roughly cubic in paragraph length: a 1600-word paragraph took 19 seconds to wrap and now takes about 2 milliseconds.
