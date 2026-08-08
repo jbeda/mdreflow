@@ -50,6 +50,32 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+# Publishes a cask to the personal tap (brew install jbeda/tap/mdreflow).
+# Casks are goreleaser's current recommendation (brews: is deprecated since
+# v2.10) but are macOS-only; Linux stays on the release tarballs and
+# go install. The post-install hook strips the quarantine attribute since
+# the binaries are not signed or notarized.
+homebrew_casks:
+  - name: mdreflow
+    binaries:
+      - mdreflow
+    homepage: "https://github.com/jbeda/mdreflow"
+    description: "Reflow Markdown prose: sentence-per-line semantic line breaks by default"
+    directory: Casks
+    repository:
+      owner: jbeda
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: github-actions[bot]
+      email: 41898282+github-actions[bot]@users.noreply.github.com
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/mdreflow"]
+          end
+
 # Release notes are curated in CHANGELOG.md and passed in by the release
 # workflow via --release-notes (scripts/release-notes.sh); the raw commit
 # list is reachable through the compare link those notes end with.

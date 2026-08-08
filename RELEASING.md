@@ -12,6 +12,11 @@ HTML attributes"), not commit-message terms.
 
 ## Cutting a release
 
+One-time prerequisite: the Release workflow publishes a Homebrew cask to
+[jbeda/homebrew-tap](https://github.com/jbeda/homebrew-tap) and needs a
+`HOMEBREW_TAP_GITHUB_TOKEN` repo secret (fine-grained PAT, contents
+read/write on that repo alone).
+
 1. Retitle `## Unreleased` to `## vX.Y.Z (YYYY-MM-DD)` (local date) and write
    the prose lead: the release's theme, anything users must act on (breaking
    changes, new defaults, upgrade notes), and the one or two things worth

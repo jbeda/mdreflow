@@ -9,6 +9,11 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+### Added
+
+- Homebrew on macOS: `brew install jbeda/tap/mdreflow`.
+  Each release publishes a cask to [jbeda/homebrew-tap](https://github.com/jbeda/homebrew-tap); Linux stays on the release tarballs and `go install`.
+
 ### Fixed
 
 - `--help` no longer prints a stray one-line usage pointer to stderr above the full help text; stderr is now empty and the full documentation goes to stdout alone.
