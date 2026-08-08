@@ -15,6 +15,7 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ### Changed
 
+- README now documents modes, configuration, excludes, and the exit-code contract directly (mirroring `--help`, which stays canonical), and the install section points at the release binaries.
 - Help text now documents that `--check`/`--diff` work in stdin mode (reporting the input as `-`) and that `--strip-sentence-terminal-breaks` is flag-only with no config-file key.
 
 ## v0.1.1 (2026-08-08)
