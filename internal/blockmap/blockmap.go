@@ -94,7 +94,7 @@ const maxContainerDepth = 2
 //
 // depth counts List and Blockquote ancestors (each entered increments it
 // by one; ListItem does not, since a List/ListItem pair is one level of
-// nesting). continuationPrefix's byte-width-preserving transform is
+// nesting). continuationPrefix's column-width-preserving transform is
 // verified against every combination this package's own fixtures cover —
 // up to two container levels, alternating or repeated — but a fuzz find
 // showed it breaking structure for deeper mixed nesting (three-plus levels
@@ -463,12 +463,30 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 func continuationPrefix(source []byte, contentStart int) string {
 	ls := lineStart(source, contentStart)
 	prefix := source[ls:contentStart]
-	out := make([]byte, len(prefix))
-	for i, b := range prefix {
-		if b == '>' {
-			out[i] = '>'
-		} else {
-			out[i] = ' '
+	var out []byte
+	col := 0
+	for _, b := range prefix {
+		switch b {
+		case '>':
+			out = append(out, '>')
+			col++
+		case '\t':
+			// A tab advances to the next 4-column tab stop (CommonMark's
+			// rule), so it must become that many spaces, not one: a
+			// byte-for-byte space kept the prefix's BYTE width but lost
+			// columns, so a continuation line under a "*\t>" item landed
+			// left of the item's content column and escaped the list
+			// entirely on reparse — found by FuzzFormat on
+			// "*\t>90x.80( 0" (seed 235abda3112b806e), whose reflowed
+			// second line reparsed as a fresh top-level blockquote.
+			n := 4 - col%4
+			for range n {
+				out = append(out, ' ')
+			}
+			col += n
+		default:
+			out = append(out, ' ')
+			col++
 		}
 	}
 	return string(out)
