@@ -700,7 +700,13 @@ func hasMultilineInlineTagCandidate(src []byte) bool {
 // so those escapes are render-preserving by construction and never
 // needed to disable the oracle. (They can still be *idempotency* hazards;
 // that assertion always runs.)
-var wrapInducedBlockTriggerRE = regexp.MustCompile(`(^|[ \t])(` + "`{3,}|~{3,}" + `|<[!?/A-Za-z])`)
+// The leading-context class includes '>': a tag opener directly after a
+// blockquote marker ("><A> ...") is the same hazard, and reflow's own
+// continuation prefix regenerates exactly that adjacency — found by
+// FuzzFormat on "><A> d!A00" (seed 398d5594a1b3cc23), whose split-off
+// first line "\<A>" renders escaped where the source rendered raw HTML,
+// the documented accepted trade this gate exists for.
+var wrapInducedBlockTriggerRE = regexp.MustCompile(`(^|[ \t>])(` + "`{3,}|~{3,}" + `|<[!?/A-Za-z])`)
 
 // hasWrapInducedBlockInterruptRisk reports whether src has such a shape
 // anywhere mid-line.
