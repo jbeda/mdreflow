@@ -373,6 +373,16 @@ var htmlTagOpenerRE = regexp.MustCompile(`</?[A-Za-z]`)
 // straight quotes even though they are not, in the end, actual tags.
 func htmlTagOpenerGuardSpans(text string) []segment.Span {
 	var out []segment.Span
+	// Openers that begin a VALID inline tag close where the tag grammar
+	// says they close — prose after that close is ordinary substitution
+	// territory (pinned by testdata/typography/both-protected-spans.md's
+	// `<span class="note">but this "prose" is not</span>`). Only a
+	// malformed near-tag gets the broad last-'>' extension below.
+	valid := segment.HTMLTagSpans(text)
+	validAt := make(map[int]int, len(valid))
+	for _, s := range valid {
+		validAt[s.Start] = s.End
+	}
 	lineStart := 0
 	for {
 		lineEnd := len(text)
@@ -382,8 +392,25 @@ func htmlTagOpenerGuardSpans(text string) []segment.Span {
 		line := text[lineStart:lineEnd]
 		for _, loc := range htmlTagOpenerRE.FindAllStringIndex(line, -1) {
 			start := lineStart + loc[0]
+			if end, ok := validAt[start]; ok {
+				// A real tag: its close is grammar-determined, protect
+				// exactly it and no further.
+				out = append(out, segment.Span{Start: start, End: end})
+				continue
+			}
 			end := lineEnd
-			if gt := strings.IndexByte(text[start:lineEnd], '>'); gt >= 0 {
+			// Malformed near-tag: the LAST '>' on the line, not the
+			// first — a quoted attribute value can contain '>'
+			// (`<A A=">"...`), so the tag the reparse eventually forms
+			// can close at any later '>', and a curled quote before THAT
+			// close is exactly the byte that changes which value-grammar
+			// branch applies. Found by FuzzFormat on `0<A A=">"<A">`
+			// (seed 2151163d7847fc31): the first-'>' span ended inside
+			// the quoted value, leaving the value-closing '"'
+			// unprotected; curling it fused the two pseudo-tags into one
+			// real tag on reparse. Same protect-the-whole-stretch trade
+			// as documented above.
+			if gt := strings.LastIndexByte(text[start:lineEnd], '>'); gt >= 0 {
 				end = start + gt + 1
 			}
 			out = append(out, segment.Span{Start: start, End: end})
