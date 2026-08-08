@@ -134,12 +134,23 @@ func hasHardBreakAdjacentDelimiter(src []byte) bool {
 // other guarantee (no panic, idempotency, structural correctness,
 // byte-for-byte pass-through outside reflowed prose) still applies.
 func hasMultilineCodeSpanCandidate(src []byte) bool {
+	crlf := bytes.Contains(src, []byte("\r\n"))
 	lines := bytes.Split(src, []byte("\n"))
 	for i, line := range lines {
 		if i == len(lines)-1 {
 			break
 		}
 		if bytes.Count(line, []byte("`"))%2 == 1 {
+			return true
+		}
+		// The odd-count heuristic misses even-length span delimiters:
+		// "``\r\n0 ``" is the same CRLF edge-space quirk this gate
+		// documents (goldmark keeps the edge spaces for the "\r\n" form
+		// only), with a two-backtick delimiter — found by FuzzFormat as
+		// seed c944b0eef76ef0b0. The quirk needs a CRLF line ending, so
+		// the wider any-backtick condition applies only to CRLF inputs;
+		// LF-only files keep the tighter odd-count rule.
+		if crlf && bytes.Contains(line, []byte("`")) {
 			return true
 		}
 	}
