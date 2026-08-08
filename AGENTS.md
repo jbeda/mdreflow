@@ -36,6 +36,9 @@ gopls also ships an MCP server (`gopls mcp`) if you'd rather wire these in as fi
 If you spawn a subagent for implementation work in this repo, use Sonnet.
 Do not escalate to Opus on your own initiative (Joe finds Opus 5 too verbose); reserve it for cases where Joe asked.
 
+As the driver, feel free to plan the work up front and split it across multiple Sonnet subagents — parallel where tasks are independent, sequential where one stage feeds the next.
+Keep review and integration in the driving session: verify each subagent's work (build, vet, lint, tests, and for reflow changes a fuzz soak) before building on it.
+
 ## Verify before declaring done
 
 ```
