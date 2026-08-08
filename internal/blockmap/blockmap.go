@@ -596,19 +596,24 @@ func lrdReachesInto(source []byte, lrd, para ast.Node) bool {
 	if defLine == nil || plines.Len() == 0 {
 		return true
 	}
+	// The whole paragraph, not just its first line: a title opened on the
+	// paragraph's first line can close on a later one (fuzz find
+	// " [0]:0\n\"0[0]\n\"0", seed eaeb2965b3833196 — the registered title
+	// spans the paragraph's first two lines), and only the full text
+	// answers whether the definition absorbed anything.
 	ps := plines.At(0).Start
-	pe := ps
+	pe := plines.At(plines.Len() - 1).Stop
 	for pe < len(source) && source[pe] != '\n' {
 		pe++
 	}
-	paraLine := source[ps:pe]
+	paraText := source[ps:pe]
 
-	combined := make([]byte, 0, len(defLine)+1+len(paraLine))
+	combined := make([]byte, 0, len(defLine)+1+len(paraText))
 	combined = append(combined, defLine...)
 	if n := len(combined); n == 0 || combined[n-1] != '\n' {
 		combined = append(combined, '\n')
 	}
-	combined = append(combined, paraLine...)
+	combined = append(combined, paraText...)
 	return !slices.Equal(registeredRefs(defLine), registeredRefs(combined))
 }
 
