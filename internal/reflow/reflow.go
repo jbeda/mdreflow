@@ -1405,6 +1405,21 @@ func fenceOpenerRunLen(line string) int {
 // NoBreakSpans sub-scanner (brackets, autolinks, HTML tags, ...), none of
 // which treats a bare run of tildes specially.
 func fenceEscapeNeutralize(text string) string {
+	// Second instance of the same mismatch, for the link-ref-def escapes
+	// instead of the fence escape: a cluster that will itself be emitted
+	// def-opener-shaped gets its leading "[" backslash-escaped at
+	// emission, which destroys any bracketed span NoBreakSpans would
+	// otherwise derive from that "[" — and with it, e.g., smart-quote
+	// protection for a quote inside the brackets, which then curls one
+	// pass late. Found by FuzzFormat on "[^\\]:\"1A0]" in ModePara with
+	// SmartQuotes (seed 38cbdf400862101d). Neutralize the leading "["
+	// (length-preserving, same rationale as the fence case below) so the
+	// protection decision matches the escaped output's reparse.
+	if linkRefDefOpenerRE.MatchString(text) || bareLinkRefDefOpenerLineRE.MatchString(text) {
+		b := []byte(text)
+		b[0] = '~'
+		return string(b)
+	}
 	if !isFenceOpener(text) {
 		return text
 	}
