@@ -2193,7 +2193,15 @@ func stripLineEnding(raw []byte) (content string, hadNewline bool) {
 // discarded the original content outright, replacing it with a lone
 // backslash — silent, severe data loss for real prose that merely
 // contained a stray form-feed byte.
-var hardBreakBrRE = regexp.MustCompile(`(?i)[ \t]*<br[ \t]*/?>[ \t]*$`)
+// Interior whitespace is accepted only in the self-closing spelling
+// ("<br />"), not before a bare ">" ("<br >"): the latter is a shape
+// mdreflow's own line-joining can manufacture from a multi-line inline
+// tag ("<Br\n\t>" joins to "<Br >"), and recognizing it as a marker meant
+// pass 1 produced text that pass 2 re-read as a hard break and rewrote —
+// found by FuzzFormat on "0<Br\n\t>" (seed a9266695f535279c). A real
+// "<br >" in source loses marker normalization and passes through as the
+// raw HTML it already is; renders identically either way.
+var hardBreakBrRE = regexp.MustCompile(`(?i)[ \t]*<br([ \t]*/)?>[ \t]*$`)
 
 // sentenceTerminalEndRE matches text ending in sentence-terminal
 // punctuation (optionally followed by closing quotes/brackets), used by
