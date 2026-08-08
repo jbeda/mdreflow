@@ -267,6 +267,22 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 		}
 	}
 
+	// precededByNonBlankLine reports whether the raw source line
+	// immediately before this paragraph's own first physical line is
+	// non-blank — the one piece of context escapeBlockInterrupt's
+	// table-delimiter-row check needs for the paragraph's first output
+	// line (i == 0) that it cannot derive from that line alone, the same
+	// way firstLinePrefix supplies isThematicBreak's joint context. See
+	// escapeBlockInterrupt's prevLineNonBlank parameter doc comment for
+	// why this is needed at all and why it is safe to compute once, from
+	// the unmodified source, rather than per output line.
+	precededByNonBlankLine := false
+	if physStart := blockmap.LineStart(source, p.Start); physStart > 0 {
+		prevStart := blockmap.LineStart(source, physStart-1)
+		prevLine, _ := stripLineEnding(source[prevStart:physStart])
+		precededByNonBlankLine = trimLineSpace(prevLine) != ""
+	}
+
 	for i, ol := range outLines {
 		if i > 0 {
 			buf.WriteByte('\n')
@@ -292,12 +308,17 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 			// the line's own leading bytes, though — see
 			// escapeBlockInterrupt's firstLinePrefix parameter doc comment
 			// for the container-marker-plus-wrapped-content case it
-			// doesn't cover.
+			// doesn't cover, and its prevLineNonBlank parameter doc
+			// comment for the table-delimiter-row case, which depends on
+			// the *previous* line's content instead.
 			prefix := ""
+			prevNonBlank := precededByNonBlankLine
 			if i == 0 {
 				prefix = firstLinePrefix
+			} else {
+				prevNonBlank = trimLineSpace(outLines[i-1].text) != ""
 			}
-			ol.text = escapeBlockInterrupt(ol.text, i == 0, prefix)
+			ol.text = escapeBlockInterrupt(ol.text, i == 0, prefix, prevNonBlank)
 		}
 		buf.WriteString(ol.text)
 	}
@@ -720,7 +741,7 @@ func (m *widthMeasurer) fits(a, b, maxWidth int) bool {
 	if w+m.escapeDeltaMax(a) <= maxWidth {
 		return true
 	}
-	return runeLen(escapeBlockInterrupt(m.canonSlice(a, b), true, "")) <= maxWidth
+	return runeLen(escapeBlockInterrupt(m.canonSlice(a, b), true, "", true)) <= maxWidth
 }
 
 // lastFit returns the largest i >= from with fits(a, cands[i].Start), or
@@ -738,7 +759,7 @@ func (m *widthMeasurer) lastFit(cands []segment.Span, from, a, maxWidth int) int
 		if w+dmax <= maxWidth {
 			return i
 		}
-		if runeLen(escapeBlockInterrupt(m.canonSlice(a, cands[i].Start), true, "")) <= maxWidth {
+		if runeLen(escapeBlockInterrupt(m.canonSlice(a, cands[i].Start), true, "", true)) <= maxWidth {
 			return i
 		}
 	}
@@ -1034,7 +1055,7 @@ func runeLen(s string) int {
 // so no idempotency or render-preservation guarantee depends on this
 // function's precision here.
 func fitLen(s string) int {
-	return runeLen(escapeBlockInterrupt(canonicalizeForWidth(s), true, ""))
+	return runeLen(escapeBlockInterrupt(canonicalizeForWidth(s), true, "", true))
 }
 
 // splitSentences takes one cluster's already-joined prose, asks seg for
@@ -1354,7 +1375,37 @@ var orderedListRE = regexp.MustCompile(`^\d{1,9}([.)])(\s|$)`)
 // one, an idempotency break, not just a render-preservation one.
 // Checking line alone here would have missed it, since line alone was
 // never wrong; only line as it will actually be *placed* was.
-func escapeBlockInterrupt(line string, isFirstLine bool, firstLinePrefix string) string {
+//
+// prevLineNonBlank is a second, narrower piece of joint context, needed for
+// the same reason firstLinePrefix is but from the *other* side: whether
+// this line, once trimmed, is shaped like a GFM table delimiter row
+// (isTableDelimiterRowShaped) is dangerous only jointly with whatever line
+// immediately precedes it — a delimiter row directly under a non-blank
+// "header" line is exactly GFM's own table-recognition rule, and reflow
+// can manufacture that adjacency purely as a byproduct of where a
+// width-based cut (or a sentence break) happens to land, the same class of
+// hazard filterLineStartHazards already guards against for dialect markers
+// and linkify, just discovered one line later than a candidate-break
+// filter can see: the *break* that creates this line's start is safe in
+// isolation (nothing about landing "-:" at a line start is inherently
+// wrong), and what makes it unsafe only exists once the *previous* line's
+// content is also known. Found by FuzzFormat in ModeSentence at a small
+// MaxWidth on "\f -:" (issue #13) and "\v -|-|-|-|-|-|-" (issue #5): both
+// single physical source lines, split by a forced width cut into a first
+// line ("\f"/"\v", non-blank) and a second, delimiter-row-shaped line
+// ("-:"/"-|-|-|-|-|-|-"), which the very next parse reads as a table
+// header and delimiter row instead of two lines of one paragraph. Callers
+// pass the previous *output* line's own blankness for a continuation line
+// (i > 0, computed directly from writeParagraph's already-built outLines)
+// and the previous *source* line's blankness for the paragraph's own first
+// output line (i == 0, since nothing in this package's own output exists
+// yet to consult there — see writeParagraph's precededByNonBlankLine).
+// Width-estimation callers (fitLen, widthMeasurer) always pass true, the
+// same conservative-overestimate choice already documented for
+// isFirstLine: a table-delimiter escape can only make a candidate line's
+// simulated width larger, never smaller, than its real final width,
+// whatever this line's real neighbor turns out to be.
+func escapeBlockInterrupt(line string, isFirstLine bool, firstLinePrefix string, prevLineNonBlank bool) string {
 	if line == "" {
 		return line
 	}
@@ -1389,7 +1440,7 @@ func escapeBlockInterrupt(line string, isFirstLine bool, firstLinePrefix string)
 		b.WriteString(line[i:])
 		return b.String()
 	}
-	if isThematicBreak(firstLinePrefix+line) || isSetextUnderline(line) || blockInterruptTriggers.MatchString(line) || linkRefDefOpenerRE.MatchString(line) {
+	if isThematicBreak(firstLinePrefix+line) || isSetextUnderline(line) || blockInterruptTriggers.MatchString(line) || linkRefDefOpenerRE.MatchString(line) || (prevLineNonBlank && isTableDelimiterRowShaped(line)) {
 		return "\\" + line
 	}
 	if isFirstLine && htmlBlockAnyOpenerRE.MatchString(line) {
@@ -1468,6 +1519,26 @@ func isSetextUnderline(line string) bool {
 		}
 	}
 	return count >= 1
+}
+
+// isTableDelimiterRowShaped reports whether line is shaped like a GFM
+// table delimiter row: once trimmed of leading/trailing space/tab, it
+// contains only "-", ":", "|", spaces, and tabs, with at least one "-".
+// Deliberately crude and permissive, matching GFM's own leniency (a bare
+// "-|" or ":-" already qualifies, and spaces are allowed *within* the
+// shape, not just at its edges — e.g. "-- |" is still a valid delimiter
+// row): this only needs to decide whether escaping this line's first byte
+// is warranted, and escaping a line that turns out not to have been truly
+// delimiter-row-shaped after all costs nothing but one superfluous,
+// identically-rendering backslash, while under-matching risks a real
+// table forming on reparse — this is deliberately the fuzz-test package's
+// own isTableDelimiterRowShaped oracle's shape (see fuzz_test.go), kept as
+// an independent implementation here since the two serve different roles:
+// that one decides whether to skip an assertion, this one decides whether
+// to change output.
+func isTableDelimiterRowShaped(line string) bool {
+	trimmed := strings.Trim(line, " \t")
+	return trimmed != "" && strings.ContainsRune(trimmed, '-') && strings.Trim(trimmed, "-:| \t") == ""
 }
 
 // attachMarker appends marker directly after s, unless doing so would

@@ -9,6 +9,12 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+### Fixed
+
+- A width- or sentence-forced split can no longer land a table-delimiter-shaped line (`-:`, `-|-|-`, …) directly under a non-blank line, which made the reflowed paragraph parse as a GFM table (#5, #13); such lines are now backslash-escaped the same way setext underlines already were.
+- A paragraph that sits directly under a multi-line link reference definition (no blank line between) is now passed through untouched, since reflowing its first line could invalidate the definition and change what renders (#11). One-line definitions (`[foo]: /url`) are unaffected — prose after them reflows as before.
+- Sentence-mode splits no longer flip between runs when a lone carriage return sits mid-paragraph (#10).
+
 ### Changed
 
 - `Format`, `Check`, and `FormatReader` now reject invalid UTF-8 anywhere in the input with the typed error `mdreflow.ErrInvalidUTF8`; the CLI refuses such files (exit 3) even under `--force` and even when the bad bytes sit past the first 8 KB its quick sniff covers.

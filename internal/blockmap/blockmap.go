@@ -26,6 +26,9 @@ import (
 
 	"github.com/yuin/goldmark/ast"
 	gfmast "github.com/yuin/goldmark/extension/ast"
+	"github.com/yuin/goldmark/text"
+
+	"github.com/jbeda/mdreflow/internal/gm"
 )
 
 // Paragraph describes one reflow-eligible paragraph, wherever it is nested.
@@ -123,7 +126,52 @@ func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int,
 			if prev := c.PreviousSibling(); prev != nil && prev.Kind() == gfmast.KindTable && !c.HasBlankPreviousLines() {
 				precededByTable = true
 			}
-			if pp, skip := build(c, source, inBlockquote, fmEnd, precededByTable); !skip {
+			// Same adjacency reasoning as precededByTable, for a different
+			// construct: a real *ast.LinkReferenceDefinition sibling
+			// directly before this paragraph can have consumed its
+			// label/destination/title across the boundary between the two
+			// — goldmark's own reference-definition scan runs ahead over
+			// raw lines independent of where the resulting AST nodes end
+			// up, and a multi-line label can close on what becomes this
+			// paragraph's own first line (see build's precededByLinkRefDef
+			// handling for the concrete shape). Whether that definition
+			// still validates on reparse depends on this paragraph's own
+			// first line staying exactly as wide as it started, so
+			// reflowing it at all is unsafe.
+			//
+			// This only matters when the definition's own match actually
+			// reached past its own opening physical line — the common
+			// case, a self-complete one-liner like "[foo]: /url" (label,
+			// destination, and an absent-or-closed title all on that one
+			// line), consumes nothing from what follows, so the next
+			// paragraph is exactly as safe to reflow as if any other block
+			// preceded it. isSelfCompleteLinkRefDef checks this directly
+			// (does this node's own recorded opening line, reparsed in
+			// isolation, still form a complete definition with nothing left
+			// over?) rather than assuming every LinkReferenceDefinition
+			// sibling is equally dangerous — found necessary by a driver
+			// review regression: the original, unconditional version of
+			// this check passed through *every* paragraph directly after
+			// *any* link reference definition, silently un-reflowing the
+			// common "[foo]: /url\nlong prose..." shape that v0.1.2
+			// correctly reflowed.
+			//
+			// Unlike precededByTable, this does not gate on
+			// c.HasBlankPreviousLines(): confirmed directly against
+			// goldmark that a Paragraph immediately following a
+			// LinkReferenceDefinition sibling always reports
+			// HasBlankPreviousLines() == true, whether or not a real blank
+			// line actually separates them in the source — apparently an
+			// artifact of the definition's own raw-line trial scan, which
+			// does not update the normal blank-line bookkeeping the way an
+			// ordinary block continuation does. build does its own raw-byte
+			// blank-line check instead (precededByBlankLine), which is not
+			// fooled by this.
+			precededByLinkRefDef := false
+			if prev := c.PreviousSibling(); prev != nil && prev.Kind() == ast.KindLinkReferenceDefinition && !isSelfCompleteLinkRefDef(source, prev) {
+				precededByLinkRefDef = true
+			}
+			if pp, skip := build(c, source, inBlockquote, fmEnd, precededByTable, precededByLinkRefDef); !skip {
 				*out = append(*out, pp)
 			}
 			continue
@@ -146,8 +194,10 @@ func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int,
 // fmEnd is the document's front-matter end offset (frontMatterEnd(source),
 // or -1 if source has no front matter) — see its use below. precededByTable
 // is true when p's immediately preceding sibling in the AST is a GFM
-// *ast.Table — see its use below for why.
-func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTable bool) (pp Paragraph, skip bool) {
+// *ast.Table — see its use below for why. precededByLinkRefDef is true when
+// p's immediately preceding sibling is a real *ast.LinkReferenceDefinition
+// — see its use below for why.
+func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTable, precededByLinkRefDef bool) (pp Paragraph, skip bool) {
 	lines := p.Lines()
 	n := lines.Len()
 	if n == 0 {
@@ -307,6 +357,39 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// changes at all.
 		return Paragraph{}, true
 	}
+	if precededByLinkRefDef && !precededByBlankLine(source, start0) {
+		// Fuzz-found idempotency hazard in the same family as
+		// precededByTable above, but for link reference definitions:
+		// goldmark's own reference-definition scan can consume a label,
+		// destination, and/or title that spans past its own recorded
+		// Lines() — which only ever reports the definition's own opening
+		// physical line, for source-position purposes, even when the
+		// actual match reached further — onto what the AST then also hands
+		// back as part of *this* paragraph's own first line(s). Confirmed
+		// directly (not assumed): source "[\\]\n]:0\n\"\"0" parses as an
+		// *ast.LinkReferenceDefinition (label "\]\n", matched across the
+		// line break by the escaped "]") immediately followed by this
+		// Paragraph, whose own first line is "]:0" — the same "]:0" text
+		// the definition's destination scan also consumed to close itself.
+		// Reflowing this paragraph's first line at all (even just joining
+		// it with what follows, unconditionally true under ModePara) can
+		// append trailing content after the position the definition's
+		// destination ends at; per the same "[0]:0 !" disqualification
+		// rule documented on reflow.linkRefDefOpenerRE, trailing content on
+		// that same physical line invalidates the whole definition on
+		// reparse — which then folds the previously invisible "[\\]" line
+		// back into this paragraph's own visible prose, an idempotency
+		// break (verdict flip), not just a content change: found by
+		// FuzzFormat on exactly that input. hasPossibleLinkRefDefOpener and
+		// hasUnbalancedBracket cannot see this hazard at all, since the "["
+		// that opens the label sits entirely outside this paragraph's own
+		// Lines() — it belongs to the preceding sibling node's own
+		// physical line. Skipping the whole paragraph (the same safe,
+		// general answer precededByTable already uses for the analogous
+		// table case) guarantees this paragraph's own first line — the one
+		// the definition's own scan may depend on — never changes shape.
+		return Paragraph{}, true
+	}
 	if precededByBareLinkRefDefLine(source, start0) {
 		// Fuzz-found render-preservation hazard in the same family as
 		// this file's other link-reference-definition defenses
@@ -429,6 +512,70 @@ func lineStart(source []byte, pos int) int {
 // still be consumed as a plain LinkReferenceDefinition (Label "^0"),
 // confirmed by direct AST inspection.
 var bareLinkRefDefLineRE = regexp.MustCompile(`^[ \t>]*\[[^\[\]][^\[\]]*\]:[ \t]*$`)
+
+// isSelfCompleteLinkRefDef reports whether lrd (a real
+// *ast.LinkReferenceDefinition, confirmed by its caller) is fully specified
+// on its own recorded opening physical line — label closed, destination
+// present, and title closed or absent — with nothing needed from any
+// following line. Checked empirically, not by re-deriving CommonMark's
+// reference-definition grammar by hand: lrd.Lines().At(0) (its own
+// recorded line, content-relative — any container prefix such as a
+// blockquote "> " is already excluded, the same way it is for a Paragraph's
+// own Lines()) is sliced out to its own physical line end and reparsed in
+// total isolation. If that reparse still yields exactly one node, itself a
+// LinkReferenceDefinition, with nothing left over, the original match could
+// not have needed anything past this line either — reference-definition
+// recognition depends only on the candidate text itself, not on anything
+// outside it, so parsing a self-sufficient prefix in isolation always
+// reproduces the same verdict.
+//
+// This is what narrows precededByLinkRefDef's whole-paragraph skip to the
+// cases that actually need it: a self-complete one-liner like
+// "[foo]: /url" (or "[foo]: /url \"Title\"") consumes nothing from the
+// paragraph that follows, so reflowing that paragraph is exactly as safe as
+// if any other block preceded it — only a definition whose match
+// genuinely reached past its own opening line (e.g. a label split across a
+// line break, as in issue #11's "[\\]\n]:0") puts the following paragraph's
+// first line at risk.
+func isSelfCompleteLinkRefDef(source []byte, lrd ast.Node) bool {
+	lines := lrd.Lines()
+	if lines.Len() == 0 {
+		return false
+	}
+	start := lines.At(0).Start
+	end := start
+	for end < len(source) && source[end] != '\n' {
+		end++
+	}
+	if end < len(source) {
+		end++ // include the line ending, matching how a real line is scanned
+	}
+	line := source[start:end]
+
+	doc := gm.New().Parser().Parse(text.NewReader(line))
+	first := doc.FirstChild()
+	return first != nil && first.Kind() == ast.KindLinkReferenceDefinition && first.NextSibling() == nil
+}
+
+// precededByBlankLine reports whether the raw physical source line
+// immediately before contentStart is blank (empty, or all spaces/tabs) — a
+// real blank-line separator, checked directly against raw bytes rather than
+// ast.Node.HasBlankPreviousLines(): see precededByLinkRefDef's call site in
+// build for why that method cannot be trusted for this purpose (it always
+// reports true immediately after a LinkReferenceDefinition sibling,
+// blank line or not). A genuine blank line here means whatever multi-line
+// scan a preceding link reference definition ran cannot have reached across
+// it — CommonMark block continuation always stops at a blank line — so the
+// adjacency hazard precededByLinkRefDef guards against cannot apply.
+func precededByBlankLine(source []byte, contentStart int) bool {
+	end := lineStart(source, contentStart)
+	if end == 0 {
+		return false
+	}
+	start := lineStart(source, end-1)
+	line := bytes.TrimRight(source[start:end], "\r\n")
+	return len(bytes.Trim(line, " \t")) == 0
+}
 
 // precededByBareLinkRefDefLine reports whether the raw source line
 // immediately before contentStart looks like a bare "[label]:" link-
