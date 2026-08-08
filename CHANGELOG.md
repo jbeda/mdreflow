@@ -9,6 +9,13 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+Nothing yet.
+
+## v0.1.2 (2026-08-08)
+
+Distribution and documentation; no formatting behavior changed.
+macOS users can now install with `brew install jbeda/tap/mdreflow`, the README documents modes, configuration, excludes, and the exit-code contract directly instead of deferring everything to `--help`, and `--help` itself got cleaner and more complete.
+
 ### Added
 
 - Homebrew on macOS: `brew install jbeda/tap/mdreflow`.
