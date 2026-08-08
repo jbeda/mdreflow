@@ -614,7 +614,51 @@ func lrdReachesInto(source []byte, lrd, para ast.Node) bool {
 		combined = append(combined, '\n')
 	}
 	combined = append(combined, paraText...)
-	return !slices.Equal(registeredRefs(defLine), registeredRefs(combined))
+	if !slices.Equal(registeredRefs(defLine), registeredRefs(combined)) {
+		return true
+	}
+	// The registry comparison is blind to one case: goldmark's
+	// Reference.Title() returns "" both when no title exists and when the
+	// paragraph contributed an *empty* one (`""`), yet the rendered link
+	// differs (title attribute present vs. absent) — fuzz find
+	// " [0]:1\n\"\"[0]0", seed 702a8fd56d574505. Belt to the empirical
+	// suspenders: a definition carrying no title of its own, followed by a
+	// paragraph whose first content byte is a title opener, is treated as
+	// reaching regardless of what the registry claims.
+	return lrdTitleless(defLine) && len(paraText) > 0 &&
+		(paraText[0] == '"' || paraText[0] == '\'' || paraText[0] == '(')
+}
+
+// lrdTitleless reports whether the definition's opening line carries no
+// title of its own — just "[label]:" plus a destination — making it able
+// to absorb a title from a following line. Byte-level on purpose (see
+// lrdReachesInto's call site for why the parser's registry cannot answer
+// this); every unparseable shape fails conservative (titleless, so the
+// caller treats a title-opener-led paragraph as reaching).
+func lrdTitleless(defLine []byte) bool {
+	s := bytes.TrimRight(defLine, "\r\n")
+	i := bytes.Index(s, []byte("]:"))
+	if i < 0 {
+		return true
+	}
+	rest := bytes.TrimSpace(s[i+2:])
+	if len(rest) == 0 {
+		return true
+	}
+	if rest[0] == '<' {
+		// A <...>-wrapped destination may contain spaces; the title, if
+		// any, is whatever follows the closing ">".
+		j := bytes.IndexByte(rest, '>')
+		if j < 0 {
+			return true
+		}
+		return len(bytes.TrimSpace(rest[j+1:])) == 0
+	}
+	j := bytes.IndexAny(rest, " \t")
+	if j < 0 {
+		return true // destination only, nothing after it
+	}
+	return len(bytes.TrimSpace(rest[j:])) == 0
 }
 
 // registeredRefs parses src in isolation and returns goldmark's registered
