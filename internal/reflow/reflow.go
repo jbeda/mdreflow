@@ -190,7 +190,7 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 		// by original-text byte position while a quote substitution
 		// grows from 1 byte to 3 (see typography.Apply).
 		if opts.Typography != 0 {
-			text = typography.Apply(text, segment.NoBreakSpans(text), opts.Typography)
+			text = typography.Apply(text, segment.NoBreakSpans(fenceEscapeNeutralize(text)), opts.Typography)
 		}
 		clusterLines := computeLines(text, seg, opts)
 		for i, s := range clusterLines {
@@ -717,14 +717,20 @@ func (m *widthMeasurer) canonSlice(a, b int) string {
 }
 
 // escapeDeltaMax bounds how many runes escapeBlockInterrupt can add to
-// any line starting at byte a: a fence-opener-shaped line gains one
-// backslash per backtick/tilde in its leading run (see the escape loop in
-// escapeBlockInterrupt), every other trigger gains exactly one. The
-// leading run depends only on the line's start, so the bound does too.
+// any line starting at byte a: a fence-opener-shaped line gains, per
+// character of its leading backtick/tilde run (see the escape loop in
+// escapeBlockInterrupt), one rune for a tilde ("~" -> "\~") or four for a
+// backtick ("`" -> "&#96;", 1 rune growing to 5); every other trigger gains
+// exactly one. The leading run depends only on the line's start, so the
+// bound does too.
 func (m *widthMeasurer) escapeDeltaMax(a int) int {
 	n := 0
 	for i := a; i < len(m.text) && (m.text[i] == '`' || m.text[i] == '~'); i++ {
-		n++
+		if m.text[i] == '`' {
+			n += 4
+		} else {
+			n++
+		}
 	}
 	return max(n, 1)
 }
@@ -1295,6 +1301,84 @@ func isFenceOpener(line string) bool {
 	return tildeFenceStart.MatchString(line)
 }
 
+// fenceOpenerRunLen returns the length of line's leading run of backticks
+// and/or tildes — the run isFenceOpener recognizes and that
+// escapeBlockInterrupt's fence-opener branch (and fenceEscapeNeutralize)
+// both walk. Factored out so the two stay in lockstep.
+func fenceOpenerRunLen(line string) int {
+	i := 0
+	for i < len(line) && (line[i] == '`' || line[i] == '~') {
+		i++
+	}
+	return i
+}
+
+// fenceEscapeNeutralize returns text with its leading fence-opener run's
+// backtick characters (if any) replaced by tildes, matching the same
+// byte length so that a Span computed against the result still indexes
+// correctly into the real, unmodified text.
+//
+// This exists because a hard-break cluster's whole joined text (what flush
+// calls this with) always becomes its first *output* line's own leading
+// bytes — computeLines never introduces a break before position 0 — so a
+// fence-opener-shaped text is always, eventually, run through
+// escapeBlockInterrupt's fence-opener branch. That branch runs much later
+// (per output line, after wrapping), well after this cluster's
+// typography.Apply/segment.NoBreakSpans have already decided what to
+// protect from the *pre*-escape text. If the leading run is itself one
+// side of a genuine code span reaching further into the cluster,
+// pre-escape text answers a question about a span that will not survive
+// to the emitted output: escaping the run's backticks (whichever escape
+// form is used, backslash or the current HTML-entity form — see
+// escapeBlockInterrupt) removes them from ever pairing as a delimiter
+// again, so the span's *other* side goes unmatched, and whatever it used
+// to protect (e.g. a quote typography would otherwise leave alone)
+// reparses completely differently on the very next pass.
+//
+// Found by FuzzFormat (issue #8, see issues_test.go's
+// issue8-fence-escape-codespan-pairing-smartquotes for the exact repro
+// bytes: ModeWrap, SmartQuotes, a tilde-fence-shaped leading run whose
+// trailing backtick pair genuinely pairs with a later, matching backtick
+// pair further into the line): the leading run's backtick pair pairs
+// with that later one on the pre-escape text, so typography leaves the
+// apostrophe between them straight — but escaping the leading run to
+// defeat the tilde-fence
+// block trigger destroys that pairing, so a second pass (parsing the
+// first pass's own output fresh) finds no code span there at all and
+// curls it: an idempotency break, and incidentally a render-preservation
+// one too (the original source genuinely renders that apostrophe inside
+// a <code> span; escaping the fence run unavoidably loses it either way,
+// but the decision should agree with that loss immediately, not one pass
+// late). Neutralizing the run here — before NoBreakSpans ever sees it —
+// makes this cluster's *own* protection decision agree with what its
+// output will actually reparse as, so there is nothing left for a second
+// pass to disagree about.
+//
+// The placeholder is '~', not deletion or any other rewrite, specifically
+// to keep every later byte offset identical to the real text: the caller
+// passes this function's result to segment.NoBreakSpans only, and applies
+// the resulting spans against the real, unescaped text directly — no
+// offset remapping needed. '~' is never itself scanned by
+// segment.codeSpans (backtick-only) and is inert to every other
+// NoBreakSpans sub-scanner (brackets, autolinks, HTML tags, ...), none of
+// which treats a bare run of tildes specially.
+func fenceEscapeNeutralize(text string) string {
+	if !isFenceOpener(text) {
+		return text
+	}
+	n := fenceOpenerRunLen(text)
+	if !strings.ContainsRune(text[:n], '`') {
+		return text // pure tilde run: nothing here for codeSpans to see anyway
+	}
+	b := []byte(text)
+	for i := 0; i < n; i++ {
+		if b[i] == '`' {
+			b[i] = '~'
+		}
+	}
+	return string(b)
+}
+
 // orderedListRE matches an ordered-list marker: 1-9 digits followed by "."
 // or ")" and then a space or end of line. Capture group 1 is the
 // delimiter, the character escapeBlockInterrupt must escape (not the
@@ -1425,17 +1509,56 @@ func escapeBlockInterrupt(line string, isFirstLine bool, firstLinePrefix string,
 		// behind, which then paired with the trailing "``" to form a
 		// code span spanning content that was never inside one. Escaping
 		// every backtick/tilde in the run individually removes all of
-		// them from participating in any run-length match at all, fixing
-		// both hazards at once, and still renders identically (each is a
-		// literal escaped punctuation character either way).
-		i := 0
-		for i < len(line) && (line[i] == '`' || line[i] == '~') {
-			i++
-		}
+		// them from participating in any run-length match at all as an
+		// *opener* — fixing that hazard — and still renders identically
+		// (each is a literal escaped punctuation character either way).
+		//
+		// A backslash-escaped backtick, though, only defeats the opener
+		// half: it does not stop the same backtick from acting as a
+		// *closer* for some unrelated, genuinely open backtick run
+		// earlier in the same paragraph. Confirmed directly against
+		// goldmark, not assumed: "`\`" (a lone opening backtick, later a
+		// backslash-escaped one) renders as `<code>\</code>` — the
+		// backslash does not prevent the second backtick from closing
+		// the span, because CommonMark's code-span closing search
+		// matches any same-length backtick run regardless of what
+		// precedes it (backslash-escape processing is a lower-precedence
+		// pass that never gets a chance to run inside what codeSpans
+		// finds delimits a span). This is a live hazard here: an earlier
+		// line in the same cluster/paragraph can carry a real, dangling
+		// (unmatched, so segment.CodeSpans correctly does not protect
+		// anything around it, and mdreflow's own decisions were made on
+		// that basis) single backtick with no partner in the *original*
+		// source, but once this run's own backticks are individually
+		// escaped, one of them can spuriously close against that
+		// dangling backtick on reparse — retroactively manufacturing a
+		// code span (and its no-break protection) that never existed,
+		// changing what a hard-break marker or a typography substitution
+		// downstream of it decided. Found by FuzzFormat (issues #6/#12)
+		// on "`  \n    ```" in ModeWrap: the hard-break-separated "`"
+		// has no partner pre-escape, but pass 1's fence-defeating escape
+		// of the following "```" pairs one of its now-individual
+		// backticks against it on pass 2's reparse, flipping whether the
+		// hard break is honored and producing different output than pass
+		// 1's own.
+		//
+		// A backtick escaped as an HTML character reference instead of a
+		// backslash sidesteps this structurally rather than case by
+		// case: "&#96;" is not a backtick byte at all, so it can never
+		// open *or* close a code span on any reparse, ever — and it
+		// still decodes to a literal "`" on render, identically to the
+		// backslash form. Tildes have no such closer hazard (inline code
+		// spans are backtick-only; segment.codeSpans never scans for
+		// '~'), so they stay backslash-escaped.
+		i := fenceOpenerRunLen(line)
 		var b strings.Builder
 		for _, c := range line[:i] {
-			b.WriteByte('\\')
-			b.WriteRune(c)
+			if c == '`' {
+				b.WriteString("&#96;")
+			} else {
+				b.WriteByte('\\')
+				b.WriteRune(c)
+			}
 		}
 		b.WriteString(line[i:])
 		return b.String()
