@@ -104,6 +104,8 @@ func Apply(text string, protected []segment.Span, opts Typography) string {
 	smart := opts&SmartQuotes != 0
 	ellipsis := opts&Ellipses != 0
 	protected = append(protected[:len(protected):len(protected)], bareLinkSpans(text)...)
+	protected = append(protected, htmlTagOpenerGuardSpans(text)...)
+	protected = append(protected, linkParenOpenerGuardSpans(text)...)
 
 	var b strings.Builder
 	b.Grow(len(text) + len(text)/8)
@@ -315,6 +317,146 @@ func hasPathComponent(link string) bool {
 		rest = rest[i+3:]
 	}
 	return strings.ContainsAny(rest, "/?#")
+}
+
+// htmlTagOpenerRE matches the start of an inline HTML/JSX tag: "<",
+// optionally "/", then a letter — CommonMark's own tag-name-start rule,
+// deliberately not requiring the rest of the tag to be well-formed at
+// all (see htmlTagOpenerGuardSpans's doc comment on why).
+var htmlTagOpenerRE = regexp.MustCompile(`</?[A-Za-z]`)
+
+// htmlTagOpenerGuardSpans is Apply's own extra self-protection, on top of
+// whatever the caller's segment.NoBreakSpans already supplies, in the
+// same spirit as bareLinkSpans above: it protects every byte from a
+// same-line inline-HTML tag opener ("<" or "</" followed by a letter)
+// through the next ">" on that line (or through the line's end, if none),
+// regardless of whether that stretch currently parses as a *valid*
+// CommonMark tag at all.
+//
+// That "regardless" is the point, and it is deliberately broader than
+// segment.NoBreakSpans's own, more precise htmlTagSpans (which only
+// protects a stretch it can confirm forms a real tag): a substitution
+// inside an *invalid*-looking near-tag stretch can still change whether
+// goldmark recognizes it as a tag on reparse, because the very thing
+// that makes it invalid can be the ASCII character typography is about
+// to remove. Two distinct shapes of this were found by FuzzFormat, both
+// SmartQuotes, no width bound needed:
+//
+//   - `s0<A28 X0=0011"182x>0`: the unquoted attribute value "0011"
+//     legitimately ends at the '"' — CommonMark disallows '"' inside an
+//     unquoted value — and nothing valid follows directly, so the whole
+//     construct is not a tag at all (goldmark escapes it). Once
+//     SmartQuotes curls that '"' to '”', a plain non-ASCII byte with no
+//     special meaning in this grammar, the unquoted value simply keeps
+//     going through it to the next '>' — now a real tag on reparse.
+//   - `0<A A="0>`: the attribute value opens a *quoted* value with '"'
+//     but never finds a matching close before the line ends, so it is
+//     not a tag either (goldmark escapes it). Once that opening '"' is
+//     curled away, the same first character after '=' is no longer '"'
+//     at all, so attribute-value parsing takes the *unquoted* branch
+//     instead — and an unquoted value has no matching-delimiter
+//     requirement, so it happily reaches the next '>' and forms a real
+//     tag on reparse.
+//
+// Both are the same underlying hazard from opposite ends: a `"` or `'`
+// sitting between a tag opener and its eventual `>` can be exactly the
+// byte that keeps a near-tag-shaped run from parsing as a tag, whether
+// by disqualifying a value (first shape) or by selecting which
+// value-grammar branch applies (second shape). Enumerating every way
+// that can happen is an open-ended search; protecting the whole
+// candidate stretch broadly, the same trade segment.bracketedSpans and
+// bareLinkSpans both already make ("protecting too much only means a
+// substitution is skipped, while protecting too little changes what the
+// document renders" — see bareLinkSpans's doc comment above), closes the
+// class instead of chasing individual shapes of it. The cost is real but
+// narrow: a handful of not-quite-valid-HTML-shaped runs keep their
+// straight quotes even though they are not, in the end, actual tags.
+func htmlTagOpenerGuardSpans(text string) []segment.Span {
+	var out []segment.Span
+	lineStart := 0
+	for {
+		lineEnd := len(text)
+		if nl := strings.IndexByte(text[lineStart:], '\n'); nl >= 0 {
+			lineEnd = lineStart + nl
+		}
+		line := text[lineStart:lineEnd]
+		for _, loc := range htmlTagOpenerRE.FindAllStringIndex(line, -1) {
+			start := lineStart + loc[0]
+			end := lineEnd
+			if gt := strings.IndexByte(text[start:lineEnd], '>'); gt >= 0 {
+				end = start + gt + 1
+			}
+			out = append(out, segment.Span{Start: start, End: end})
+		}
+		if lineEnd == len(text) {
+			break
+		}
+		lineStart = lineEnd + 1
+	}
+	return out
+}
+
+// linkParenOpenerRE matches a link/image destination's opener: "](".
+var linkParenOpenerRE = regexp.MustCompile(`\]\(`)
+
+// linkParenOpenerGuardSpans is Apply's own extra self-protection for link
+// and image destinations/titles, in the same spirit as
+// htmlTagOpenerGuardSpans just above and bareLinkSpans further up: for
+// every same-line "](" opener, it protects every byte from the "("
+// through the *last* ")" on that line (not the first, and regardless of
+// whether segment.NoBreakSpans's own, more precise bracketedSpans
+// currently judges any particular stretch of it to form a valid
+// destination or title).
+//
+// The hazard this closes is a title-quote analog of
+// htmlTagOpenerGuardSpans's tag-quote one: a `"` that does not complete a
+// *valid* title can still be exactly the byte a title's own closing-quote
+// search would have stopped at, so removing it (by curling) does not make
+// the construct harmless — it makes the search skip past it to the
+// *next* `"` in the text instead, extending a bogus title across
+// unrelated, possibly link-shaped content. Found by FuzzFormat on
+// `[](0 ")"017[](0")`: the first bracket pair's title opens at the first
+// `"`, and the very next `"` should close it — but per CommonMark, a
+// title must be followed only by whitespace before the closing `)`, and
+// here it is followed by more content ("017[]..."), so the *whole* first
+// bracket pair fails to form a link and both `[`/`]` end up literal text
+// (confirmed against goldmark: the *second* bracket pair is the only
+// real link). segment.bracketedSpans correctly does not protect that
+// non-title `"` as part of any construct either — but curling it removes
+// it from the byte stream entirely, so a *reparse* of the output finds
+// the title's closing quote at the *next* `"` instead — the second
+// link's own destination-closing quote, many bytes later — swallowing
+// that second link's destination into a now-huge, bogus title and
+// changing the render completely. Protecting broadly through the last
+// same-line ")" — rather than trying to characterize exactly which
+// quotes are "safe" to curl, a search at least as open-ended as
+// segment.bracketedSpans's own destination/title grammar already proved
+// to be (see its scanLinkDestTitle and naiveParenBalance) — closes this
+// the same way htmlTagOpenerGuardSpans closes its tag analog: one
+// generously wide answer instead of chasing individual shapes.
+func linkParenOpenerGuardSpans(text string) []segment.Span {
+	var out []segment.Span
+	lineStart := 0
+	for {
+		lineEnd := len(text)
+		if nl := strings.IndexByte(text[lineStart:], '\n'); nl >= 0 {
+			lineEnd = lineStart + nl
+		}
+		line := text[lineStart:lineEnd]
+		for _, loc := range linkParenOpenerRE.FindAllStringIndex(line, -1) {
+			open := lineStart + loc[1] - 1 // the "(" byte itself
+			end := lineEnd
+			if gt := strings.LastIndexByte(text[open:lineEnd], ')'); gt >= 0 {
+				end = open + gt + 1
+			}
+			out = append(out, segment.Span{Start: open, End: end})
+		}
+		if lineEnd == len(text) {
+			break
+		}
+		lineStart = lineEnd + 1
+	}
+	return out
 }
 
 // precededByOddBackslashes reports whether text[pos] is immediately

@@ -510,90 +510,6 @@ func hasNestedDashOnlyLine(src []byte) bool {
 	return false
 }
 
-// tagOpenerRE matches the start of an HTML/JSX tag: "<" immediately
-// followed by a letter (CommonMark's tag-name-start rule).
-var tagOpenerRE = regexp.MustCompile(`<[A-Za-z]`)
-
-// hasTypographySubstitutableInHTMLTag reports whether src has a line
-// containing both a tag opener and a `"` or `'` character.
-//
-// This is deliberately a whole-line check, not an attempt to match the
-// tag's own precise boundaries the way tagLineWithTabRE/htmlTagAnyOpenerRE
-// do elsewhere in this file: an attribute value can itself contain a
-// literal "<" (e.g. `<A A00="0>">0`, one of the two inputs that found
-// this), which defeats any regex whose own tag-body class excludes "<"
-// and ">" the way those two do — this check does not need the tag's exact
-// span, only "is there a quote character anywhere near a tag opener on
-// this line", so it stays broad and simple instead.
-//
-// This gates a sixteenth, final narrow, documented render-preservation
-// exception, pre-existing and unrelated to reflow's own line-joining:
-// package typography's span-level substitution (design.md's "Typography"
-// section) walks a paragraph's inline text nodes applying SmartQuotes/
-// Ellipses, but has no equivalent of package reflow's no-break-span
-// protection for inline raw HTML — so a `"` that is really an HTML
-// attribute delimiter, not prose punctuation, gets curled the same as any
-// other quote character. Confirmed as pre-existing (not a regression from
-// this package's goldmark-meta removal) by reproducing directly against
-// an unmodified checkout: found by FuzzFormat on `0<A A00="0>">0` and
-// `1<B0 A="<">0` (both SmartQuotes, no width bound needed at all — the
-// derived Typography flag alone triggers it), where curling the
-// attribute's own quote character changes whether goldmark's inline HTML
-// grammar recognizes the tag as a tag at all, turning raw HTML into
-// escaped literal text on render. As with the other exceptions, only the
-// render-preservation assertion is skipped for matching inputs; no panic,
-// idempotency, and structural correctness are still fully enforced. Fixing
-// this for real would mean giving package typography the same kind of
-// inline-HTML-aware no-break-span scan package reflow's own no-break-span
-// derivation already has — out of scope for the goldmark-meta removal this
-// file's other changes are about; tracked as a known gap, not silently
-// swept under this gate.
-func hasTypographySubstitutableInHTMLTag(src []byte) bool {
-	for _, line := range bytes.Split(src, []byte("\n")) {
-		if tagOpenerRE.Match(line) && bytes.ContainsAny(line, "\"'") {
-			return true
-		}
-	}
-	return false
-}
-
-// linkDestOpenerRE matches an inline link/image destination's opener:
-// "](".
-var linkDestOpenerRE = regexp.MustCompile(`\]\(`)
-
-// hasTypographySubstitutableInLinkDestination reports whether src has a
-// line with a "](" opener followed later on that same line by a `"` or
-// `'` character.
-//
-// This is the same underlying gap as hasTypographySubstitutableInHTMLTag
-// (package typography has no no-break-span awareness) applied to a second
-// no-break-span category design.md lists — inline link/image destinations
-// — rather than raw HTML: a seventeenth, final narrow, documented
-// render-preservation exception, pre-existing and unrelated to reflow's
-// own line-joining. Confirmed pre-existing (not a regression from this
-// package's goldmark-meta removal) by reproducing directly against an
-// unmodified checkout: found by FuzzFormat on `2[1[](]")0` and
-// `2[[](()]")` (both SmartQuotes, no width bound needed), where curling a
-// `"` that is really part of the link's own destination text changes the
-// destination's percent-encoded bytes on render. Deliberately as broad as
-// hasTypographySubstitutableInHTMLTag: "any quote character anywhere after
-// a `](` on the same line", not an attempt to track the destination's
-// exact (possibly nested-paren) extent. As with the other exceptions, only
-// the render-preservation assertion is skipped for matching inputs; no
-// panic, idempotency, and structural correctness are still fully
-// enforced. Same out-of-scope-for-this-change status and fix shape as
-// hasTypographySubstitutableInHTMLTag.
-func hasTypographySubstitutableInLinkDestination(src []byte) bool {
-	for _, line := range bytes.Split(src, []byte("\n")) {
-		if loc := linkDestOpenerRE.FindIndex(line); loc != nil {
-			if bytes.ContainsAny(line[loc[1]:], "\"'") {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // bareBrLineRE matches a line whose entire (trimmed) content is a single
 // <br> tag.
 var bareBrLineRE = regexp.MustCompile(`(?i)^[\s>]*<br\s*/?>[\s]*$`)
@@ -975,7 +891,7 @@ func FuzzFormat(f *testing.F) {
 	})
 }
 
-// hasRenderRiskyShape ORs together all seventeen documented, narrow
+// hasRenderRiskyShape ORs together all fifteen documented, narrow
 // render-preservation exceptions above. It is checked against *both* src
 // and out (see FuzzFormat's call site), not just src: most of these
 // exceptions were found and documented against a pre-existing shape
@@ -984,8 +900,18 @@ func FuzzFormat(f *testing.F) {
 // can freshly *create* one of these same dangerous shapes in the output
 // where the source never had it (e.g. hasFreshTableAdjacency's and
 // hasNestedDashOnlyLine's own doc comments). Checking both sides catches
-// that without needing an eighteenth, output-specific copy of every
+// that without needing a sixteenth, output-specific copy of every
 // existing check.
+//
+// Two former exceptions here — hasTypographySubstitutableInHTMLTag and
+// hasTypographySubstitutableInLinkDestination — are gone: package
+// segment's no-break-span derivation (used both by reflow's own line
+// breaking and, via segment.NoBreakSpans, by package typography's
+// substitution pass) now correctly finds an inline HTML tag with a "<"
+// inside a quoted attribute value, and correctly resolves nearest-opener
+// link brackets, so both underlying gaps are fixed rather than merely
+// gated. See internal/segment/nobreak.go's htmlTagSpans and
+// bracketedSpans doc comments, and mdreflow issue #3.
 func hasRenderRiskyShape(b []byte) bool {
 	return hasHardBreakAdjacentDelimiter(b) ||
 		hasMultilineCodeSpanCandidate(b) ||
@@ -1001,7 +927,5 @@ func hasRenderRiskyShape(b []byte) bool {
 		hasMultilineInlineTagCandidate(b) ||
 		hasWrapInducedBlockInterruptRisk(b) ||
 		hasFreshTableAdjacency(b) ||
-		hasHardBreakDeclarationRisk(b) ||
-		hasTypographySubstitutableInHTMLTag(b) ||
-		hasTypographySubstitutableInLinkDestination(b)
+		hasHardBreakDeclarationRisk(b)
 }

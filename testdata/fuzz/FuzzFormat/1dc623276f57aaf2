@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("0y70A><A0 A= >00")

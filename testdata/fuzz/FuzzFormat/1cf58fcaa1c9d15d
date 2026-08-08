@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("710ZA0X2087 s0<A28 X0=0011\"182x>0")

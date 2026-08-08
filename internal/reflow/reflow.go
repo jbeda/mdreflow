@@ -121,6 +121,15 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 	lines := p.Node.Lines()
 	n := lines.Len()
 
+	// firstLinePrefix is the raw source bytes on p's own first physical
+	// line, before p.Start — a list item's "- "/"1. " marker, a
+	// blockquote's "> ", or "" for a paragraph with no container prefix
+	// at all. Format's caller already writes these bytes verbatim (see
+	// Format's doc comment on Paragraph.Start), so writeParagraph never
+	// touches them directly, but escapeBlockInterrupt still needs to know
+	// them — see its firstLinePrefix parameter doc comment.
+	firstLinePrefix := string(source[blockmap.LineStart(source, p.Start):p.Start])
+
 	// rawContents[i] is line i's content (line ending stripped, hard-break
 	// marker bytes not yet stripped). insideSpanAfter[i] reports whether
 	// the boundary right after line i's content — where a hard-break
@@ -278,8 +287,16 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 			// to apply unconditionally: a genuine, never-split first line
 			// can never itself match a trigger, since if it did, goldmark
 			// would already have parsed it as that block instead of a
-			// paragraph in the first place.
-			ol.text = escapeBlockInterrupt(ol.text, i == 0)
+			// paragraph in the first place. That reasoning holds only for
+			// the line's own leading bytes, though — see
+			// escapeBlockInterrupt's firstLinePrefix parameter doc comment
+			// for the container-marker-plus-wrapped-content case it
+			// doesn't cover.
+			prefix := ""
+			if i == 0 {
+				prefix = firstLinePrefix
+			}
+			ol.text = escapeBlockInterrupt(ol.text, i == 0, prefix)
 		}
 		buf.WriteString(ol.text)
 	}
@@ -834,8 +851,24 @@ func runeLen(s string) int {
 // actual position in the paragraph turns out to be. Never an
 // under-estimate, so a candidate this accepts is guaranteed to still fit
 // after the real escaping pass.
+//
+// firstLinePrefix is passed as "" here, unlike the real output pass in
+// writeParagraph: this helper has no way to know, for a candidate cut
+// under consideration, what container marker (if any) will actually sit
+// before it once a final cut is chosen, so it cannot simulate
+// escapeBlockInterrupt's firstLinePrefix-aware thematic-break check
+// precisely. This narrows (does not violate) the "never an
+// under-estimate" guarantee above only for that one rare trigger — a
+// wrapped first line landing right after a container marker such that
+// the two jointly form a thematic break — where a candidate this
+// function accepts could end up one byte longer once the real prefix is
+// known and escapeBlockInterrupt reacts to it. That is a line-quality
+// nicety, not a correctness one: the real escaping pass in writeParagraph
+// always runs with the true prefix regardless of what fitLen estimated,
+// so no idempotency or render-preservation guarantee depends on this
+// function's precision here.
 func fitLen(s string) int {
-	return runeLen(escapeBlockInterrupt(canonicalizeForWidth(s), true))
+	return runeLen(escapeBlockInterrupt(canonicalizeForWidth(s), true, ""))
 }
 
 // splitSentences takes one cluster's already-joined prose, asks seg for
@@ -1131,7 +1164,31 @@ var orderedListRE = regexp.MustCompile(`^\d{1,9}([.)])(\s|$)`)
 // FuzzFormat regressing on legitimate inline "<br>" text (a hard-break
 // marker mdreflow itself emits) once a first draft of the type-7 handling
 // folded it into the always-applies set.
-func escapeBlockInterrupt(line string, isFirstLine bool) string {
+//
+// firstLinePrefix is the raw source bytes writeParagraph's caller (package
+// reflow's own Format) already copied byte-for-byte immediately before a
+// nested paragraph's first line — a list item's "- "/"1. " marker or a
+// blockquote's "> ", for instance — and is empty for every other call
+// (continuation lines, and any paragraph not nested in a container at
+// all). It matters only to isThematicBreak, and only for the paragraph's
+// first output line (every other caller passes ""): a thematic break's
+// three-instance-of-the-same-character rule can be satisfied *jointly* by
+// the container marker's own leading byte plus wrapped content that, on
+// its own, does not reach the threshold. Found by FuzzFormat on
+// `-\n- -- -02\n* ` under ModeWrap at width 1: the list item's original,
+// unsplit content "-- -02" was never thematic-break-shaped (the trailing
+// digits disqualify it), so goldmark had already parsed it as ordinary
+// list-item prose — but wrapping split it, landing "--" alone on the
+// item's own first output line. Checked in isolation "--" is only two
+// dashes, not a break; checked as CommonMark actually would ("- " marker
+// + "--" content = "- --"), the marker's own dash joins the run to make
+// three, and CommonMark's own rule that a thematic break wins over a list
+// item on genuine ambiguity reinterprets the *whole item* as a thematic
+// break instead on the very next parse — different structure from pass
+// one, an idempotency break, not just a render-preservation one.
+// Checking line alone here would have missed it, since line alone was
+// never wrong; only line as it will actually be *placed* was.
+func escapeBlockInterrupt(line string, isFirstLine bool, firstLinePrefix string) string {
 	if line == "" {
 		return line
 	}
@@ -1166,7 +1223,7 @@ func escapeBlockInterrupt(line string, isFirstLine bool) string {
 		b.WriteString(line[i:])
 		return b.String()
 	}
-	if isThematicBreak(line) || isSetextUnderline(line) || blockInterruptTriggers.MatchString(line) || linkRefDefOpenerRE.MatchString(line) {
+	if isThematicBreak(firstLinePrefix+line) || isSetextUnderline(line) || blockInterruptTriggers.MatchString(line) || linkRefDefOpenerRE.MatchString(line) {
 		return "\\" + line
 	}
 	if isFirstLine && htmlBlockAnyOpenerRE.MatchString(line) {
