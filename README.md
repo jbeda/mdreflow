@@ -54,6 +54,7 @@ out, err := mdreflow.Format(src, mdreflow.Options{})
 ```
 
 `Options{}` is valid and sensible: sentence mode, no width limit, typography off.
+The full API reference is on [pkg.go.dev](https://pkg.go.dev/github.com/jbeda/mdreflow).
 
 ## Modes
 
@@ -121,6 +122,7 @@ The `mdreflow-check` hook writes nothing and fails if anything would change, whi
 
 ## Documentation
 
+- [pkg.go.dev/github.com/jbeda/mdreflow](https://pkg.go.dev/github.com/jbeda/mdreflow) is the library API reference, rendered from the doc comments.
 - [docs/design.md](docs/design.md) is the canonical design: goals, modes, architecture, dialect handling (GFM, MDX/Docusaurus, Hugo), guarantees, API, CLI, and milestones.
   Design changes land there before code.
 - [docs/m0-spike-findings.md](docs/m0-spike-findings.md) maps how dialect constructs land in goldmark's AST and why the skip-list works the way it does.
