@@ -261,7 +261,8 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		return Paragraph{}, true
 	}
 	if hasPossibleLinkRefDefOpener(trimmed) || hasUnbalancedBracket(trimmed) ||
-		(hasUnbalancedParen(trimmed) && hasAnyBracket(trimmed)) {
+		(hasUnbalancedParen(trimmed) && hasAnyBracket(trimmed)) ||
+		hasUnclosedAngleDestOpener(trimmed) {
 		// Fuzz-found content-loss hazard family, more severe than (and
 		// broader than) reflow.isLinkRefDefOpener's per-output-line
 		// defense: a CommonMark link reference definition's label,
@@ -849,6 +850,37 @@ func hasUnbalancedBracket(trimmedLines []string) bool {
 // the original's link to a literal '"' character.
 func hasUnbalancedParen(trimmedLines []string) bool {
 	return hasUnclosedDelimiterAcrossLine(trimmedLines, '(', ')')
+}
+
+// hasUnclosedAngleDestOpener reports whether any of trimmedLines contains
+// an inline-link angle-destination opener — "](", optional spaces, "<" —
+// with no ">" after it on the same line. CommonMark forbids a newline
+// inside a "<...>" destination, so such a source is literal text — but
+// joining the lines removes the newline, and a ">" on a later line can
+// complete the destination, turning literal text into a real link: found
+// by FuzzFormat on "[](<)\n0>)" (seed e18cc56eacbb7c92), whose joined
+// form "[](<) 0>)" parses "<) 0>" as a valid spaces-allowed angle
+// destination. Same crude-and-conservative spanning-construct treatment
+// as hasUnbalancedBracket/hasUnbalancedParen above: skip the paragraph.
+func hasUnclosedAngleDestOpener(trimmedLines []string) bool {
+	for _, line := range trimmedLines {
+		rest := line
+		for {
+			k := strings.Index(rest, "](")
+			if k < 0 {
+				break
+			}
+			rest = rest[k+2:]
+			j := 0
+			for j < len(rest) && (rest[j] == ' ' || rest[j] == '\t') {
+				j++
+			}
+			if j < len(rest) && rest[j] == '<' && !strings.Contains(rest[j:], ">") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // hasAnyBracket reports whether any of trimmedLines contains a "[" at
