@@ -60,6 +60,27 @@ func refusalReason(path string, content []byte, hasMarkdownExt bool) string {
 	sniff := content
 	if len(sniff) > sniffBytes {
 		sniff = sniff[:sniffBytes]
+		// The cut can land mid-rune: a 3- or 4-byte rune straddling the
+		// boundary leaves a partial encoding at the tail that
+		// utf8.Valid rejects even though the full file is fine (issue
+		// #15 — a box-drawing character at bytes 8190-8192 refused a
+		// perfectly valid 30KB doc). Back off at most 3 trailing
+		// continuation bytes of one partial rune before validating;
+		// bounding the back-off keeps genuinely corrupt tails (e.g. a
+		// run of 0xff) failing. Only applies when truncation happened —
+		// an untruncated file's tail is the real tail. The sniff is a
+		// fast pre-filter; mdreflow.Format validates the full content
+		// authoritatively either way.
+		for range 3 {
+			if len(sniff) == 0 {
+				break
+			}
+			if r, size := utf8.DecodeLastRune(sniff); r == utf8.RuneError && size == 1 {
+				sniff = sniff[:len(sniff)-1]
+			} else {
+				break
+			}
+		}
 	}
 	for _, b := range sniff {
 		if b == 0 {

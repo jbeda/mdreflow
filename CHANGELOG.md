@@ -11,6 +11,7 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ### Fixed
 
+- A valid UTF-8 file is no longer refused when a multi-byte character happens to straddle the 8 KB sniff boundary (#15); the sniff now drops at most one partial trailing rune before validating, and real corruption at the tail still refuses.
 - A width- or sentence-forced split can no longer land a table-delimiter-shaped line (`-:`, `-|-|-`, …) directly under a non-blank line, which made the reflowed paragraph parse as a GFM table (#5, #13); such lines are now backslash-escaped the same way setext underlines already were.
 - A paragraph that sits directly under a multi-line link reference definition (no blank line between) is now passed through untouched, since reflowing its first line could invalidate the definition and change what renders (#11). The same protection applies when a titleless one-line definition absorbs its title from the paragraph's first line. Ordinary one-line definitions (`[foo]: /url`, title included or absent-and-unabsorbed) are unaffected — prose after them reflows as before.
 - Sentence-mode splits no longer flip between runs when a lone carriage return sits mid-paragraph (#10).
