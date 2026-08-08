@@ -21,6 +21,7 @@ HTML attributes"), not commit-message terms.
 3. Sanity-check the notes render: `task release-notes VERSION=vX.Y.Z` (the
    compare link appears once the tag exists; a warning before that is fine).
 4. Commit, push, then tag and push the tag: `git tag -a vX.Y.Z -m "mdreflow vX.Y.Z" && git push origin vX.Y.Z`.
+   The Release workflow refuses tags whose commit is not on `main` (push the branch first, then the tag).
 5. Watch both tag-triggered workflows (Release and govulncheck): `gh run list -R jbeda/mdreflow --branch vX.Y.Z`.
    - If govulncheck fails on a **stdlib** vulnerability, the fix is bumping the `toolchain` directive in go.mod (not deps) and cutting a patch release; this happened for v0.1.1 / GO-2026-4602.
 6. `task release-verify VERSION=vX.Y.Z` — downloads a real asset, verifies the checksum, and smoke-tests the binary.
