@@ -1953,13 +1953,18 @@ type lineFrag struct {
 func joinClusterLines(frags []lineFrag) string {
 	var b strings.Builder
 	wrote := false
+	lastTrimmed := false
+	lastPieceEnd := ""
 	for _, f := range frags {
 		piece := f.text
 		if !f.leadingProtected {
 			piece = strings.TrimLeft(piece, " \t")
 		}
+		trimmed := false
 		if !f.trailingProtected {
-			piece = strings.TrimRight(piece, " \t")
+			t := strings.TrimRight(piece, " \t")
+			trimmed = t != piece
+			piece = t
 		}
 		if piece == "" {
 			continue
@@ -1969,6 +1974,27 @@ func joinClusterLines(frags []lineFrag) string {
 		}
 		b.WriteString(piece)
 		wrote = true
+		lastTrimmed = trimmed
+		lastPieceEnd = piece
+	}
+	// Restoring one trimmed space when the cluster now ends in an ODD
+	// backslash run: the cluster's end becomes a line end on emission, and
+	// a line ending in an odd backslash run IS a backslash hard break to
+	// the next parse — so the trim itself would manufacture a break the
+	// source never had, which the second pass then normalizes to the
+	// configured marker: found by FuzzFormat on "0\\ \n:::" (seed
+	// cf5efcc4d8ee400c), where trimming "0\\ " to "0\\" turned a literal
+	// backslash into a break and pass 2 rewrote it to "0<br>". The
+	// restored space renders identically (a backslash before a space is
+	// just a literal backslash either way) and the decision is stable: a
+	// re-format re-trims and re-restores the same byte. Only applies when
+	// something was actually trimmed — a trailing-protected fragment
+	// (code-span interior) must not grow a space, and an untrimmed
+	// ordinary fragment cannot end in an odd run at all (a source line
+	// ending in one is a real hard break and travels the marker path,
+	// never this join).
+	if lastTrimmed && trailingBackslashCount(lastPieceEnd)%2 == 1 {
+		b.WriteByte(' ')
 	}
 	return b.String()
 }
