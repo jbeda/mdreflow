@@ -12,7 +12,7 @@ At release time the section is retitled to the version and the prose lead is wri
 ### Fixed
 
 - A width- or sentence-forced split can no longer land a table-delimiter-shaped line (`-:`, `-|-|-`, …) directly under a non-blank line, which made the reflowed paragraph parse as a GFM table (#5, #13); such lines are now backslash-escaped the same way setext underlines already were.
-- A paragraph that sits directly under a multi-line link reference definition (no blank line between) is now passed through untouched, since reflowing its first line could invalidate the definition and change what renders (#11). One-line definitions (`[foo]: /url`) are unaffected — prose after them reflows as before.
+- A paragraph that sits directly under a multi-line link reference definition (no blank line between) is now passed through untouched, since reflowing its first line could invalidate the definition and change what renders (#11). The same protection applies when a titleless one-line definition absorbs its title from the paragraph's first line. Ordinary one-line definitions (`[foo]: /url`, title included or absent-and-unabsorbed) are unaffected — prose after them reflows as before.
 - Sentence-mode splits no longer flip between runs when a lone carriage return sits mid-paragraph (#10).
 - Escaping a fence-opener-shaped run at a wrapped line start no longer lets its backticks re-pair with unrelated backticks on the next run (which could flip hard-break handling or typography decisions between runs): backticks in that position are now written as `&#96;` — rendering identically — and smart-quote protection is decided against the text as it will actually be emitted (#6, #8, #12).
 

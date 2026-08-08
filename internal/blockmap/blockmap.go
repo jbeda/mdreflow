@@ -22,10 +22,12 @@ package blockmap
 import (
 	"bytes"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/yuin/goldmark/ast"
 	gfmast "github.com/yuin/goldmark/extension/ast"
+	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
 
 	"github.com/jbeda/mdreflow/internal/gm"
@@ -168,7 +170,8 @@ func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int,
 			// blank-line check instead (precededByBlankLine), which is not
 			// fooled by this.
 			precededByLinkRefDef := false
-			if prev := c.PreviousSibling(); prev != nil && prev.Kind() == ast.KindLinkReferenceDefinition && !isSelfCompleteLinkRefDef(source, prev) {
+			if prev := c.PreviousSibling(); prev != nil && prev.Kind() == ast.KindLinkReferenceDefinition &&
+				(!isSelfCompleteLinkRefDef(source, prev) || lrdReachesInto(source, prev, c)) {
 				precededByLinkRefDef = true
 			}
 			if pp, skip := build(c, source, inBlockquote, fmEnd, precededByTable, precededByLinkRefDef); !skip {
@@ -538,9 +541,22 @@ var bareLinkRefDefLineRE = regexp.MustCompile(`^[ \t>]*\[[^\[\]][^\[\]]*\]:[ \t]
 // line break, as in issue #11's "[\\]\n]:0") puts the following paragraph's
 // first line at risk.
 func isSelfCompleteLinkRefDef(source []byte, lrd ast.Node) bool {
+	line := lrdOpeningLine(source, lrd)
+	if line == nil {
+		return false
+	}
+	doc := gm.New().Parser().Parse(text.NewReader(line))
+	first := doc.FirstChild()
+	return first != nil && first.Kind() == ast.KindLinkReferenceDefinition && first.NextSibling() == nil
+}
+
+// lrdOpeningLine returns the definition's own recorded opening line,
+// sliced out to its physical line end (line ending included when present),
+// or nil if the node records no lines.
+func lrdOpeningLine(source []byte, lrd ast.Node) []byte {
 	lines := lrd.Lines()
 	if lines.Len() == 0 {
-		return false
+		return nil
 	}
 	start := lines.At(0).Start
 	end := start
@@ -550,11 +566,63 @@ func isSelfCompleteLinkRefDef(source []byte, lrd ast.Node) bool {
 	if end < len(source) {
 		end++ // include the line ending, matching how a real line is scanned
 	}
-	line := source[start:end]
+	return source[start:end]
+}
 
-	doc := gm.New().Parser().Parse(text.NewReader(line))
-	first := doc.FirstChild()
-	return first != nil && first.Kind() == ast.KindLinkReferenceDefinition && first.NextSibling() == nil
+// lrdReachesInto reports whether the paragraph's own first line changes
+// what goldmark registers for the preceding, otherwise self-complete
+// definition. isSelfCompleteLinkRefDef alone is not sufficient (its
+// original premise — that recognition depends only on the candidate text —
+// fails for titles specifically): a definition that is complete WITHOUT a
+// title on its own line can still absorb one from the next line, and
+// goldmark will do so even when trailing content makes that same line
+// render as paragraph prose too. Found by FuzzFormat on
+// " [0]:0\n\"00[0]\"0" (seed 609ac42cd2c93d72): the second line is
+// simultaneously the definition's registered title ("00[0]") and visible
+// paragraph text, so reflow touching it — typography curling its quotes,
+// in the find — silently rewrites the title every "[0]" reference link
+// renders with.
+//
+// Checked empirically against goldmark's own reference registry rather
+// than re-deriving the title grammar: parse the definition's opening line
+// alone, then with the paragraph's first line appended, and compare the
+// registered (label, destination, title) tuples. Any difference means the
+// paragraph's first line feeds the definition and the paragraph must pass
+// through untouched. Unreadable inputs (no recorded lines) fail
+// conservative — reaches-into, skip.
+func lrdReachesInto(source []byte, lrd, para ast.Node) bool {
+	defLine := lrdOpeningLine(source, lrd)
+	plines := para.Lines()
+	if defLine == nil || plines.Len() == 0 {
+		return true
+	}
+	ps := plines.At(0).Start
+	pe := ps
+	for pe < len(source) && source[pe] != '\n' {
+		pe++
+	}
+	paraLine := source[ps:pe]
+
+	combined := make([]byte, 0, len(defLine)+1+len(paraLine))
+	combined = append(combined, defLine...)
+	if n := len(combined); n == 0 || combined[n-1] != '\n' {
+		combined = append(combined, '\n')
+	}
+	combined = append(combined, paraLine...)
+	return !slices.Equal(registeredRefs(defLine), registeredRefs(combined))
+}
+
+// registeredRefs parses src in isolation and returns goldmark's registered
+// link references as comparable label/destination/title tuples.
+func registeredRefs(src []byte) []string {
+	pc := parser.NewContext()
+	gm.New().Parser().Parse(text.NewReader(src), parser.WithContext(pc))
+	refs := pc.References()
+	out := make([]string, 0, len(refs))
+	for _, r := range refs {
+		out = append(out, string(r.Label())+"\x00"+string(r.Destination())+"\x00"+string(r.Title()))
+	}
+	return out
 }
 
 // precededByBlankLine reports whether the raw physical source line
