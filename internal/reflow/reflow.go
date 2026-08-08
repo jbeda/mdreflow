@@ -1270,9 +1270,17 @@ var htmlBlockAnyOpenerRE = regexp.MustCompile(`(?i)^(<[A-Za-z][A-Za-z0-9-]*( [^<
 //     position instead of this) defeated a *working* "[0]" reference link
 //     resolved against an earlier real definition — found by FuzzFormat on
 //     "[0]:0 \"\"\n[0]:0 ! 00000000".
-//   - "[0]:" — nothing at all after the colon — incomplete, safe (no
-//     token for `[^\s<][^\s]*` to match, so this regex correctly does not
-//     match it either).
+//   - "[0]:" — nothing at all after the colon — incomplete, so this
+//     regex correctly does not match it (no token for `[^\s<][^\s]*`).
+//     "Incomplete" is NOT "safe", though: an emitted line consisting of
+//     only a bare opener completes using the NEXT line as its
+//     destination, so it needs its own escape — see
+//     bareLinkRefDefOpenerLineRE below. (For non-caret labels blockmap's
+//     whole-paragraph net usually skips such paragraphs first; the
+//     caret-label variant reaches emission, and a narrow width cut can
+//     isolate the opener — found by FuzzFormat on " [^(]: !y )9.20",
+//     seed f0699d6787522cd5, whose MaxWidth cut left " [^(]:" alone and
+//     the reparse swallowed "!y" as the definition's destination.)
 //
 // Footnote-shaped "[^label]:" openers are INCLUDED (an earlier version
 // excluded them as "a footnote definition's own legitimate marker"):
@@ -1302,6 +1310,16 @@ var htmlBlockAnyOpenerRE = regexp.MustCompile(`(?i)^(<[A-Za-z][A-Za-z0-9-]*( [^<
 // the line's autolink recognition behaved, found by FuzzFormat on exactly
 // that input.
 var linkRefDefOpenerRE = regexp.MustCompile(`^\[[^\[\]]*\]:[ \t]*[^\s<][^\s]*[ \t]*$`)
+
+// bareLinkRefDefOpenerLineRE matches an emitted line that is ONLY a
+// link-reference-definition opener — "[label]:" plus optional trailing
+// whitespace, no destination. Such a line is incomplete rather than
+// inert: CommonMark completes the definition using the following line as
+// its destination, so leaving one at a line start lets the reparse
+// swallow the next line's text (see linkRefDefOpenerRE's doc comment,
+// third bullet, for the fuzz find). Escaping the bracket renders as the
+// same literal text the paragraph showed before.
+var bareLinkRefDefOpenerLineRE = regexp.MustCompile(`^\[[^\[\]]*\]:[ \t]*$`)
 
 // backtickFenceStart and tildeFenceStart match a fenced-code-block opener's
 // leading run of 3+ backticks or tildes, so isFenceOpener can inspect what
@@ -1587,7 +1605,7 @@ func escapeBlockInterrupt(line string, isFirstLine bool, firstLinePrefix string,
 		b.WriteString(line[i:])
 		return b.String()
 	}
-	if isThematicBreak(firstLinePrefix+line) || isSetextUnderline(line) || blockInterruptTriggers.MatchString(line) || linkRefDefOpenerRE.MatchString(line) || (prevLineNonBlank && isTableDelimiterRowShaped(line)) {
+	if isThematicBreak(firstLinePrefix+line) || isSetextUnderline(line) || blockInterruptTriggers.MatchString(line) || linkRefDefOpenerRE.MatchString(line) || bareLinkRefDefOpenerLineRE.MatchString(line) || (prevLineNonBlank && isTableDelimiterRowShaped(line)) {
 		return "\\" + line
 	}
 	if isFirstLine && htmlBlockAnyOpenerRE.MatchString(line) {
