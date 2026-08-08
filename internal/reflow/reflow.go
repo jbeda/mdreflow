@@ -206,6 +206,44 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 		if opts.Typography != 0 {
 			text = typography.Apply(text, segment.NoBreakSpans(fenceEscapeNeutralize(text)), opts.Typography)
 		}
+		// A fence-opener-shaped cluster is pre-escaped here, before
+		// computeLines ever measures or wraps it — not left for
+		// escapeBlockInterrupt to handle only once a final output line is
+		// chosen, the way every other block-interrupt trigger is. This
+		// cluster's own leading bytes always become its first *output*
+		// line's leading bytes (computeLines/wrapRanked never introduce a
+		// break before position 0), so the run is always eventually
+		// escaped regardless; doing it now instead means every width
+		// decision from here on (fitLen, wordBreaks, wrapRanked's
+		// candidate measurement) operates on the exact bytes that will
+		// actually be emitted and exactly what the next reformat pass
+		// will reparse as its own raw source — not on a backtick-shaped
+		// stand-in whose *escaped* width and canonical-collapsing
+		// behavior can differ from the real thing in ways a canonical-
+		// plus-delta estimate (escapeDeltaMax) cannot safely bound, since
+		// the escape only touches the run itself and leaves the rest of
+		// the cluster's real, uncollapsed bytes untouched.
+		//
+		// This replaced an earlier attempt at teaching widthMeasurer to
+		// compute a fence candidate's *exact* real (uncollapsed) width
+		// instead of estimating it: that fixed the immediate
+		// under-estimate but introduced a *worse* problem — a candidate
+		// it rejected because the raw suffix didn't fit forced an earlier
+		// cut, but that cut's own leftover, being an ordinary (no hard
+		// break) continuation line, gets rejoined by joinClusterLines on
+		// the *next* pass and re-measured there canonically (since it no
+		// longer starts with a backtick once escaped, so the *generic*
+		// path governs it then) — a different rule on each side of the
+		// escape, with no local, per-candidate fix able to predict what
+		// the far side will decide. Found by FuzzFormat on ModeSentence,
+		// MaxWidth 17, " \r```  b 0" and " \r``` Z C00": whichever
+		// candidate pass 1 picked, pass 2's rejoin-and-recanonicalize of
+		// the leftover chose differently. Pre-escaping first sidesteps
+		// the whole class: computeLines runs the *same*, unmodified,
+		// already-idempotent canonical algorithm pass 2 will *also* run
+		// on this same content, because by the time either pass reaches
+		// it, it is no longer fence-shaped at all.
+		text = escapeFenceOpenerRun(text)
 		clusterLines := computeLines(text, seg, opts)
 		for i, s := range clusterLines {
 			if i == len(clusterLines)-1 {
@@ -753,6 +791,16 @@ func (m *widthMeasurer) escapeDeltaMax(a int) int {
 // escaped: the prefix-table width answers all but the ambiguous band
 // [maxWidth-escapeDeltaMax, maxWidth], where the real escape is simulated
 // exactly as fitLen would.
+//
+// A fence-opener-shaped [a:b) is not specially handled here, unlike an
+// earlier version of this function: see writeParagraph's flush, which
+// pre-escapes a hard-break cluster's own leading fence-opener run before
+// computeLines (hence wrapRanked, hence this) ever sees it, and
+// filterUnsafeLineEnds's fence-suffix rule, which stops any *other*
+// position from ever becoming one via a width cut. So text[a] is never
+// '`' or '~' for any (a, b) this function is actually asked about, and
+// escapeDeltaMax's fence-aware bound (kept for defense in depth) never
+// exercises its interesting case.
 func (m *widthMeasurer) fits(a, b, maxWidth int) bool {
 	w := m.width(a, b)
 	if w > maxWidth {
@@ -1008,16 +1056,47 @@ func isWrapRunByte(b byte) bool {
 // silently misbehave on reparse).
 var clauseBreaksRE = regexp.MustCompile(`[,;][ \t\r]+`)
 
+// entityRefTailRE matches an HTML entity or numeric character reference
+// ending exactly at the string's end ("&" then digits/letters then ";")
+// — used to recognize when a semicolon clauseBreaksRE matched is markup
+// syntax, not clause-terminal punctuation.
+var entityRefTailRE = regexp.MustCompile(`&#?[0-9A-Za-z]+;$`)
+
 // clauseBreaks returns text's clause-boundary break candidates, excluding
 // any match whose run is pure '\r' (see wordBreaks's doc comment — that
-// is not a real clause boundary) or that lands inside a no-break span
-// (e.g. a comma inside inline code).
+// is not a real clause boundary), that lands inside a no-break span (e.g.
+// a comma inside inline code), or whose semicolon terminates an HTML
+// entity/numeric character reference rather than actual prose punctuation
+// (entityRefTailRE) — e.g. "&#96;", never real clause punctuation despite
+// ending in ';'.
+//
+// The last exclusion matters beyond ordinary prose containing a literal
+// reference like "caf&eacute;, more text" (a pre-existing quirk of no
+// consequence there, since the same text is present and read the same way
+// on every pass): escapeBlockInterrupt's fence-opener branch emits
+// "&#96;" for every escaped backtick, so a paragraph whose pre-escape text
+// has no semicolon at all can gain one, mid-cluster, purely from that
+// escape — one this function would otherwise treat as a *new* clause
+// break unavailable to the pre-escape planning pass. Since a clause break
+// is preferred over a plain word break whenever both fit
+// (docs/design.md's Modes table, computeLines), the spurious candidate
+// can steer ModeSentence's MaxWidth wrapping to a different cut than the
+// pre-escape pass chose — an idempotency break. Found by FuzzFormat
+// (ModeSentence, MaxWidth 17) on " \r``` Z C00": pass 1, still working
+// from unescaped text, has no semicolon to prefer and wraps after "Z"
+// ("``` Z" / "C00"); pass 2, reparsing the escaped "&#96;&#96;&#96; Z
+// C00", finds the third entity's terminating ';' immediately before a
+// space and treats it as a preferred clause break, wrapping right after
+// the run instead ("&#96;&#96;&#96;" / "Z C00").
 func clauseBreaks(text string) []segment.Span {
 	noBreak := segment.NoBreakSpans(text)
 	var out []segment.Span
 	for _, m := range clauseBreaksRE.FindAllStringIndex(text, -1) {
-		start, end := m[0]+1, m[1]
+		punct, start, end := m[0], m[0]+1, m[1]
 		if !strings.ContainsAny(text[start:end], " \t") || spanContains(noBreak, start) {
+			continue
+		}
+		if text[punct] == ';' && entityRefTailRE.MatchString(text[:start]) {
 			continue
 		}
 		out = append(out, segment.Span{Start: start, End: end})
@@ -1074,6 +1153,40 @@ func runeLen(s string) int {
 // always runs with the true prefix regardless of what fitLen estimated,
 // so no idempotency or render-preservation guarantee depends on this
 // function's precision here.
+//
+// Deliberately stays canonical (not exact-fence-aware, unlike
+// widthMeasurer.exactFenceEscapedWidth) even for a fence-opener-shaped s:
+// this measures the "keep the whole cluster as one line" verdict, and
+// canonical measurement of that verdict is a stable fixpoint across
+// passes in a way an exact one is not. If this text is kept together
+// (verdict: fits), it is emitted unchanged and re-read on the next pass
+// as ordinary, no-longer-fence-shaped text (the fence branch only ever
+// escapes the leading run) — whose own fitLen also canonicalizes the same
+// whitespace, arriving at the identical number. If instead the text gets
+// split later (wrapRanked, via widthMeasurer), the pieces are ordinary
+// paragraph continuation lines with no hard break between them, so the
+// *next* pass's joinClusterLines rejoins them with a single space before
+// that pass's own fitLen ever runs on them again — which is exactly what
+// canonical measurement already assumes happens to any uncut interior
+// run, fence or not. An exact/raw verdict here does not enjoy either
+// fixpoint: it can force a split canonical measurement alone would not
+// have needed, and that split's own rejoin-and-recanonicalize on the next
+// pass can undo it — found by constructing exactly that shape (ModeWrap,
+// MaxWidth 17, a hard-break cluster's second line "```  b" indented 4+
+// spaces in the source, i.e. ordinary paragraph continuation text until
+// reflow's own dedent exposes the leading backticks): an exact fitLen
+// here forces a split into "```" + "b", which the next pass — no longer
+// seeing a fence shape once escaped — rejoins and re-measures as fitting
+// on one line after all, disagreeing with pass 1. Leaving fitLen
+// canonical accepts the pre-existing, already-documented tradeoff instead
+// (a kept-together real line can land a few runes past MaxWidth when it
+// contains an interior uncut whitespace run — see canonicalizeForWidth),
+// which is a real, independent gap but not one this function's escape
+// awareness should try to close by itself; widthMeasurer.fits/lastFit's
+// exact fence check (used only once a split is already required) is the
+// safe place for exactness, since candidates it rejects fall back to
+// *earlier* candidates within the very same wrapRanked call rather than
+// to a decision a whole reformat pass later has to reconcile against.
 func fitLen(s string) int {
 	return runeLen(escapeBlockInterrupt(canonicalizeForWidth(s), true, "", true))
 }
@@ -1355,6 +1468,35 @@ func fenceOpenerRunLen(line string) int {
 	return i
 }
 
+// escapeFenceOpenerRun returns line with its leading fence-opener run
+// (isFenceOpener) replaced by exactly the bytes escapeBlockInterrupt's
+// fence-opener branch would produce for it — a backtick as the HTML
+// character reference "&#96;" (never a backtick byte, so it can never
+// pair as a code-span delimiter on any reparse), a tilde as "\~" — with
+// the rest of line untouched. If line is not fence-opener-shaped, line is
+// returned unchanged. Shared by escapeBlockInterrupt itself and by
+// writeParagraph's flush (which pre-escapes a hard-break cluster's own
+// leading run before computeLines ever measures or wraps it — see flush's
+// call site) so the two can never drift apart.
+func escapeFenceOpenerRun(line string) string {
+	if !isFenceOpener(line) {
+		return line
+	}
+	n := fenceOpenerRunLen(line)
+	var b strings.Builder
+	b.Grow(len(line) + 4*n)
+	for _, c := range line[:n] {
+		if c == '`' {
+			b.WriteString("&#96;")
+		} else {
+			b.WriteByte('\\')
+			b.WriteRune(c)
+		}
+	}
+	b.WriteString(line[n:])
+	return b.String()
+}
+
 // fenceEscapeNeutralize returns text with its leading fence-opener run's
 // backtick characters (if any) replaced by tildes, matching the same
 // byte length so that a Span computed against the result still indexes
@@ -1607,18 +1749,7 @@ func escapeBlockInterrupt(line string, isFirstLine bool, firstLinePrefix string,
 		// backslash form. Tildes have no such closer hazard (inline code
 		// spans are backtick-only; segment.codeSpans never scans for
 		// '~'), so they stay backslash-escaped.
-		i := fenceOpenerRunLen(line)
-		var b strings.Builder
-		for _, c := range line[:i] {
-			if c == '`' {
-				b.WriteString("&#96;")
-			} else {
-				b.WriteByte('\\')
-				b.WriteRune(c)
-			}
-		}
-		b.WriteString(line[i:])
-		return b.String()
+		return escapeFenceOpenerRun(line)
 	}
 	if isThematicBreak(firstLinePrefix+line) || isSetextUnderline(line) || blockInterruptTriggers.MatchString(line) || linkRefDefOpenerRE.MatchString(line) || bareLinkRefDefOpenerLineRE.MatchString(line) || (prevLineNonBlank && isTableDelimiterRowShaped(line)) {
 		return "\\" + line
