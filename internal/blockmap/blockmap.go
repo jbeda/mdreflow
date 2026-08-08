@@ -22,15 +22,10 @@ package blockmap
 import (
 	"bytes"
 	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/yuin/goldmark/ast"
 	gfmast "github.com/yuin/goldmark/extension/ast"
-	"github.com/yuin/goldmark/parser"
-	"github.com/yuin/goldmark/text"
-
-	"github.com/jbeda/mdreflow/internal/gm"
 )
 
 // Paragraph describes one reflow-eligible paragraph, wherever it is nested.
@@ -128,53 +123,12 @@ func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int,
 			if prev := c.PreviousSibling(); prev != nil && prev.Kind() == gfmast.KindTable && !c.HasBlankPreviousLines() {
 				precededByTable = true
 			}
-			// Same adjacency reasoning as precededByTable, for a different
-			// construct: a real *ast.LinkReferenceDefinition sibling
-			// directly before this paragraph can have consumed its
-			// label/destination/title across the boundary between the two
-			// — goldmark's own reference-definition scan runs ahead over
-			// raw lines independent of where the resulting AST nodes end
-			// up, and a multi-line label can close on what becomes this
-			// paragraph's own first line (see build's precededByLinkRefDef
-			// handling for the concrete shape). Whether that definition
-			// still validates on reparse depends on this paragraph's own
-			// first line staying exactly as wide as it started, so
-			// reflowing it at all is unsafe.
-			//
-			// This only matters when the definition's own match actually
-			// reached past its own opening physical line — the common
-			// case, a self-complete one-liner like "[foo]: /url" (label,
-			// destination, and an absent-or-closed title all on that one
-			// line), consumes nothing from what follows, so the next
-			// paragraph is exactly as safe to reflow as if any other block
-			// preceded it. isSelfCompleteLinkRefDef checks this directly
-			// (does this node's own recorded opening line, reparsed in
-			// isolation, still form a complete definition with nothing left
-			// over?) rather than assuming every LinkReferenceDefinition
-			// sibling is equally dangerous — found necessary by a driver
-			// review regression: the original, unconditional version of
-			// this check passed through *every* paragraph directly after
-			// *any* link reference definition, silently un-reflowing the
-			// common "[foo]: /url\nlong prose..." shape that v0.1.2
-			// correctly reflowed.
-			//
-			// Unlike precededByTable, this does not gate on
-			// c.HasBlankPreviousLines(): confirmed directly against
-			// goldmark that a Paragraph immediately following a
-			// LinkReferenceDefinition sibling always reports
-			// HasBlankPreviousLines() == true, whether or not a real blank
-			// line actually separates them in the source — apparently an
-			// artifact of the definition's own raw-line trial scan, which
-			// does not update the normal blank-line bookkeeping the way an
-			// ordinary block continuation does. build does its own raw-byte
-			// blank-line check instead (precededByBlankLine), which is not
-			// fooled by this.
-			precededByLinkRefDef := false
-			if prev := c.PreviousSibling(); prev != nil && prev.Kind() == ast.KindLinkReferenceDefinition &&
-				(!isSelfCompleteLinkRefDef(source, prev) || lrdReachesInto(source, prev, c)) {
-				precededByLinkRefDef = true
-			}
-			if pp, skip := build(c, source, inBlockquote, fmEnd, precededByTable, precededByLinkRefDef); !skip {
+			// Link-reference-definition adjacency no longer needs an AST
+			// sibling check here: the whole zone is judged bluntly, by
+			// shape, from build's own raw-byte scan (see
+			// inLinkRefDefZone) — design.md's "The link-reference-
+			// definition zone: skip bluntly, by shape".
+			if pp, skip := build(c, source, inBlockquote, fmEnd, precededByTable); !skip {
 				*out = append(*out, pp)
 			}
 			continue
@@ -197,10 +151,8 @@ func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int,
 // fmEnd is the document's front-matter end offset (frontMatterEnd(source),
 // or -1 if source has no front matter) — see its use below. precededByTable
 // is true when p's immediately preceding sibling in the AST is a GFM
-// *ast.Table — see its use below for why. precededByLinkRefDef is true when
-// p's immediately preceding sibling is a real *ast.LinkReferenceDefinition
-// — see its use below for why.
-func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTable, precededByLinkRefDef bool) (pp Paragraph, skip bool) {
+// *ast.Table — see its use below for why.
+func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTable bool) (pp Paragraph, skip bool) {
 	lines := p.Lines()
 	n := lines.Len()
 	if n == 0 {
@@ -260,7 +212,43 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// contained in the front-matter block.
 		return Paragraph{}, true
 	}
-	if hasPossibleLinkRefDefOpener(trimmed) || hasUnbalancedBracket(trimmed) ||
+	start0 := lines.At(0).Start
+	end := lines.At(n - 1).Stop
+	if hasControlByte(source[start0:end]) {
+		// design.md, "Control-character paragraphs pass through": a C0
+		// control byte other than tab/newline/CR inside a paragraph's raw
+		// source range is never produced by a text editor — these show up
+		// in fuzz inputs, exactly in the grammar corners (indentation
+		// width, whitespace-class membership) that differ between parser
+		// implementations. Reflowing around them buys nothing for real
+		// documents and costs a long tail of corner-case hardening; '\r'
+		// stays allowed (CRLF line endings and bare-CR paragraphs keep
+		// reflowing, since the '\r' of a CRLF pair is line-ending
+		// machinery, not paragraph interior).
+		return Paragraph{}, true
+	}
+	if inLinkRefDefZone(source, trimmed, start0) {
+		// design.md, "The link-reference-definition zone: skip bluntly, by
+		// shape": a link reference definition renders nothing (it is URL
+		// metadata) and its grammar is the least reflow-compatible
+		// construct in CommonMark — label, destination, and title may each
+		// span onto following lines, a titleless one-liner can absorb a
+		// title from the paragraph after it, and goldmark reorders
+		// definition nodes relative to paragraph siblings. A first
+		// implementation grew six interlocking adjacency guards (self-
+		// completeness reparses via isSelfCompleteLinkRefDef, registry-diff
+		// title-absorption checks via lrdReachesInto/lrdTitleless/
+		// registeredRefs, a raw-byte title-opener guard via
+		// startsWithTitleOpenerUnderLRDShapedLine, a bare-opener guard via
+		// precededByBareLinkRefDefLine, and a same-paragraph opener scan via
+		// hasPossibleLinkRefDefOpener) and fuzzing kept finding a seventh
+		// shape. The lesson: precision here buys reflow of prose that is
+		// rare, ambiguity-laden, and worthless to reflow next to invisible
+		// metadata. inLinkRefDefZone replaces all of that with one blunt,
+		// shape-based predicate — see its own doc comment.
+		return Paragraph{}, true
+	}
+	if hasUnbalancedBracket(trimmed) ||
 		(hasUnbalancedParen(trimmed) && hasAnyBracket(trimmed)) ||
 		hasUnclosedAngleDestOpener(trimmed) {
 		// Fuzz-found content-loss hazard family, more severe than (and
@@ -330,7 +318,6 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// happens to open with what looks like an unterminated tag.
 		return Paragraph{}, true
 	}
-	start0 := lines.At(0).Start
 	if precededByTable {
 		// Fuzz-found idempotency hazard: whether a GFM table forms at all
 		// for a given header+delimiter-row pair turns out to be sensitive
@@ -362,98 +349,179 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// changes at all.
 		return Paragraph{}, true
 	}
-	if precededByLinkRefDef && !precededByBlankLine(source, start0) {
-		// Fuzz-found idempotency hazard in the same family as
-		// precededByTable above, but for link reference definitions:
-		// goldmark's own reference-definition scan can consume a label,
-		// destination, and/or title that spans past its own recorded
-		// Lines() — which only ever reports the definition's own opening
-		// physical line, for source-position purposes, even when the
-		// actual match reached further — onto what the AST then also hands
-		// back as part of *this* paragraph's own first line(s). Confirmed
-		// directly (not assumed): source "[\\]\n]:0\n\"\"0" parses as an
-		// *ast.LinkReferenceDefinition (label "\]\n", matched across the
-		// line break by the escaped "]") immediately followed by this
-		// Paragraph, whose own first line is "]:0" — the same "]:0" text
-		// the definition's destination scan also consumed to close itself.
-		// Reflowing this paragraph's first line at all (even just joining
-		// it with what follows, unconditionally true under ModePara) can
-		// append trailing content after the position the definition's
-		// destination ends at; per the same "[0]:0 !" disqualification
-		// rule documented on reflow.linkRefDefOpenerRE, trailing content on
-		// that same physical line invalidates the whole definition on
-		// reparse — which then folds the previously invisible "[\\]" line
-		// back into this paragraph's own visible prose, an idempotency
-		// break (verdict flip), not just a content change: found by
-		// FuzzFormat on exactly that input. hasPossibleLinkRefDefOpener and
-		// hasUnbalancedBracket cannot see this hazard at all, since the "["
-		// that opens the label sits entirely outside this paragraph's own
-		// Lines() — it belongs to the preceding sibling node's own
-		// physical line. Skipping the whole paragraph (the same safe,
-		// general answer precededByTable already uses for the analogous
-		// table case) guarantees this paragraph's own first line — the one
-		// the definition's own scan may depend on — never changes shape.
-		return Paragraph{}, true
-	}
-	if startsWithTitleOpenerUnderLRDShapedLine(source, start0, lines.At(0)) {
-		// Raw-byte guard, deliberately independent of AST sibling order:
-		// goldmark hoists LinkReferenceDefinition nodes ahead of the
-		// Paragraph in the sibling list, so "previous sibling" can point
-		// at a definition from a LATER source line while the definition
-		// whose title scan actually reaches into this paragraph sits
-		// directly above it in the raw source — found by FuzzFormat on
-		// "[0]:0\n\"\n\"[^0002]:0 \"\"" (seed 001b3577df0c50f6), where the
-		// quote-only paragraph between two definitions is simultaneously
-		// the first definition's absorbed multi-line title, and curling
-		// its quote destroyed that title on reparse (the AST-adjacency
-		// guards above saw only the second definition, which looks
-		// self-contained). A paragraph whose first content byte is a
-		// title opener directly under (no blank line) any LRD-shaped raw
-		// line is inside the absorption hazard zone whatever the node
-		// order says, and passes through untouched.
-		return Paragraph{}, true
-	}
-	if precededByBareLinkRefDefLine(source, start0) {
-		// Fuzz-found render-preservation hazard in the same family as
-		// this file's other link-reference-definition defenses
-		// (hasPossibleLinkRefDefOpener, hasUnbalancedBracket) but
-		// invisible to all of them: those checks look at *this
-		// paragraph's own* lines, but a successfully-consumed link
-		// reference definition is removed from the AST entirely — it
-		// becomes a sibling ast.LinkReferenceDefinition node, never part
-		// of any Paragraph's own Lines() — so a bare "[label]:" opener
-		// immediately before this paragraph is completely invisible to
-		// per-paragraph content checks. Found by FuzzFormat on
-		// " [0]:\n0\n\"\"0": the leading space still lets "[0]:" form a
-		// real definition (label "0", destination "0" from the next
-		// line), leaving this package's own paragraph as just "0\n\"\"0"
-		// — reflowing that paragraph down to "0 \"\"0" makes the
-		// *destination* no longer stand alone on its own line, which
-		// (per the same disqualification rule the "[0]:0 !" family
-		// already established: trailing content directly after a
-		// destination on the *same* line disqualifies the whole
-		// definition) makes the preceding "[0]:" fail to form a
-		// definition at all on reparse, turning it from invisible
-		// metadata into visible text. Skipping any paragraph directly
-		// preceded by a bare, unqualified "[label]:" line — regardless
-		// of whether *this* paragraph's own content looks dangerous —
-		// avoids ever changing a destination's own line shape.
-		return Paragraph{}, true
-	}
 
 	boundary := make([]bool, n)
 	for i, t := range trimmed {
 		boundary[i] = isBoundaryLine(t, inBlockquote)
 	}
 
-	end := lines.At(n - 1).Stop
+	contPrefix := continuationPrefix(source, start0)
+	if footnoteDefFirstLineRE.MatchString(trimmed[0]) {
+		// design.md: "Reflowed footnote-body continuation lines are
+		// emitted with a 4-space indent." Renderers disagree about whether
+		// an unindented lazy-continuation line belongs to the footnote
+		// (GitHub's documented convention is to indent); the indented
+		// spelling is the one they all keep inside the footnote, and to
+		// mdreflow's own parser it is an ordinary paragraph continuation
+		// (indented code cannot interrupt a paragraph), so render
+		// preservation is unaffected. The four spaces are appended to
+		// whatever container prefix already applies (list/blockquote
+		// nesting), not a replacement for it.
+		contPrefix += "    "
+	}
+
 	return Paragraph{
 		Node:       p,
 		Start:      start0,
 		End:        end,
-		ContPrefix: continuationPrefix(source, start0),
+		ContPrefix: contPrefix,
 		Boundary:   boundary,
 	}, false
+}
+
+// hasControlByte reports whether b contains a C0 control byte other than
+// tab, newline, or carriage return. See build's call site and design.md's
+// "Control-character paragraphs pass through" for why this triggers a
+// whole-paragraph skip.
+func hasControlByte(b []byte) bool {
+	for _, c := range b {
+		if c < 0x20 && c != '\t' && c != '\n' && c != '\r' {
+			return true
+		}
+	}
+	return false
+}
+
+// nonCaretLabelBody and anyLabelBody are the label-content sub-patterns
+// shared by the def-shape regexes below: a run of characters excluding
+// literal brackets, except that a backslash-escaped bracket ("\[" or "\]")
+// is treated as literal label content rather than a boundary — matching
+// CommonMark's own backslash-escape handling closely enough to recognize a
+// label that spans a raw line boundary via an escaped closing bracket
+// embedded in what precedes a paragraph (needed for the "spans the
+// boundary" case in inLinkRefDefZone's doc comment; found necessary by
+// FuzzFormat/issue#11's "[\]\n]:0" shape, which a plain "no brackets at
+// all" class missed). nonCaretLabelBody additionally excludes a leading
+// '^' (a footnote label — see design.md's "Footnote definitions are
+// exempt and keep reflowing"); anyLabelBody does not, for the cases where
+// a caret-led label is not exempt (see inLinkRefDefZone).
+const (
+	nonCaretLabelBody = `(?:\\.|[^\^\[\]])(?:\\.|[^\[\]])*`
+	anyLabelBody      = `(?:\\.|[^\[\]])*`
+)
+
+// nonCaretDefShapeRE matches a non-footnote link-reference-definition-
+// shaped "[label]:" opener: an optional reflow-escape backslash, "[", an
+// optional non-caret label (nonCaretLabelBody), "]:", anchored on the left
+// to the start of the string, a space/tab, or a blockquote '>' marker —
+// the same left-boundary reflow's own line-joining can produce ("text
+// [label]:" after a join) or a nested blockquote prefix can produce.
+var nonCaretDefShapeRE = regexp.MustCompile(`(^|[ \t>])\\?\[(?:` + nonCaretLabelBody + `)?\]:`)
+
+// anyDefLineOpenerRE is nonCaretDefShapeRE's counterpart for judging the
+// raw source line directly above a paragraph (see inLinkRefDefZone): it
+// does NOT exclude a caret-led label. mdreflow's goldmark configuration
+// does not enable the footnote extension at all (see package reflow's
+// isCompleteLinkRefDefLine doc comment), so "[^label]:" is nothing special
+// to the parser when it belongs to a *different*, already-parsed sibling —
+// the exact same multi-line-destination-reaching-in hazard
+// nonCaretDefShapeRE guards against applies whether or not the label
+// carries a caret. The caret exemption is real, but it protects a
+// paragraph that is *itself* a footnote body (its own first line — see
+// footnoteDefFirstLineRE and inLinkRefDefZone's early return), not an
+// adjacent line belonging to something else.
+var anyDefLineOpenerRE = regexp.MustCompile(`^[ \t>]*\\?\[` + anyLabelBody + `\]:`)
+
+// anyDefShapeAnywhereRE is anyDefLineOpenerRE's counterpart with no left-
+// boundary requirement at all — used only for the "spans the boundary"
+// check (see inLinkRefDefZone's (c)): a chain of link reference
+// definitions can legitimately continue immediately after a previous one's
+// title closes, with no whitespace or line break between them at all (a
+// definition only needs to start where the previous block-level construct
+// left off, not at a line's start) — found by FuzzFormat on
+// "[0]:0\n\"0\"[00]:0\n\"\n\"[0]:0" (seed a651ae68822c7c5c), where a third
+// definition's own destination scan reaches into a following paragraph
+// that is otherwise just a lone quote character, sitting directly after
+// "[00]:0" with no separating whitespace at all. Broader than
+// anyDefLineOpenerRE on purpose: the boundary requirement that keeps rules
+// (a)/(b) from flagging ordinary prose like "word[key]: text" doesn't hold
+// once a definition can start immediately after another already-consumed
+// one, so this check accepts some extra false-positive skips as the price
+// of staying blunt rather than tracking definition-chain state.
+var anyDefShapeAnywhereRE = regexp.MustCompile(`\\?\[` + anyLabelBody + `\]:`)
+
+// footnoteDefFirstLineRE matches a footnote definition's own opening
+// "[^label]:" marker at the start of a paragraph's first (trimmed) line,
+// tolerating package reflow's own escaped spelling ("\[^label]:"): a guard
+// keyed on this shape must give the same verdict on the escaped spelling
+// it will see on the very next pass, or the paragraph's continuation
+// indent (see build's call site) flips width between passes — found by
+// FuzzFormat on " [^1]: !Y )9.01" (seed 425ffd537fd28733), whose escaped
+// second-pass first line ("\[^1]: !Y") stopped matching an earlier,
+// escape-blind version of this regex.
+var footnoteDefFirstLineRE = regexp.MustCompile(`^\\?\[\^[^\[\]]*\]:`)
+
+// inLinkRefDefZone reports whether the paragraph whose trimmed lines are
+// trimmed, starting at contentStart, sits in design.md's link-reference-
+// definition skip zone: design.md, "The link-reference-definition zone:
+// skip bluntly, by shape" — any paragraph that contains, or sits directly
+// against (no blank line), a line opening with a non-footnote "[label]:"
+// shape (original, reflow-escaped, or reflow-joined spelling) passes
+// through byte-for-byte. This single blunt, shape-based predicate replaces
+// the prior six interlocking adjacency/title-absorption guards (see build's
+// call site for the full list) — no parsing, no adjacency analysis.
+//
+// (a) checks trimmed against nonCaretDefShapeRE directly: TrimSpace only
+// removes leading/trailing whitespace, so an interior "[label]:" shape and
+// its left-boundary character (whitespace or '>') both survive trimming
+// unchanged, and a shape starting at trimmed's own start still matches the
+// "^" alternative.
+//
+// A paragraph whose own first line IS a footnote definition's opener
+// (footnoteDefFirstLineRE) is exempt from everything below: it is a
+// footnote body, deliberately reflow-eligible per design.md, and treating
+// an adjacent (possibly also caret-led) preceding line as hazardous here
+// would defeat that exemption for the ordinary back-to-back layout
+// ("[^1]: ...\n[^2]: ..." with no blank line between).
+//
+// (b) checks the raw source line immediately above contentStart with
+// anyDefLineOpenerRE (caret-inclusive — see its own doc comment for why):
+// a blank line there can never match a "[...]:" shape, so "no blank line
+// between" falls out for free.
+// (c) checks whether a def shape spans the boundary itself, anywhere in
+// the preceding-raw-line-plus-this-paragraph's-own-first-line window, with
+// no left-boundary requirement (anyDefShapeAnywhereRE — see its own doc
+// comment for why "opens with" alone is not enough): the label can open on
+// the preceding raw line and close on this paragraph's own first line
+// (found by FuzzFormat/issue#11 on "[\]\n]:0\n\"\"0"), or a definition can
+// open immediately after a previous one's title closes with no separating
+// whitespace at all (found by FuzzFormat on
+// "[0]:0\n\"0\"[00]:0\n\"\n\"[0]:0", seed a651ae68822c7c5c).
+func inLinkRefDefZone(source []byte, trimmed []string, contentStart int) bool {
+	for _, t := range trimmed {
+		if nonCaretDefShapeRE.MatchString(t) {
+			return true
+		}
+	}
+	if len(trimmed) > 0 && footnoteDefFirstLineRE.MatchString(trimmed[0]) {
+		return false
+	}
+	ls := lineStart(source, contentStart)
+	if ls == 0 {
+		return false
+	}
+	prevStart := lineStart(source, ls-1)
+	prevLine := bytes.TrimRight(source[prevStart:ls], "\r\n")
+	if anyDefLineOpenerRE.Match(prevLine) {
+		return true
+	}
+	if len(trimmed) > 0 {
+		window := string(prevLine) + "\n" + trimmed[0]
+		if anyDefShapeAnywhereRE.MatchString(window) {
+			return true
+		}
+	}
+	return false
 }
 
 // continuationPrefix derives the container-prefix bytes for every output
@@ -527,285 +595,6 @@ func lineStart(source []byte, pos int) int {
 	return i
 }
 
-// bareLinkRefDefLineRE matches a line consisting solely of a
-// link-reference-definition-shaped "[label]:" opener (optionally preceded
-// by spaces/tabs and blockquote ">" markers, e.g. a definition nested
-// inside a blockquote — found necessary by FuzzFormat on ">[0]:\n0\n\"\"0"
-// after a leading-space-only version of this regex missed it) with
-// nothing else after the colon.
-//
-// Unlike possibleLinkRefDefOpenerRE, this one does *not* exclude
-// "[^label]:" (footnote-shaped) labels — deliberately, not an oversight:
-// this regex only ever runs against a raw source line the *current*
-// paragraph does not itself contain (see precededByBareLinkRefDefLine,
-// its only caller), meaning whatever "[...]:" it matched was already
-// fully consumed out of the visible AST as its own separate node. A real
-// footnote definition is never invisible like that — goldmark keeps its
-// "[^label]: " text as part of its own paragraph's visible content (as
-// package reflow's own linkRefDefOpenerRE, and the golden fixture
-// testdata/no-break-spans.md, both rely on) — so anything this function
-// finds is already known to be an ordinary link reference definition, not
-// a footnote, confirmed directly against goldmark (not assumed) even for
-// an otherwise footnote-shaped label with a real, non-empty identifier:
-// found by FuzzFormat on "[^0]:\n0\n\"\"0", where "[^0]:" — caret plus a
-// real identifier, which an earlier, excluding version of this regex
-// protected on the theory that it must be a footnote — turned out to
-// still be consumed as a plain LinkReferenceDefinition (Label "^0"),
-// confirmed by direct AST inspection.
-// The optional leading backslash: package reflow escapes exactly this
-// line shape when its own emission produces one ("\[label]:"), and a
-// guard keyed on the preceding line's raw bytes must give the same
-// verdict for the escaped spelling it will see on the very next pass —
-// otherwise the paragraph it protects is skipped on pass 1 (quote left
-// straight) and reflowed on pass 2 (quote curled): found by FuzzFormat
-// on "[^0]:\n+ 0\"00" (seed 9dd134290a276e11), an idempotency flip in
-// the guard's own verdict rather than in anything the guard looks at.
-// The `(^|[ \t])` left boundary (rather than a hard line-start anchor):
-// reflow's own para-mode join can rewrite the neighbor line this guard
-// keys on from "[label]:" to "text [label]:", and the guard must give
-// the same verdict for the joined spelling it gave for the original —
-// otherwise the paragraph it protects is skipped on pass 1 and reflowed
-// on pass 2 (found by FuzzFormat on "0\n[^0]:\n* \"0", seed
-// ec99ee890331d9f8: the quote stayed straight, then curled). A trailing
-// opener after joined text cannot actually absorb the next line (a
-// definition must start at its line's start), so this is deliberate
-// over-conservatism traded for verdict stability, the same trade as the
-// escaped-spelling match above.
-var bareLinkRefDefLineRE = regexp.MustCompile(`(^|[ \t])[ \t>]*\\?\[[^\[\]][^\[\]]*\]:[ \t]*$`)
-
-// isSelfCompleteLinkRefDef reports whether lrd (a real
-// *ast.LinkReferenceDefinition, confirmed by its caller) is fully specified
-// on its own recorded opening physical line — label closed, destination
-// present, and title closed or absent — with nothing needed from any
-// following line. Checked empirically, not by re-deriving CommonMark's
-// reference-definition grammar by hand: lrd.Lines().At(0) (its own
-// recorded line, content-relative — any container prefix such as a
-// blockquote "> " is already excluded, the same way it is for a Paragraph's
-// own Lines()) is sliced out to its own physical line end and reparsed in
-// total isolation. If that reparse still yields exactly one node, itself a
-// LinkReferenceDefinition, with nothing left over, the original match could
-// not have needed anything past this line either — reference-definition
-// recognition depends only on the candidate text itself, not on anything
-// outside it, so parsing a self-sufficient prefix in isolation always
-// reproduces the same verdict.
-//
-// This is what narrows precededByLinkRefDef's whole-paragraph skip to the
-// cases that actually need it: a self-complete one-liner like
-// "[foo]: /url" (or "[foo]: /url \"Title\"") consumes nothing from the
-// paragraph that follows, so reflowing that paragraph is exactly as safe as
-// if any other block preceded it — only a definition whose match
-// genuinely reached past its own opening line (e.g. a label split across a
-// line break, as in issue #11's "[\\]\n]:0") puts the following paragraph's
-// first line at risk.
-func isSelfCompleteLinkRefDef(source []byte, lrd ast.Node) bool {
-	line := lrdOpeningLine(source, lrd)
-	if line == nil {
-		return false
-	}
-	doc := gm.New().Parser().Parse(text.NewReader(line))
-	first := doc.FirstChild()
-	return first != nil && first.Kind() == ast.KindLinkReferenceDefinition && first.NextSibling() == nil
-}
-
-// lrdOpeningLine returns the definition's own recorded opening line,
-// sliced out to its physical line end (line ending included when present),
-// or nil if the node records no lines.
-func lrdOpeningLine(source []byte, lrd ast.Node) []byte {
-	lines := lrd.Lines()
-	if lines.Len() == 0 {
-		return nil
-	}
-	start := lines.At(0).Start
-	end := start
-	for end < len(source) && source[end] != '\n' {
-		end++
-	}
-	if end < len(source) {
-		end++ // include the line ending, matching how a real line is scanned
-	}
-	return source[start:end]
-}
-
-// lrdReachesInto reports whether the paragraph's own first line changes
-// what goldmark registers for the preceding, otherwise self-complete
-// definition. isSelfCompleteLinkRefDef alone is not sufficient (its
-// original premise — that recognition depends only on the candidate text —
-// fails for titles specifically): a definition that is complete WITHOUT a
-// title on its own line can still absorb one from the next line, and
-// goldmark will do so even when trailing content makes that same line
-// render as paragraph prose too. Found by FuzzFormat on
-// " [0]:0\n\"00[0]\"0" (seed 609ac42cd2c93d72): the second line is
-// simultaneously the definition's registered title ("00[0]") and visible
-// paragraph text, so reflow touching it — typography curling its quotes,
-// in the find — silently rewrites the title every "[0]" reference link
-// renders with.
-//
-// Checked empirically against goldmark's own reference registry rather
-// than re-deriving the title grammar: parse the definition's opening line
-// alone, then with the paragraph's first line appended, and compare the
-// registered (label, destination, title) tuples. Any difference means the
-// paragraph's first line feeds the definition and the paragraph must pass
-// through untouched. Unreadable inputs (no recorded lines) fail
-// conservative — reaches-into, skip.
-func lrdReachesInto(source []byte, lrd, para ast.Node) bool {
-	defLine := lrdOpeningLine(source, lrd)
-	plines := para.Lines()
-	if defLine == nil || plines.Len() == 0 {
-		return true
-	}
-	// The whole paragraph, not just its first line: a title opened on the
-	// paragraph's first line can close on a later one (fuzz find
-	// " [0]:0\n\"0[0]\n\"0", seed eaeb2965b3833196 — the registered title
-	// spans the paragraph's first two lines), and only the full text
-	// answers whether the definition absorbed anything.
-	ps := plines.At(0).Start
-	pe := plines.At(plines.Len() - 1).Stop
-	for pe < len(source) && source[pe] != '\n' {
-		pe++
-	}
-	paraText := source[ps:pe]
-
-	combined := make([]byte, 0, len(defLine)+1+len(paraText))
-	combined = append(combined, defLine...)
-	if n := len(combined); n == 0 || combined[n-1] != '\n' {
-		combined = append(combined, '\n')
-	}
-	combined = append(combined, paraText...)
-	if !slices.Equal(registeredRefs(defLine), registeredRefs(combined)) {
-		return true
-	}
-	// The registry comparison is blind to one case: goldmark's
-	// Reference.Title() returns "" both when no title exists and when the
-	// paragraph contributed an *empty* one (`""`), yet the rendered link
-	// differs (title attribute present vs. absent) — fuzz find
-	// " [0]:1\n\"\"[0]0", seed 702a8fd56d574505. Belt to the empirical
-	// suspenders: a definition carrying no title of its own, followed by a
-	// paragraph whose first content byte is a title opener, is treated as
-	// reaching regardless of what the registry claims.
-	return lrdTitleless(defLine) && len(paraText) > 0 &&
-		(paraText[0] == '"' || paraText[0] == '\'' || paraText[0] == '(')
-}
-
-// lrdTitleless reports whether the definition's opening line carries no
-// title of its own — just "[label]:" plus a destination — making it able
-// to absorb a title from a following line. Byte-level on purpose (see
-// lrdReachesInto's call site for why the parser's registry cannot answer
-// this); every unparseable shape fails conservative (titleless, so the
-// caller treats a title-opener-led paragraph as reaching).
-func lrdTitleless(defLine []byte) bool {
-	s := bytes.TrimRight(defLine, "\r\n")
-	i := bytes.Index(s, []byte("]:"))
-	if i < 0 {
-		return true
-	}
-	rest := bytes.TrimSpace(s[i+2:])
-	if len(rest) == 0 {
-		return true
-	}
-	if rest[0] == '<' {
-		// A <...>-wrapped destination may contain spaces; the title, if
-		// any, is whatever follows the closing ">".
-		j := bytes.IndexByte(rest, '>')
-		if j < 0 {
-			return true
-		}
-		return len(bytes.TrimSpace(rest[j+1:])) == 0
-	}
-	j := bytes.IndexAny(rest, " \t")
-	if j < 0 {
-		return true // destination only, nothing after it
-	}
-	return len(bytes.TrimSpace(rest[j:])) == 0
-}
-
-// registeredRefs parses src in isolation and returns goldmark's registered
-// link references as comparable label/destination/title tuples.
-func registeredRefs(src []byte) []string {
-	pc := parser.NewContext()
-	gm.New().Parser().Parse(text.NewReader(src), parser.WithContext(pc))
-	refs := pc.References()
-	out := make([]string, 0, len(refs))
-	for _, r := range refs {
-		out = append(out, string(r.Label())+"\x00"+string(r.Destination())+"\x00"+string(r.Title()))
-	}
-	return out
-}
-
-// lrdShapedLineRE matches a raw source line that opens like a link
-// reference definition — optional blockquote/whitespace prefix, optional
-// backslash (reflow's own escape of this shape — see bareLinkRefDefLineRE
-// for why the escaped spelling must verdict identically), "[any label]:",
-// anything after. Any label, caret-leading included: to mdreflow's parser
-// configuration those are ordinary definitions (see linkRefDefOpenerRE in
-// package reflow).
-// Same whitespace left boundary as bareLinkRefDefLineRE, same reason:
-// reflow's own join can rewrite this neighbor line to "text [label]:...",
-// and the verdict must survive that spelling (seed e3c349b37f164215, the
-// empty-label twin of ec99ee890331d9f8).
-var lrdShapedLineRE = regexp.MustCompile(`(^|[ \t])[ \t>]*\\?\[[^\[\]]*\]:`)
-
-// startsWithTitleOpenerUnderLRDShapedLine reports whether the paragraph
-// whose first content segment is seg sits directly (no blank line) under
-// an LRD-shaped raw source line AND begins with a title-opener character
-// (a double quote, single quote, or open paren) — the shape a preceding
-// definition's title scan can absorb across the line boundary. See the
-// call site in build for the node-order hazard this closes.
-func startsWithTitleOpenerUnderLRDShapedLine(source []byte, contentStart int, seg text.Segment) bool {
-	if seg.Start >= len(source) {
-		return false
-	}
-	switch source[seg.Start] {
-	case '"', '\'', '(':
-	default:
-		return false
-	}
-	ls := lineStart(source, contentStart)
-	if ls == 0 {
-		return false
-	}
-	prevStart := lineStart(source, ls-1)
-	prevLine := bytes.TrimRight(source[prevStart:ls], "\r\n")
-	if len(bytes.Trim(prevLine, " \t")) == 0 {
-		return false
-	}
-	return lrdShapedLineRE.Match(prevLine)
-}
-
-// precededByBlankLine reports whether the raw physical source line
-// immediately before contentStart is blank (empty, or all spaces/tabs) — a
-// real blank-line separator, checked directly against raw bytes rather than
-// ast.Node.HasBlankPreviousLines(): see precededByLinkRefDef's call site in
-// build for why that method cannot be trusted for this purpose (it always
-// reports true immediately after a LinkReferenceDefinition sibling,
-// blank line or not). A genuine blank line here means whatever multi-line
-// scan a preceding link reference definition ran cannot have reached across
-// it — CommonMark block continuation always stops at a blank line — so the
-// adjacency hazard precededByLinkRefDef guards against cannot apply.
-func precededByBlankLine(source []byte, contentStart int) bool {
-	end := lineStart(source, contentStart)
-	if end == 0 {
-		return false
-	}
-	start := lineStart(source, end-1)
-	line := bytes.TrimRight(source[start:end], "\r\n")
-	return len(bytes.Trim(line, " \t")) == 0
-}
-
-// precededByBareLinkRefDefLine reports whether the raw source line
-// immediately before contentStart looks like a bare "[label]:" link-
-// reference-definition opener with no destination on that same line —
-// see precededByBareLinkRefDefLine's call site in build for why that
-// alone is reason enough to skip the following paragraph.
-func precededByBareLinkRefDefLine(source []byte, contentStart int) bool {
-	end := lineStart(source, contentStart)
-	if end == 0 {
-		return false
-	}
-	start := lineStart(source, end-1)
-	line := bytes.TrimRight(source[start:end], "\r\n")
-	return bareLinkRefDefLineRE.Match(line)
-}
-
 // unterminatedTagStartRE matches a line that opens an HTML/JSX tag (a "<"
 // immediately followed by a letter — CommonMark's tag-name-start rule,
 // which is also why "<3 hearts" is never mistaken for a tag) but has no
@@ -817,26 +606,6 @@ var unterminatedTagStartRE = regexp.MustCompile(`^<[A-Za-z]`)
 // why this triggers a whole-paragraph skip.
 func looksLikeUnterminatedTag(firstLineTrimmed string) bool {
 	return unterminatedTagStartRE.MatchString(firstLineTrimmed) && !strings.ContainsRune(firstLineTrimmed, '>')
-}
-
-// possibleLinkRefDefOpenerRE matches a link-reference-definition-shaped
-// "[label]:" opener anywhere in a line (not anchored to the end, unlike
-// package reflow's linkRefDefOpenerRE, and not requiring anything to
-// follow — see hasPossibleLinkRefDefOpener for why an unanchored,
-// permissive match is the right level of caution here). It excludes a
-// "[^..." bracket for the same reason as reflow.linkRefDefOpenerRE: that
-// shape is a footnote definition's own legitimate first-line marker.
-var possibleLinkRefDefOpenerRE = regexp.MustCompile(`\[(\^\]|[^\^\[\]][^\[\]]*\]):`)
-
-// hasPossibleLinkRefDefOpener reports whether any of trimmedLines contains
-// a link-reference-definition-shaped "[label]:" opener anywhere in it.
-func hasPossibleLinkRefDefOpener(trimmedLines []string) bool {
-	for _, line := range trimmedLines {
-		if possibleLinkRefDefOpenerRE.MatchString(line) {
-			return true
-		}
-	}
-	return false
 }
 
 // hasUnbalancedBracket reports whether trimmedLines, taken together (a

@@ -6,4 +6,4 @@ This needs a citation somewhere[^1].
 It matters a lot.
 
 [^1]: The footnote body has multiple sentences.
-This one should reflow normally.
+    This one should reflow normally.

@@ -3,7 +3,6 @@ package blockmap
 import (
 	"testing"
 
-	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/text"
 
 	"github.com/jbeda/mdreflow/internal/gm"
@@ -129,113 +128,134 @@ func TestFrontMatterEnd(t *testing.T) {
 	}
 }
 
-// TestPrecededByBlankLine checks precededByBlankLine's doc comment: true
-// when the raw physical source line immediately before contentStart is
-// empty or all spaces/tabs.
-func TestPrecededByBlankLine(t *testing.T) {
+// TestInLinkRefDefZone tables inLinkRefDefZone's doc comment: design.md's
+// blunt, shape-based link-reference-definition zone predicate. It replaces
+// the prior precededByBlankLine, precededByBareLinkRefDefLine,
+// isSelfCompleteLinkRefDef, and hasPossibleLinkRefDefOpener truth tables —
+// the outcomes those pinned are re-expressed here as zone in/out verdicts,
+// per design.md's "The link-reference-definition zone: skip bluntly, by
+// shape" (some outcomes deliberately changed: see the per-case comments).
+func TestInLinkRefDefZone(t *testing.T) {
 	cases := []struct {
 		name         string
 		source       string
+		trimmed      []string
 		contentStart int
 		want         bool
 	}{
-		{"blank line before", "foo\n\nbar", 5, true},
-		{"whitespace-only line before", "foo\n   \nbar", 8, true},
-		{"non-blank line before", "foo\nbar", 4, false},
-		{"contentStart at start of source: no previous line", "bar", 0, false},
-		{"CRLF blank line before", "foo\r\n\r\nbar", 7, true},
+		// (a): the paragraph's own lines contain a non-footnote def shape.
+		{"opener present", "[foo]: bar", []string{"[foo]: bar"}, 0, true},
+		{"opener mid line still matches (unanchored)", "prose [foo]: bar more", []string{"prose [foo]: bar more"}, 0, true},
+		{"footnote-shaped label excluded", "[^foo]: bar", []string{"[^foo]: bar"}, 0, false},
+		{"no opener at all", "just prose", []string{"just prose"}, 0, false},
+		{"opener on a later line", "prose\n[foo]:", []string{"prose", "[foo]:"}, 0, true},
+		{"reflow-escaped spelling still matches", `\[foo]: bar`, []string{`\[foo]: bar`}, 0, true},
+
+		// (b): the raw source line directly above contentStart opens with
+		// a non-footnote def shape (no blank line between, by construction
+		// — a blank line can never match the shape).
+		{"bare link ref def line above", "[foo]:\nbar", []string{"bar"}, 7, true},
+		{"leading space allowed above", "  [foo]:\nbar", []string{"bar"}, 9, true},
+		{"blockquote-nested def line above", ">[foo]:\nbar", []string{"bar"}, 8, true},
+		{"destination-carrying def line above still counts (design.md drops the bare-only restriction)", "[foo]: /url\nbar", []string{"bar"}, 12, true},
+		{
+			// Unlike (a), a caret-led label above DOES still count here:
+			// mdreflow's goldmark configuration has no footnote extension
+			// (package reflow's isCompleteLinkRefDefLine doc comment), so
+			// "[^label]:" is nothing special to the parser when it belongs
+			// to a different, already-parsed sibling — the exact same
+			// multi-line-destination hazard applies. Found by FuzzFormat on
+			// "[^0]:\n0\n\"\"0" (issue-class regression): this paragraph's
+			// own first line ("0") is not itself a footnote opener, so the
+			// exemption below does not apply, and skipping it here is what
+			// keeps single-pass reflow idempotent.
+			name:   "caret-led label above still counts when this paragraph is not itself a footnote body",
+			source: "[^foo]:\nbar", trimmed: []string{"bar"}, contentStart: 8, want: true,
+		},
+		{
+			// The exemption instead fires when THIS paragraph's own first
+			// line is the footnote opener — even directly after another
+			// (possibly also caret-led) definition line, the ordinary
+			// back-to-back footnote layout.
+			name:         "footnote-own paragraph exempt even when preceded by another def line",
+			source:       "[^1]: first\n[^2]: second",
+			trimmed:      []string{"[^2]: second"},
+			contentStart: 12,
+			want:         false,
+		},
+		{
+			// (c): the def shape spans the boundary — label opens on the
+			// preceding raw line (via an escaped closing bracket) and
+			// closes on this paragraph's own first line. Found by
+			// FuzzFormat/issue#11 on "[\]\n]:0\n\"\"0".
+			name:         "def shape spans the boundary via an escaped bracket",
+			source:       "[\\]\n]:0",
+			trimmed:      []string{"]:0"},
+			contentStart: 4,
+			want:         true,
+		},
+		{"ordinary prose line above does not qualify", "just prose\nbar", []string{"bar"}, 11, false},
+		{"contentStart at start of source: no previous line", "bar", []string{"bar"}, 0, false},
+		{"blank line above disqualifies (shape can never match blank text)", "[foo]:\n\nbar", []string{"bar"}, 8, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := precededByBlankLine([]byte(tc.source), tc.contentStart); got != tc.want {
-				t.Errorf("precededByBlankLine(%q, %d) = %v, want %v", tc.source, tc.contentStart, got, tc.want)
+			if got := inLinkRefDefZone([]byte(tc.source), tc.trimmed, tc.contentStart); got != tc.want {
+				t.Errorf("inLinkRefDefZone(%q, %v, %d) = %v, want %v", tc.source, tc.trimmed, tc.contentStart, got, tc.want)
 			}
 		})
 	}
 }
 
-// TestPrecededByBareLinkRefDefLine tables bareLinkRefDefLineRE's shape via
-// precededByBareLinkRefDefLine: a line consisting solely of
-// "[label]:" (optionally indented and/or blockquote-prefixed), nothing
-// after the colon.
-func TestPrecededByBareLinkRefDefLine(t *testing.T) {
+// TestFootnoteDefFirstLineRE checks footnoteDefFirstLineRE's shape: a
+// footnote definition's own "[^label]:" marker at the start of a trimmed
+// line, per design.md's footnote continuation-indent rule.
+func TestFootnoteDefFirstLineRE(t *testing.T) {
 	cases := []struct {
-		name         string
-		source       string
-		contentStart int
-		want         bool
+		name string
+		line string
+		want bool
 	}{
-		{"bare link ref def line", "[foo]:\nbar", 7, true},
-		{"leading space allowed", "  [foo]:\nbar", 9, true},
-		{"blockquote-nested bare def line", ">[foo]:\nbar", 8, true},
-		{"destination present disqualifies", "[foo]: /url\nbar", 12, false},
-		{"footnote-shaped label still counts (not excluded here)", "[^foo]:\nbar", 8, true},
-		{"ordinary prose line does not qualify", "just prose\nbar", 11, false},
-		{"contentStart at start of source: no previous line", "bar", 0, false},
+		{"footnote def opener", "[^1]: body", true},
+		{"empty footnote label", "[^]: body", true},
+		{"reflow-escaped spelling still matches", `\[^1]: body`, true},
+		{"non-footnote def opener does not match", "[1]: body", false},
+		{"ordinary prose does not match", "just prose", false},
+		{"marker must be at the start", "prose [^1]: body", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := precededByBareLinkRefDefLine([]byte(tc.source), tc.contentStart); got != tc.want {
-				t.Errorf("precededByBareLinkRefDefLine(%q, %d) = %v, want %v", tc.source, tc.contentStart, got, tc.want)
+			if got := footnoteDefFirstLineRE.MatchString(tc.line); got != tc.want {
+				t.Errorf("footnoteDefFirstLineRE.MatchString(%q) = %v, want %v", tc.line, got, tc.want)
 			}
 		})
 	}
 }
 
-// TestIsSelfCompleteLinkRefDef checks isSelfCompleteLinkRefDef's doc
-// comment: true when the definition's own recorded opening line, reparsed
-// in isolation, still forms a complete definition with nothing left over
-// — false when the label/destination/title needed a following line to
-// complete.
-func TestIsSelfCompleteLinkRefDef(t *testing.T) {
+// TestHasControlByte checks hasControlByte's doc comment: a C0 control byte
+// other than tab/newline/CR triggers it; tab, newline, and CR do not.
+func TestHasControlByte(t *testing.T) {
 	cases := []struct {
-		name   string
-		source string
-		want   bool
+		name string
+		b    string
+		want bool
 	}{
-		{
-			name:   "self-complete one-liner",
-			source: "[foo]: /url\n\nbody\n",
-			want:   true,
-		},
-		{
-			name:   "self-complete with title",
-			source: "[foo]: /url \"Title\"\n\nbody\n",
-			want:   true,
-		},
-		{
-			name:   "label split across a line break needs the next line",
-			source: "[\\]\n]:0\n\"\"0\n",
-			want:   false,
-		},
+		{"plain prose", "hello world", false},
+		{"tab allowed", "hello\tworld", false},
+		{"newline allowed", "hello\nworld", false},
+		{"CR allowed", "hello\rworld", false},
+		{"form feed disallowed", "hello\fworld", true},
+		{"vertical tab disallowed", "hello\vworld", true},
+		{"NUL disallowed", "hello\x00world", true},
+		{"empty", "", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			source := []byte(tc.source)
-			doc := gm.New().Parser().Parse(text.NewReader(source))
-			lrd := findFirstLinkRefDef(doc)
-			if lrd == nil {
-				t.Fatalf("source %q did not parse to a LinkReferenceDefinition at all", tc.source)
-			}
-			if got := isSelfCompleteLinkRefDef(source, lrd); got != tc.want {
-				t.Errorf("isSelfCompleteLinkRefDef(%q) = %v, want %v", tc.source, got, tc.want)
+			if got := hasControlByte([]byte(tc.b)); got != tc.want {
+				t.Errorf("hasControlByte(%q) = %v, want %v", tc.b, got, tc.want)
 			}
 		})
 	}
-}
-
-// findFirstLinkRefDef returns doc's first LinkReferenceDefinition
-// descendant (depth-first), or nil.
-func findFirstLinkRefDef(n ast.Node) ast.Node {
-	if n.Kind() == ast.KindLinkReferenceDefinition {
-		return n
-	}
-	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
-		if found := findFirstLinkRefDef(c); found != nil {
-			return found
-		}
-	}
-	return nil
 }
 
 // TestLooksLikeUnterminatedTag checks looksLikeUnterminatedTag's doc
@@ -258,30 +278,6 @@ func TestLooksLikeUnterminatedTag(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := looksLikeUnterminatedTag(tc.line); got != tc.want {
 				t.Errorf("looksLikeUnterminatedTag(%q) = %v, want %v", tc.line, got, tc.want)
-			}
-		})
-	}
-}
-
-// TestHasPossibleLinkRefDefOpener checks hasPossibleLinkRefDefOpener's doc
-// comment: an unanchored "[label]:" match anywhere in any line, excluding
-// the footnote-shaped "[^label]:" form.
-func TestHasPossibleLinkRefDefOpener(t *testing.T) {
-	cases := []struct {
-		name  string
-		lines []string
-		want  bool
-	}{
-		{"opener present", []string{"[foo]: bar"}, true},
-		{"opener mid line still matches (unanchored)", []string{"prose [foo]: bar more"}, true},
-		{"footnote-shaped label excluded", []string{"[^foo]: bar"}, false},
-		{"no opener at all", []string{"just prose"}, false},
-		{"opener on a later line", []string{"prose", "[foo]:"}, true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := hasPossibleLinkRefDefOpener(tc.lines); got != tc.want {
-				t.Errorf("hasPossibleLinkRefDefOpener(%v) = %v, want %v", tc.lines, got, tc.want)
 			}
 		})
 	}

@@ -242,36 +242,29 @@ func mustTypographyBits(t *testing.T, base string) mdreflow.Typography {
 	return 0
 }
 
-// TestReflowAfterSelfCompleteLinkRefDef pins a driver-review regression: an
-// earlier version of blockmap's precededByLinkRefDef guard (added to fix
-// issue #11's "[\\]\n]:0" verdict flip) skipped reflowing *every* paragraph
-// directly after *any* link reference definition, including the common
-// case where the definition is fully specified on its own opening line
-// ("[foo]: /url", consuming nothing from what follows) — silently
-// un-reflowing prose that v0.1.2 correctly reflowed. Only a definition
-// whose own match genuinely reaches past its opening line (a label split
-// across a line break, as in issue #11) puts the following paragraph at
-// risk; see blockmap.isSelfCompleteLinkRefDef.
-//
-// testdata/link-ref-def-no-blank.md golden-pins the same two shapes; this
-// test asserts the specific property more directly (each paragraph
-// actually gets split at its sentence boundary, not just "the golden
-// bytes still match").
-func TestReflowAfterSelfCompleteLinkRefDef(t *testing.T) {
+// TestParagraphAdjacentToLinkRefDefPassesThrough pins design.md's blunt
+// link-reference-definition zone rule (superseding the driver-review
+// regression this test used to pin — an earlier version of blockmap's
+// precededByLinkRefDef guard skipped reflowing *every* paragraph directly
+// after *any* link reference definition, including the common
+// self-complete case). design.md's replacement rule is even blunter: ANY
+// paragraph sitting directly against (no blank line) a line opening with a
+// "[label]:" shape passes through byte-for-byte, self-complete or not — no
+// adjacency analysis to tell the two apart, see "The link-reference-
+// definition zone: skip bluntly, by shape". testdata/link-ref-def-no-blank.md
+// golden-pins the same two shapes.
+func TestParagraphAdjacentToLinkRefDefPassesThrough(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
-		want string
 	}{
 		{
 			name: "bare destination",
 			src:  "[foo]: /url\nThis is a long paragraph. It has two sentences that should reflow.",
-			want: "[foo]: /url\nThis is a long paragraph.\nIt has two sentences that should reflow.",
 		},
 		{
 			name: "destination with title",
 			src:  "[foo]: /url \"Title\"\nThis is a long paragraph. It has two sentences that should reflow.",
-			want: "[foo]: /url \"Title\"\nThis is a long paragraph.\nIt has two sentences that should reflow.",
 		},
 	}
 	for _, tc := range cases {
@@ -280,8 +273,8 @@ func TestReflowAfterSelfCompleteLinkRefDef(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Format: %v", err)
 			}
-			if string(got) != tc.want {
-				t.Errorf("Format(%q) = %q, want %q", tc.src, got, tc.want)
+			if string(got) != tc.src {
+				t.Errorf("Format(%q) = %q, want unchanged (zone pass-through)", tc.src, got)
 			}
 		})
 	}
