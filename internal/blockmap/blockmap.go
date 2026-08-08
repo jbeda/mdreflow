@@ -412,11 +412,21 @@ const (
 
 // nonCaretDefShapeRE matches a non-footnote link-reference-definition-
 // shaped "[label]:" opener: an optional reflow-escape backslash, "[", an
-// optional non-caret label (nonCaretLabelBody), "]:", anchored on the left
-// to the start of the string, a space/tab, or a blockquote '>' marker —
-// the same left-boundary reflow's own line-joining can produce ("text
-// [label]:" after a join) or a nested blockquote prefix can produce.
-var nonCaretDefShapeRE = regexp.MustCompile(`(^|[ \t>])\\?\[(?:` + nonCaretLabelBody + `)?\]:`)
+// optional non-caret label (nonCaretLabelBody), "]:", ANYWHERE in the
+// line — deliberately no left-boundary requirement. Two reasons. First,
+// a mid-line shape can become a real definition: a preceding definition's
+// title scan can consume everything before it ("[0]:0\n\"0\"[00]:0" makes
+// "[00]:0" a second definition once the title "0" is absorbed — the
+// chained-definition fuzz find). Second, and structurally: this
+// paragraph-contains check must be AT LEAST as broad as any shape check
+// applied to a NEIGHBOR line (anyDefShapeAnywhereRE below is
+// boundary-free), or the verdicts destabilize — a paragraph whose own
+// mid-line shape escaped this check would reflow, moving the shape to a
+// different line, and flip the zone verdict of the paragraph below it on
+// the next pass: found by FuzzFormat on "0[X1]: &Zz!\n  >0%0c) n2e%11"
+// (seed f6ab6616a4253b35), where the blockquote deferred to a neighbor
+// shape the neighbor itself was allowed to reshape.
+var nonCaretDefShapeRE = regexp.MustCompile(`\\?\[(?:` + nonCaretLabelBody + `)?\]:`)
 
 // anyDefLineOpenerRE is nonCaretDefShapeRE's counterpart for judging the
 // raw source line directly above a paragraph (see inLinkRefDefZone): it

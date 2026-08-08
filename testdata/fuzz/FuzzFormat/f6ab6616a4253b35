@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("0[X1]: &Zz!\n  >0%0c) n2e%11")
