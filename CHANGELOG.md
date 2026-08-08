@@ -9,6 +9,11 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+### Changed
+
+- `Format`, `Check`, and `FormatReader` now reject invalid UTF-8 anywhere in the input with the typed error `mdreflow.ErrInvalidUTF8`; the CLI refuses such files (exit 3) even under `--force` and even when the bad bytes sit past the first 8 KB its quick sniff covers.
+- `Format`'s output is now always a fixpoint: formatting a second time returns it unchanged, even on pathological inputs where a single reflow pass is not yet self-consistent (the fuzz-found corners in issues #4–#8, #10–#13). In the never-observed case where reflow will not stabilize at all, the document is returned unchanged rather than churned.
+
 ## v0.1.3 (2026-08-08)
 
 Performance fix: width-constrained wrapping no longer blows up on long paragraphs.

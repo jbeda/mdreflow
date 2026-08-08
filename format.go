@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"unicode/utf8"
 
 	"github.com/yuin/goldmark/text"
 
@@ -14,26 +15,52 @@ import (
 	"github.com/jbeda/mdreflow/internal/typography"
 )
 
+// ErrInvalidUTF8 is returned (possibly wrapped) by Format, Check, and
+// FormatReader when the input is not valid UTF-8. Markdown is text; bytes
+// with no character interpretation have nothing meaningful to reflow.
+// Callers branch with errors.Is.
+var ErrInvalidUTF8 = errors.New("mdreflow: input is not valid UTF-8")
+
+// maxFormatPasses bounds the convergence loop in Format. The first pass
+// does the work; the second proves stability. Passes beyond that only run
+// on inputs where the reflow planner mispredicted its own output's
+// reparse — a bug class (see docs/design.md's Convergence section) that
+// the fuzz harness hunts against the single-pass core directly.
+const maxFormatPasses = 4
+
+// convergenceBackstop gates Format's run-to-fixpoint loop. Always true in
+// production; the test harness turns it off (via export_test.go) so
+// idempotency oracles exercise the single-pass core — a planner that
+// needs the backstop is a bug to find, not behavior to mask.
+var convergenceBackstop = true
+
 // Format reflows src according to opts and returns the result. Everything
 // outside reflowed paragraph prose — code blocks, front matter, headings,
 // lists, blockquotes, tables, and so on — is returned byte-for-byte (see
 // docs/design.md's "Guarantees" section).
 //
-// Format returns an error, without partial output, if opts is invalid:
-// see the doc comments on Mode and Options.MaxWidth. The one documented
-// exception to byte-for-byte pass-through of prose content is
-// Options.Typography, which is off by default.
+// Format returns an error, without partial output, if src is not valid
+// UTF-8 (ErrInvalidUTF8) or opts is invalid: see the doc comments on Mode
+// and Options.MaxWidth. The one documented exception to byte-for-byte
+// pass-through of prose content is Options.Typography, which is off by
+// default.
+//
+// Format's output is a fixpoint: formatting it again returns it
+// unchanged. In the vanishingly rare case where reflow will not converge
+// (docs/design.md, Convergence), Format returns src as-is rather than
+// unstable output.
 func Format(src []byte, opts Options) ([]byte, error) {
 	if err := validateOptions(opts); err != nil {
 		return nil, err
+	}
+	if !utf8.Valid(src) {
+		return nil, ErrInvalidUTF8
 	}
 
 	seg := opts.Segmenter
 	if seg == nil {
 		seg = segment.New(opts.Abbreviations)
 	}
-
-	doc := gm.New().Parser().Parse(text.NewReader(src))
 	rOpts := reflow.Options{
 		Mode:                        reflow.Mode(opts.Mode),
 		MaxWidth:                    opts.MaxWidth,
@@ -41,7 +68,27 @@ func Format(src []byte, opts Options) ([]byte, error) {
 		HardBreaks:                  reflow.HardBreakStyle(opts.HardBreaks),
 		StripSentenceTerminalBreaks: opts.StripSentenceTerminalBreaks,
 	}
-	return reflow.Format(src, doc, seg, rOpts), nil
+
+	out := formatOnce(src, seg, rOpts)
+	if !convergenceBackstop {
+		return out, nil
+	}
+	cur := out
+	for i := 1; i < maxFormatPasses; i++ {
+		next := formatOnce(cur, seg, rOpts)
+		if bytes.Equal(next, cur) {
+			return cur, nil
+		}
+		cur = next
+	}
+	return src, nil
+}
+
+// formatOnce runs one parse+reflow pass — the single-pass core Format
+// iterates to fixpoint.
+func formatOnce(src []byte, seg reflow.Segmenter, rOpts reflow.Options) []byte {
+	doc := gm.New().Parser().Parse(text.NewReader(src))
+	return reflow.Format(src, doc, seg, rOpts)
 }
 
 // Check reports whether Format would change src, without writing

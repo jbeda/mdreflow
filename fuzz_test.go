@@ -2,10 +2,12 @@ package mdreflow_test
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/jbeda/mdreflow"
 )
@@ -844,6 +846,22 @@ func FuzzFormat(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, src []byte) {
 		opts := deriveOptions(src)
+
+		// The oracles below run against the single-pass core: the
+		// convergence backstop in Format would make the idempotency
+		// check tautological, hiding exactly the planner bugs this
+		// harness exists to find (docs/design.md, Convergence).
+		mdreflow.SetConvergenceBackstop(false)
+		defer mdreflow.SetConvergenceBackstop(true)
+
+		if !utf8.Valid(src) {
+			// Outside the input domain (design.md, Guarantees): the
+			// only promise is a loud typed refusal — and no panic.
+			if _, err := mdreflow.Format(src, opts); !errors.Is(err, mdreflow.ErrInvalidUTF8) {
+				t.Fatalf("Format(invalid UTF-8) = %v; want ErrInvalidUTF8", err)
+			}
+			return
+		}
 
 		out, err := mdreflow.Format(src, opts)
 		if err != nil {

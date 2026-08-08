@@ -96,14 +96,22 @@ consumed double space changes a sentence-boundary verdict, a join changes a
 link-reference-definition skip decision), so a second run lands differently
 than the first.
 
-Rather than enumerating every such shape, `Format` makes idempotency
-structural: it runs the pipeline, then re-runs it on its own output until the
-output is stable, up to a small cap (4 passes; in practice the first re-run
-already matches). If the cap is hit without convergence — including a cycle
-where two outputs alternate — the paragraphs that are still changing fall back
-to their **original source text**, emitted byte-for-byte like any skipped
-construct, and the stable remainder keeps its reflowed form. "We could not
-safely flow this" is expressed as a no-op, never as churn.
+The goal is single-pass convergence: the planner should predict its own
+output's reparse correctly the first time, and every known divergence gets a
+root-cause fix. But unknown shapes will keep existing, so `Format` also makes
+idempotency structural as a backstop: it runs the pipeline, then re-runs it on
+its own output until the output is stable, up to a small cap (4 passes; in
+practice the first re-run already matches). If the cap is hit without
+convergence — including a cycle where two outputs alternate — `Format` returns
+the **original document unchanged**. Document-level, not per-paragraph: the
+known divergence modes merge or re-split paragraphs across passes, so
+"the same paragraph, one pass later" is not a stable identity to fall back on.
+"We could not safely flow this" is expressed as a no-op, never as churn.
+
+The backstop is for users; internally it is treated as a bug detector. The
+test and fuzz harnesses disable it (test-only switch) and drive the
+single-pass core, so any input that needs the backstop shows up as a failing
+idempotency oracle to be root-caused — never silently absorbed.
 
 Two things iteration deliberately does *not* do:
 

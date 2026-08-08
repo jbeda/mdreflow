@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -67,6 +68,14 @@ func processFile(path string, opts mdreflow.Options, f *flags, ex *excluder, exp
 
 	out, err := mdreflow.Format(content, opts)
 	if err != nil {
+		// The library rejects invalid UTF-8 anywhere in the file; the
+		// sniff above only sees the first 8KB, and --force skips it
+		// entirely. Same refusal treatment (exit 3), not a hard error.
+		if errors.Is(err, mdreflow.ErrInvalidUTF8) {
+			fmt.Fprintf(stderr, "%s: refused: invalid UTF-8\n", path)
+			res.refused = true
+			return res, nil
+		}
 		return res, fmt.Errorf("%s: %w", path, err)
 	}
 	changed := !bytes.Equal(content, out)
@@ -125,6 +134,11 @@ func processStdin(opts mdreflow.Options, f *flags, stdin io.Reader, stdout, stde
 
 	out, err := mdreflow.Format(content, opts)
 	if err != nil {
+		if errors.Is(err, mdreflow.ErrInvalidUTF8) {
+			fmt.Fprintf(stderr, "<stdin>: refused: invalid UTF-8\n")
+			res.refused = true
+			return res, nil
+		}
 		return res, fmt.Errorf("<stdin>: %w", err)
 	}
 	changed := !bytes.Equal(content, out)
