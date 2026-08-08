@@ -280,6 +280,12 @@ func hasIrregularCRRun(src []byte) bool {
 // line-joining put them on the same line, turning inert literal text into
 // an actual rendered `<input type="checkbox">`. As with the others, only
 // the render-preservation assertion is skipped for matching inputs.
+// taskMarkerOnlyLineRE matches a line whose content, before any trailing
+// whitespace, is exactly a task-list marker: optional container prefix,
+// bullet, space(s), "[x]"/"[X]"/"[ ]". See the hard-break case in
+// hasSplitTaskListMarker.
+var taskMarkerOnlyLineRE = regexp.MustCompile(`^[ \t>]*[-*+][ \t]+\[[ xX]\][ \t]*$`)
+
 func hasSplitTaskListMarker(src []byte) bool {
 	lines := bytes.Split(src, []byte("\n"))
 	for i, line := range lines {
@@ -291,6 +297,22 @@ func hasSplitTaskListMarker(src []byte) bool {
 			if bytes.HasPrefix(next, []byte("]")) {
 				return true
 			}
+		}
+		// A hard break whose line content is NOTHING but the task-list
+		// marker itself: goldmark silently drops a trailing-double-space
+		// hard break there (the checkbox consumed the line; confirmed
+		// empirically — "* [X]  \n0" renders with no break), while the
+		// literal "<br>" mdreflow normalizes it to DOES render as one.
+		// The same "hard-break spelling is not render-neutral in this
+		// context" premise failure as hasHardBreakDeclarationRisk and
+		// hasBareBrLine — found by FuzzFormat on "* [X]  \n0" (seed
+		// 08c644f8a9e32738), sixteen minutes into an otherwise clean
+		// soak. Gated, not "fixed": the source spelling renders no break,
+		// so there is no output mdreflow could emit that both preserves
+		// the hard break's meaning and this render — the input is
+		// self-contradictory in goldmark's model.
+		if taskMarkerOnlyLineRE.Match(line) && bytes.HasSuffix(line, []byte("  ")) {
+			return true
 		}
 	}
 	return false
