@@ -1260,16 +1260,26 @@ var htmlBlockAnyOpenerRE = regexp.MustCompile(`(?i)^(<[A-Za-z][A-Za-z0-9-]*( [^<
 //     token for `[^\s<][^\s]*` to match, so this regex correctly does not
 //     match it either).
 //
-// It excludes a "[^..." bracket (i.e. "[^label]:") on purpose: that shape
-// is a *footnote* definition, a completely different, already-legitimate
-// construct whose "[^label]: " prefix goldmark keeps as literal text at
-// the start of the footnote body's own Paragraph node (unlike a real link
-// reference definition, which is its own dedicated AST node — see
-// package blockmap's doc comment — and so can never reach this check as
-// an unmodified first line to begin with). Escaping a real footnote
-// body's own marker would sever the link between it and its "[^label]"
-// reference elsewhere in the document — caught by the golden fixture
-// testdata/no-break-spans.md before it could ship.
+// Footnote-shaped "[^label]:" openers are INCLUDED (an earlier version
+// excluded them as "a footnote definition's own legitimate marker"):
+// mdreflow's goldmark configuration does not enable the footnote
+// extension at all, so "[^label]:" is nothing special to the parser this
+// package must stay consistent with — a line-start "[^label]: dest" that
+// completes on its own line is consumed as an ordinary link reference
+// definition with a caret-leading label (confirmed by AST dump), exactly
+// the vanishing-content hazard this escape exists for. Found by
+// FuzzFormat on " [^1]: !Y )9.01" (seed 425ffd537fd28733): the source
+// line is a plain paragraph (the trailing ")9.01" disqualifies the
+// definition), but the sentence split's shorter first line " [^1]: !Y"
+// reparses as a real definition and the text vanishes from the paragraph
+// flow. The fear the old exclusion encoded — escaping a real footnote
+// body's own marker and severing its reference link — cannot fire
+// through this regex: a footnote body with prose after the marker never
+// matches the complete-on-this-line-alone anchoring (multi-word
+// remainder), which is also why testdata/no-break-spans.md's footnote
+// fixture reflows identically with the exclusion gone; and a
+// single-token "[^1]: word" source line is already an LRD node to this
+// parser, passed through byte-for-byte, never reaching this check.
 //
 // The label body also excludes a raw "[" (not just "]"): a real
 // CommonMark link label cannot contain an unescaped "[" either, so
@@ -1277,7 +1287,7 @@ var htmlBlockAnyOpenerRE = regexp.MustCompile(`(?i)^(<[A-Za-z][A-Za-z0-9-]*( [^<
 // escaping it anyway, besides being unnecessary, changed how the rest of
 // the line's autolink recognition behaved, found by FuzzFormat on exactly
 // that input.
-var linkRefDefOpenerRE = regexp.MustCompile(`^\[(\^\]|[^\^\[\]][^\[\]]*\]):[ \t]*[^\s<][^\s]*[ \t]*$`)
+var linkRefDefOpenerRE = regexp.MustCompile(`^\[[^\[\]]*\]:[ \t]*[^\s<][^\s]*[ \t]*$`)
 
 // backtickFenceStart and tildeFenceStart match a fenced-code-block opener's
 // leading run of 3+ backticks or tildes, so isFenceOpener can inspect what
