@@ -179,7 +179,7 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 		if len(curLines) == 0 && marker == "" {
 			return
 		}
-		text := joinClusterLines(curLines)
+		text := joinClusterLines(curLines, marker != "")
 		curLines = nil
 		// Typography substitution happens here — on the whole joined
 		// cluster, *before* computeLines segments or wraps it — not on
@@ -1950,7 +1950,7 @@ type lineFrag struct {
 //   - A fragment that trims to nothing (e.g. a degenerate zero-width line
 //     segment — see the allBlank check in package blockmap for why that
 //     can happen at all) contributes no text and no separator.
-func joinClusterLines(frags []lineFrag) string {
+func joinClusterLines(frags []lineFrag, hasTrailingMarker bool) string {
 	var b strings.Builder
 	wrote := false
 	lastTrimmed := false
@@ -1992,8 +1992,37 @@ func joinClusterLines(frags []lineFrag) string {
 	// (code-span interior) must not grow a space, and an untrimmed
 	// ordinary fragment cannot end in an odd run at all (a source line
 	// ending in one is a real hard break and travels the marker path,
-	// never this join).
-	if lastTrimmed && trailingBackslashCount(lastPieceEnd)%2 == 1 {
+	// never this join) — UNLESS this cluster itself has a trailing
+	// marker (hasTrailingMarker), which is the one case an "untrimmed"
+	// fragment genuinely can still end in a bare backslash: detectHardBreak
+	// strips a "<br>" hard-break marker's own leading whitespace as part
+	// of the match (hardBreakBrRE greedily consumes it), so the
+	// marker-stripped "rest" for a line like "\ <br>" is already just "\"
+	// — no trailing space for *this* function to trim at all, yet it
+	// still ends in a bare backslash.
+	//
+	// hasTrailingMarker suppresses the restore for exactly that case,
+	// because the caller (writeParagraph's flush) is about to call
+	// attachMarker on this cluster's last output line regardless, and
+	// attachMarker already inserts its own separating space whenever the
+	// text it's attaching to ends in an unescaped backslash
+	// (endsInUnescapedBackslash) — the identical hazard, independently
+	// guarded, closer to where the marker is actually attached. Letting
+	// *both* guards fire here double-guessed a space that then has no
+	// stable meaning on reparse: found by FuzzFormat (MaxWidth 4,
+	// SmartQuotes) on "\\\t\ \\\n0" (seed 8732e6eb8a47d4f3) — this
+	// restore added a trailing space to a cluster ending "...\\ " that
+	// then got split (needed once counted as 5 runes, not 4) into
+	// "\\\\" / "\\ ", with "<br>" attached to the second piece. On
+	// reparse, hardBreakBrRE's own greedy whitespace consumption ate that
+	// *same* restored space as part of the marker match, so the
+	// reconstructed cluster measured one rune narrower than pass 1's
+	// — 4, not 5 — and no longer needed the split at all: pass 2 rejoined
+	// onto one line despite MaxWidth 4, an idempotency break. Skipping the
+	// restore when a marker follows removes the extra rune from pass 1's
+	// own width accounting in the first place, so both passes agree on
+	// the same, already-stable-via-attachMarker text.
+	if !hasTrailingMarker && lastTrimmed && trailingBackslashCount(lastPieceEnd)%2 == 1 {
 		b.WriteByte(' ')
 	}
 	return b.String()
