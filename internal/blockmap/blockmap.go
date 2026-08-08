@@ -26,6 +26,7 @@ import (
 
 	"github.com/yuin/goldmark/ast"
 	gfmast "github.com/yuin/goldmark/extension/ast"
+	gmtext "github.com/yuin/goldmark/text"
 )
 
 // Paragraph describes one reflow-eligible paragraph, wherever it is nested.
@@ -214,6 +215,33 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 	}
 	start0 := lines.At(0).Start
 	end := lines.At(n - 1).Stop
+	if hasHiddenLineGap(source, lines) {
+		// Byte-loss safety net, found by FuzzFormat/944e87ed958d1511 on
+		// "[2\nb\n]:0\n\"\"[8]:00\n<A1aA0>": goldmark's link-reference-
+		// definition parser can absorb a titleless definition's would-be
+		// title (here the bare "\"\"") and chain straight into a second
+		// definition ("[8]:00") on the very same source line, leaving a
+		// *sibling* LinkReferenceDefinition node whose raw bytes sit
+		// entirely between two of THIS paragraph's Lines() segments —
+		// physically inside [start0, end) but never a member of any
+		// segment. build's Start/End (this paragraph's doc comment) and
+		// package reflow's writeParagraph both only ever look at
+		// Node.Lines(); neither has any notion of a gap holding real
+		// content, so those bytes are silently dropped: the caller writes
+		// source[cursor:p.Start] before this paragraph and jumps cursor to
+		// p.End after it, and writeParagraph itself walks lines.At(i) only.
+		// A legitimate multi-line paragraph's inter-line gap is always
+		// just that line's terminator plus container-prefix padding
+		// (blockquote '>' markers, list-item indentation — see
+		// continuationPrefix's doc comment) — never brackets, quotes, or
+		// digits. Any gap containing anything else, or more than one line
+		// terminator (an entire physical line skipped over), means some
+		// other node's content is hiding in this paragraph's declared
+		// span, and reflowing (or even just splicing straight through) is
+		// unsafe. The safe general answer, same as every other check in
+		// this function: skip the whole paragraph, byte-for-byte.
+		return Paragraph{}, true
+	}
 	if hasControlByte(source[start0:end]) {
 		// design.md, "Control-character paragraphs pass through": a C0
 		// control byte other than tab/newline/CR inside a paragraph's raw
@@ -386,6 +414,38 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 func hasControlByte(b []byte) bool {
 	for _, c := range b {
 		if c < 0x20 && c != '\t' && c != '\n' && c != '\r' {
+			return true
+		}
+	}
+	return false
+}
+
+// hasHiddenLineGap reports whether lines (a paragraph or text block's
+// Node.Lines(), already known non-empty) has a gap between two consecutive
+// segments that is not fully explained by an ordinary line terminator plus
+// container-prefix padding — see its call site in build for why any other
+// gap content means bytes are about to be silently dropped.
+func hasHiddenLineGap(source []byte, lines *gmtext.Segments) bool {
+	n := lines.Len()
+	for i := 1; i < n; i++ {
+		gap := source[lines.At(i-1).Stop:lines.At(i).Start]
+		newlines := 0
+		for _, b := range gap {
+			switch b {
+			case ' ', '\t', '>', '\r':
+				// Ordinary container-prefix padding or CRLF's '\r' — see
+				// continuationPrefix's doc comment for the allowed
+				// per-line prefix shapes.
+			case '\n':
+				newlines++
+			default:
+				return true
+			}
+		}
+		if newlines > 1 {
+			// More than one line terminator in the gap means an entire
+			// physical source line was skipped over without becoming part
+			// of this node's Lines() at all.
 			return true
 		}
 	}

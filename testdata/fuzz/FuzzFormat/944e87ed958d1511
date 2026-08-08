@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("[2\nb\n]:0\n\"\"[8]:00\n<A1aA0>")
