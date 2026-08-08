@@ -39,6 +39,13 @@ Do not escalate to Opus on your own initiative (Joe finds Opus 5 too verbose); r
 As the driver, feel free to plan the work up front and split it across multiple Sonnet subagents — parallel where tasks are independent, sequential where one stage feeds the next.
 Keep review and integration in the driving session: verify each subagent's work (build, vet, lint, tests, and for reflow changes a fuzz soak) before building on it.
 
+## Mechanical procedures live in Taskfile.yaml
+
+Common procedures are code, not prompts: `task --list`.
+Use `task verify`, `task fuzz`, `task release-verify VERSION=vX.Y.Z`, etc. rather than retyping the command chains; if you find yourself repeating a mechanical procedure that isn't there, add it.
+Releases follow RELEASING.md.
+Every user-visible change adds a line to CHANGELOG.md's Unreleased section in the same commit, written in user terms.
+
 ## Verify before declaring done
 
 ```

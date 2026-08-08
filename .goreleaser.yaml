@@ -50,13 +50,11 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+# Release notes are curated in CHANGELOG.md and passed in by the release
+# workflow via --release-notes (scripts/release-notes.sh); the raw commit
+# list is reachable through the compare link those notes end with.
 changelog:
-  use: github
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
-      - "^chore:"
+  disable: true
 
 release:
   # v0.x: every release is a pre-release-grade API promise (design.md's

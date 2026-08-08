@@ -1,0 +1,62 @@
+# Common procedures as code (https://taskfile.dev). Anything mechanical
+# lives here rather than in prompts or muscle memory: `task --list`.
+version: "3"
+
+vars:
+  FUZZTIME: '{{ .FUZZTIME | default "300s" }}'
+
+tasks:
+  default:
+    deps: [verify]
+
+  verify:
+    desc: "Full verification chain: build, vet, gofmt, lint, tests"
+    cmds:
+      - go build ./...
+      - go vet ./...
+      - test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - golangci-lint run
+      - go test ./... -count=1
+
+  fuzz:
+    desc: "Foreground fuzz soak (FUZZTIME=300s default); required after any reflow-logic change"
+    cmds:
+      - go test -fuzz=FuzzFormat -fuzztime={{ .FUZZTIME }} .
+
+  vulncheck:
+    desc: "Run govulncheck locally (also runs weekly + on tags in CI)"
+    cmds:
+      - go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  dogfood:
+    desc: "Format the repo's own Markdown with mdreflow"
+    cmds:
+      - go run ./cmd/mdreflow .
+
+  dogfood-check:
+    desc: "Check the repo's own Markdown is formatted (CI-style, exit 1 if not)"
+    cmds:
+      - go run ./cmd/mdreflow --check .
+
+  release-notes:
+    desc: "Print the GitHub release notes for VERSION (extracted from CHANGELOG.md)"
+    requires:
+      vars: [VERSION]
+    cmds:
+      - scripts/release-notes.sh {{ .VERSION }}
+
+  release-verify:
+    desc: "Download VERSION's linux/amd64 release asset, verify checksum, smoke-test the binary"
+    requires:
+      vars: [VERSION]
+    vars:
+      TMP:
+        sh: mktemp -d
+    cmds:
+      - defer: rm -rf {{ .TMP }}
+      - gh release download {{ .VERSION }} -R jbeda/mdreflow -D {{ .TMP }} -p 'mdreflow_*_linux_amd64.tar.gz' -p checksums.txt
+      - cd {{ .TMP }} && grep linux_amd64 checksums.txt | sha256sum -c -
+      - cd {{ .TMP }} && tar xzf mdreflow_*_linux_amd64.tar.gz mdreflow
+      - '{{ .TMP }}/mdreflow --version'
+      - printf 'Two sentences here. Split please.\n' | {{ .TMP }}/mdreflow | diff - <(printf 'Two sentences here.\nSplit please.\n')
+      - echo "release {{ .VERSION }} verified"
