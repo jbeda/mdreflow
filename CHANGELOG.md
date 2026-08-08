@@ -13,13 +13,12 @@ Nothing yet.
 
 ## v0.1.2 (2026-08-08)
 
-Distribution and documentation; no formatting behavior changed.
-macOS users can now install with `brew install jbeda/tap/mdreflow`, the README documents modes, configuration, excludes, and the exit-code contract directly instead of deferring everything to `--help`, and `--help` itself got cleaner and more complete.
+Distribution and documentation; no formatting behavior changed. macOS users can now install with `brew install jbeda/tap/mdreflow`, the README documents modes, configuration, excludes, and the exit-code contract directly instead of deferring everything to `--help`, and `--help` itself got cleaner and more complete.
 
 ### Added
 
-- Homebrew on macOS: `brew install jbeda/tap/mdreflow`.
-  Each release publishes a cask to [jbeda/homebrew-tap](https://github.com/jbeda/homebrew-tap); Linux stays on the release tarballs and `go install`.
+- Homebrew: `brew install jbeda/tap/mdreflow` on macOS, `brew install --cask jbeda/tap/mdreflow` on Linux (Homebrew 4.5+ cask support is preliminary there).
+  Each release publishes a cask to [jbeda/homebrew-tap](https://github.com/jbeda/homebrew-tap); release tarballs and `go install` remain for everything else.
 
 ### Fixed
 

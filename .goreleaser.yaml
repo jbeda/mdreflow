@@ -52,9 +52,9 @@ checksum:
 
 # Publishes a cask to the personal tap (brew install jbeda/tap/mdreflow).
 # Casks are goreleaser's current recommendation (brews: is deprecated since
-# v2.10) but are macOS-only; Linux stays on the release tarballs and
-# go install. The post-install hook strips the quarantine attribute since
-# the binaries are not signed or notarized.
+# v2.10); the generated cask carries on_linux stanzas too, which Homebrew
+# supports since 4.5 (preliminary). The post-install hook strips the
+# quarantine attribute since the binaries are not signed or notarized.
 homebrew_casks:
   - name: mdreflow
     binaries:

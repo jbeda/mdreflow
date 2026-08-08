@@ -20,10 +20,11 @@ One changed sentence is one changed line, which makes prose reviews readable and
 
 ## Install
 
-On macOS, via [Homebrew](https://brew.sh/):
+Via [Homebrew](https://brew.sh/):
 
 ```
-brew install jbeda/tap/mdreflow
+brew install jbeda/tap/mdreflow           # macOS
+brew install --cask jbeda/tap/mdreflow    # Linux (Homebrew 4.5+, preliminary cask support)
 ```
 
 Prebuilt binaries for Linux, macOS, and Windows (amd64 and arm64) are on the [releases page](https://github.com/jbeda/mdreflow/releases), with a `checksums.txt` alongside.
