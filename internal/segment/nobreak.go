@@ -241,7 +241,9 @@ func scanLinkDestTitle(text string, open int) (int, bool) {
 	for i < len(text) && isLinkSpace(text[i]) {
 		i++
 	}
+	angleDest := false
 	if i < len(text) && text[i] == '<' {
+		angleDest = true
 		i++
 		for i < len(text) && text[i] != '>' && text[i] != '\n' {
 			if text[i] == '\\' && i+1 < len(text) {
@@ -280,7 +282,17 @@ func scanLinkDestTitle(text string, open int) (int, bool) {
 	for i < len(text) && isLinkSpace(text[i]) {
 		i++
 	}
-	if i > wsStart && i < len(text) && (text[i] == '"' || text[i] == '\'' || text[i] == '(') {
+	// After a "<...>"-bracketed destination the title binds even with NO
+	// separating whitespace — confirmed against goldmark: "[](<a b>(t))"
+	// and "[](<a b>\"t\")" both form links with title "t" (only a bare
+	// destination needs the whitespace, since otherwise the would-be
+	// title characters are simply more destination). Requiring
+	// whitespace unconditionally made this scan fail on exactly those
+	// shapes, so the fallback naive paren-balance ended the span at a
+	// ')' INSIDE the angle destination and a width cut could land in the
+	// destination's own spaces, destroying the link — found by
+	// FuzzFormat on "\"0yA[](<00)000 70>(10))10" (seed 66ec7651162ab61f).
+	if (i > wsStart || angleDest) && i < len(text) && (text[i] == '"' || text[i] == '\'' || text[i] == '(') {
 		titleOpen, titleClose := text[i], text[i]
 		if titleOpen == '(' {
 			titleClose = ')'
