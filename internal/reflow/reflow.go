@@ -112,6 +112,20 @@ type outLine struct {
 	// the raw source (container prefix included): ContPrefix must not be
 	// prepended to it, since it already carries its own real prefix.
 	verbatim bool
+	// noEscape is true for a dialect-marker boundary line whose content is
+	// emitted from the paragraph's own first line (verbatim handles the
+	// i > 0 case). A boundary line's bytes ARE its verdict: blockmap
+	// re-derives "immovable marker" from them on the next parse, so
+	// escapeBlockInterrupt must never touch them — found by FuzzFormat on
+	// "#\n:::-\n0" (seed 8430eba8c33c2dd7), where the first-line marker
+	// ":::-" also happens to be table-delimiter-row-shaped and the
+	// heading above made prevLineNonBlank true, so the delimiter-row
+	// trigger backslash-escaped it; the next pass no longer saw a marker
+	// and joined the cluster, an idempotency flip. Escaping is also never
+	// NEEDED here: the line's bytes existed at this exact line start in
+	// the source and parsed as paragraph content, so identical bytes at
+	// the identical position reparse identically.
+	noEscape bool
 }
 
 // writeParagraph joins p's prose lines into hard-break clusters — stopping
@@ -217,7 +231,7 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 				text, _ = stripLineEnding(full)
 				verbatim = true
 			}
-			outLines = append(outLines, outLine{text: text, verbatim: verbatim})
+			outLines = append(outLines, outLine{text: text, verbatim: verbatim, noEscape: true})
 			continue
 		}
 
@@ -290,7 +304,7 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 				buf.WriteString(p.ContPrefix)
 			}
 		}
-		if !ol.verbatim {
+		if !ol.verbatim && !ol.noEscape {
 			// Applied to every non-verbatim output line, not just
 			// continuation lines: a paragraph's very first output line is
 			// only ever the unmodified start of the source's own first
