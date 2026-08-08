@@ -9,6 +9,11 @@ tasks:
   default:
     deps: [verify]
 
+  build:
+    desc: "Build ./bin/mdreflow for local use (reports version dev; releases stamp real versions)"
+    cmds:
+      - go build -o bin/mdreflow ./cmd/mdreflow
+
   verify:
     desc: "Full verification chain: build, vet, gofmt, lint, tests"
     cmds:

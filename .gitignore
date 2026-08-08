@@ -8,4 +8,5 @@ skills-lock.json
 
 # Build output
 /mdreflow
+bin/
 dist/
