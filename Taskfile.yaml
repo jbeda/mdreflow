@@ -58,6 +58,15 @@ tasks:
     cmds:
       - go run ./cmd/mdreflow --check .
 
+  release-prep:
+    desc: "Bump version references in the README (pre-commit rev) to VERSION"
+    requires:
+      vars: [VERSION]
+    cmds:
+      - "sed -i -E 's|rev: v[0-9]+\\.[0-9]+\\.[0-9]+|rev: {{ .VERSION }}|' README.md"
+      - "grep -q 'rev: {{ .VERSION }}' README.md"
+      - 'echo "README pre-commit rev -> {{ .VERSION }}; commit alongside the CHANGELOG retitle"'
+
   release-notes:
     desc: "Print the GitHub release notes for VERSION (extracted from CHANGELOG.md)"
     requires:

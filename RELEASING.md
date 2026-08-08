@@ -17,14 +17,15 @@ HTML attributes"), not commit-message terms.
    changes, new defaults, upgrade notes), and the one or two things worth
    caring about.
    Start a fresh empty `## Unreleased` above it.
-2. `task verify` and, if reflow logic changed since the last release, `task fuzz`.
-3. Sanity-check the notes render: `task release-notes VERSION=vX.Y.Z` (the
+2. `task release-prep VERSION=vX.Y.Z` — bumps version references in the README (currently the pre-commit `rev:` example) to the new tag.
+3. `task verify` and, if reflow logic changed since the last release, `task fuzz`.
+4. Sanity-check the notes render: `task release-notes VERSION=vX.Y.Z` (the
    compare link appears once the tag exists; a warning before that is fine).
-4. Commit, push, then tag and push the tag: `git tag -a vX.Y.Z -m "mdreflow vX.Y.Z" && git push origin vX.Y.Z`.
+5. Commit, push, then tag and push the tag: `git tag -a vX.Y.Z -m "mdreflow vX.Y.Z" && git push origin vX.Y.Z`.
    The Release workflow refuses tags whose commit is not on `main` (push the branch first, then the tag).
-5. Watch both tag-triggered workflows (Release and govulncheck): `gh run list -R jbeda/mdreflow --branch vX.Y.Z`.
+6. Watch both tag-triggered workflows (Release and govulncheck): `gh run list -R jbeda/mdreflow --branch vX.Y.Z`.
    - If govulncheck fails on a **stdlib** vulnerability, the fix is bumping the `toolchain` directive in go.mod (not deps) and cutting a patch release; this happened for v0.1.1 / GO-2026-4602.
-6. `task release-verify VERSION=vX.Y.Z` — downloads a real asset, verifies the checksum, and smoke-tests the binary.
+7. `task release-verify VERSION=vX.Y.Z` — downloads a real asset, verifies the checksum, and smoke-tests the binary.
 
 ## Versioning
 
