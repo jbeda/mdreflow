@@ -147,7 +147,8 @@ existing rules rather than require new machinery:
 | Math blocks (`$$`) | GFM, Docusaurus | skip block |
 | Hugo shortcodes (`{{< … >}}`, `{{% … %}}`) | Hugo | skip block / no-break span |
 | GitHub alert first-lines (`> [!NOTE]`) | GFM | marker line is an immovable boundary (it fuses into the quote's paragraph in the AST — see M0 findings); rest of quote reflows |
-| Link reference definitions | CommonMark | skip lines |
+| Link reference definitions | CommonMark | skip zone (below) |
+| Footnote definitions (`[^label]:`) | GFM | body reflows; continuations indented (below) |
 | Hard line breaks | CommonMark | immovable boundary (below) |
 
 **Spike M0 outcome** (details and evidence in
@@ -234,6 +235,60 @@ const (
 
 Typography is the documented exception to render preservation (changing quotes
 is its purpose).
+
+### The link-reference-definition zone: skip bluntly, by shape
+
+A link reference definition (`[label]: /url "title"`) renders nothing — it is
+URL metadata — and its grammar is the least reflow-compatible construct in
+CommonMark: the label, destination, and title may each span onto following
+lines, a titleless one-line definition can absorb a title from the paragraph
+after it, and goldmark reorders definition nodes relative to paragraph
+siblings. A first implementation grew six interlocking adjacency guards
+(self-completeness reparses, registry-diff title-absorption checks, byte-level
+titleless backstops, neighbor-spelling symmetry rules) and fuzzing kept
+finding a seventh shape. The lesson: precision here buys reflow of prose that
+is rare, ambiguity-laden, and worthless to reflow next to invisible metadata.
+
+The rule is now deliberately blunt and shape-based: **any paragraph that
+contains, or sits directly against (no blank line), a line opening with a
+non-footnote `[label]:` shape — original, reflow-escaped (`\[label]:`), or
+reflow-joined (`text [label]:` at line end) spelling — passes through
+byte-for-byte.** No parsing, no adjacency analysis, one predicate. In the
+common real-world layout (definitions in their own blank-line-separated
+block) nothing changes: those were already skipped.
+
+**Footnote definitions are exempt and keep reflowing.** The caret is a perfect
+discriminator (`[^label]:` vs `[label]:`), and the content profile is the
+opposite: a footnote body is real prose. Two protections replace the guard
+pile for the caret case:
+
+- Emission escapes, label-shape-agnostic: an output line that would itself
+  parse as a complete definition (judged empirically — the line is parsed in
+  isolation by goldmark, not matched against a hand-mirrored grammar) or as a
+  bare `[label]:` opener is backslash-escaped, so reflowed footnote prose can
+  never be swallowed into an accidental definition.
+- Reflowed footnote-body continuation lines are emitted with a 4-space
+  indent. Renderers disagree about whether an unindented lazy-continuation
+  line belongs to the footnote (GitHub's documented convention is to indent);
+  the indented spelling is the one they all keep inside the footnote, and to
+  mdreflow's own parser it is an ordinary paragraph continuation (indented
+  code cannot interrupt a paragraph), so render preservation is unaffected.
+
+Residual adversarial corners in the caret zone (typography verdicts flipping
+next to `[^label]:` shapes built out of quote soup) are owned by the
+convergence backstop and a documented harness gate, not by further guards —
+see Testing.
+
+### Control-character paragraphs pass through
+
+A paragraph containing a C0 control byte other than tab (form feed, vertical
+tab, a bare carriage return outside a CRLF pair, ...) passes through
+byte-for-byte. No text editor produces these inside prose; they exist in
+fuzz inputs, where they sit in exactly the grammar corners (indentation
+width, whitespace-class membership) that differ between parser
+implementations. Reflowing around them buys nothing for real documents and
+costs a long tail of corner-case hardening. CRLF line endings are unaffected
+(the `\r` of a CRLF pair is line-ending machinery, not paragraph interior).
 
 ## Guarantees
 
@@ -387,6 +442,7 @@ The wrapping logic is heuristic; a deep test corpus is the only durable defense 
 5. **Exclude parity**: our gitignore matching vs. `git check-ignore` output on a synthetic tree.
 6. **Fuzzing**: Go native fuzzing on `Format` with crash, idempotency, and render preservation as oracles.
    Invalid-UTF-8 inputs assert only the `ErrInvalidUTF8` refusal (that path must still never panic); the reflow oracles run on accepted inputs.
+   One documented scope gate: inputs mixing a footnote-shaped `[^label]:` opener with typography-substitutable quote characters assert idempotency of the *public* (backstop-included) `Format` rather than the single-pass core — the caret zone's residual adversarial corners are owned by the backstop by design (see the link-reference-definition zone section), and a gate is honest where a seventh adjacency guard would not be.
 
 ## Dependencies
 
