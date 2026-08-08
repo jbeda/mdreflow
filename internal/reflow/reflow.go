@@ -20,6 +20,7 @@ import (
 
 	"github.com/jbeda/mdreflow/internal/blockmap"
 	"github.com/jbeda/mdreflow/internal/segment"
+	"github.com/jbeda/mdreflow/internal/typography"
 )
 
 // Segmenter is the subset of mdreflow.Segmenter the pipeline needs. A
@@ -69,6 +70,12 @@ type Options struct {
 	// responsible for rejecting MaxWidth != 0 with ModePara before this
 	// package ever sees it.
 	MaxWidth int
+	// Typography selects the opt-in span-level prose substitutions
+	// (smart quotes, ellipsis); 0 is off. Unlike Mode and
+	// HardBreakStyle, this needs no local mirror type: package
+	// typography is internal too, so both this package and format.go
+	// can name its type directly.
+	Typography typography.Typography
 	// HardBreaks selects the normalized hard-break style every preserved
 	// hard break is rewritten to.
 	HardBreaks HardBreakStyle
@@ -150,6 +157,31 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 		}
 		text := joinClusterLines(curLines)
 		curLines = nil
+		// Typography substitution happens here — on the whole joined
+		// cluster, *before* computeLines segments or wraps it — not on
+		// the per-line output afterwards. Two reasons:
+		//
+		//   - Idempotency of the ellipsis. Sentence segmentation must
+		//     see the same terminal punctuation on every pass. Pass 1
+		//     would segment against literal "..." and pass 2 against an
+		//     already-substituted "…"; substituting first makes both
+		//     passes segment the identical text. (segment.terminalRun
+		//     recognizes both spellings regardless, so the two agree —
+		//     but only doing the substitution up front makes that
+		//     agreement structural rather than incidental.)
+		//   - One mental model. Quote directionality is decided from
+		//     local raw-text context, which is unaffected by where a
+		//     later line break lands, so quotes could go either way;
+		//     keeping both substitutions in the same place, on the same
+		//     text, is simpler than splitting them.
+		//
+		// The protected ranges are computed on this same
+		// pre-substitution text, which is what lets Apply consult them
+		// by original-text byte position while a quote substitution
+		// grows from 1 byte to 3 (see typography.Apply).
+		if opts.Typography != 0 {
+			text = typography.Apply(text, segment.NoBreakSpans(text), opts.Typography)
+		}
 		clusterLines := computeLines(text, seg, opts)
 		for i, s := range clusterLines {
 			if i == len(clusterLines)-1 {
@@ -368,6 +400,76 @@ func filterUnsafeLineEnds(text string, breaks []segment.Span) []segment.Span {
 		}
 		after := text[b.End:]
 		if backtickFenceStart.MatchString(after) || tildeFenceStart.MatchString(after) {
+			continue
+		}
+		out = append(out, b)
+	}
+	return filterLineStartHazards(text, out)
+}
+
+// linkifyTokenStart matches the start of a token GFM's linkify extension
+// turns into a bare link with no delimiters at all: a scheme-prefixed
+// URL, a "www."-prefixed one, or an email address.
+var linkifyTokenStart = regexp.MustCompile(
+	"(?i)^(?:[a-z][a-z0-9+.-]*://|www\\.|[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\\.[a-z0-9-]+)+)")
+
+// filterLineStartHazards removes candidate breaks whose *following* text
+// would mean something different once it sits at the start of a fresh
+// line than it does mid-line. Two such hazards exist, and both apply to
+// sentence breaks as well as width-based cuts — unlike the rules in
+// filterUnsafeLineEnds, which concern what a cut leaves at a line's
+// *end* and which only a width-based cut can reach.
+//
+// # Dialect markers
+//
+// A line starting ":::", "{{<", "$$", "+++", "{expr}" or a GitHub alert
+// marker is a skip-list boundary (or a whole-node skip) per package
+// blockmap, so relocating such text to a line start changes the
+// paragraph structure the *next* formatting pass sees — an idempotency
+// break. See blockmap.MarkerLineStart for the fuzz find.
+//
+// A sentence break can reach this too, not just a width cut: a sentence
+// break requires the following character to plausibly start a sentence,
+// and "[" (the GitHub alert marker's first byte) qualifies.
+//
+// # GFM linkify
+//
+// A candidate break that would move a linkify-eligible token (see
+// linkifyTokenStart) from a position where GFM's linkify extension does
+// *not* recognize it to the start of a fresh line, where it does, turns
+// inert literal text into a real link.
+//
+// goldmark's linkify parser only fires at a line start or immediately
+// after one of a small set of trigger bytes (space, "*", "_", "~", "("),
+// confirmed directly rather than assumed: "07 a@b.co" linkifies the
+// address, "07\ta@b.co" (a tab instead of the space) does not, and
+// "a@b.co" alone on a line does. mdreflow's break candidates consume a
+// whole run of spaces/tabs/bare-CRs (see wordBreaks), so a run ending in
+// a tab or a bare CR — a byte that was *suppressing* linkification — can
+// be replaced by a newline that enables it. Found by FuzzFormat on
+// "07\tAA91AA@A001AA.0", where cutting at the tab produced a mailto link
+// the source never had.
+//
+// The test is deliberately one-sided: a cut always puts the token at a
+// line start, where linkify always fires, so the only possible flip is
+// off -> on, and it happens exactly when the byte the cut consumes last
+// is not itself a trigger. Checking for a literal space covers that: a
+// break run's final byte is always a space, tab, or bare CR, and only the
+// space is a trigger. A sentence break can reach this too: it consumes
+// the whitespace run after the terminal punctuation, and that run ends in
+// a tab just as easily ("Foo.\tBar@b.co" splits, since "B" starts a
+// plausible sentence).
+func filterLineStartHazards(text string, breaks []segment.Span) []segment.Span {
+	if len(breaks) == 0 {
+		return breaks
+	}
+	out := breaks[:0:0]
+	for _, b := range breaks {
+		after := text[b.End:]
+		if blockmap.MarkerLineStart(after) {
+			continue
+		}
+		if b.End > b.Start && text[b.End-1] != ' ' && linkifyTokenStart.MatchString(after) {
 			continue
 		}
 		out = append(out, b)
@@ -745,7 +847,7 @@ func splitSentences(text string, seg Segmenter) []string {
 	if text == "" {
 		return []string{""}
 	}
-	breaks := filterBreaks(seg.Breaks(text), segment.NoBreakSpans(text))
+	breaks := filterLineStartHazards(text, filterBreaks(seg.Breaks(text), segment.NoBreakSpans(text)))
 
 	out := make([]string, 0, len(breaks)+1)
 	prev := 0
@@ -1374,7 +1476,7 @@ var hardBreakBrRE = regexp.MustCompile(`(?i)[ \t]*<br[ \t]*/?>[ \t]*$`)
 // sentenceTerminalEndRE matches text ending in sentence-terminal
 // punctuation (optionally followed by closing quotes/brackets), used by
 // Options.StripSentenceTerminalBreaks.
-var sentenceTerminalEndRE = regexp.MustCompile(`[.!?]["'”’)\]]*$`)
+var sentenceTerminalEndRE = regexp.MustCompile(`[.!?…]["'”’)\]]*$`)
 
 // detectHardBreak inspects a line's content (line ending already stripped)
 // for one of the three hard-break syntaxes mdreflow recognizes: trailing

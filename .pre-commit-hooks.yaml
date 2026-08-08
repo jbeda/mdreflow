@@ -1,0 +1,33 @@
+# pre-commit hook definitions for mdreflow.
+#
+# Usage in a consuming repo's .pre-commit-config.yaml:
+#
+#   repos:
+#     - repo: https://github.com/jbeda/mdreflow
+#       rev: v0.1.0          # any tag or commit
+#       hooks:
+#         - id: mdreflow
+#
+# language: golang means pre-commit builds mdreflow from this repo with
+# "go install ./..." into its own hook environment; the entry below is the
+# resulting binary name. Go is bootstrapped by pre-commit if it is not
+# already installed.
+#
+# An explicit files regex is used instead of "types_or: [markdown]"
+# because identify's built-in markdown tag covers .md/.markdown but not
+# reliably .mdx, and .mdx is exactly the dialect mdreflow's skip-list
+# exists for. The regex mirrors the extension set the CLI's own directory
+# walk accepts.
+- id: mdreflow
+  name: mdreflow
+  description: Reflow Markdown prose in place (sentence-per-line by default).
+  entry: mdreflow
+  language: golang
+  files: \.(md|mdx|markdown)$
+
+- id: mdreflow-check
+  name: mdreflow (check only)
+  description: Fail if any Markdown file would be reflowed, without writing anything. The CI-style gate.
+  entry: mdreflow --check
+  language: golang
+  files: \.(md|mdx|markdown)$

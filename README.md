@@ -1,7 +1,7 @@
 # mdreflow
 
 Reflow Markdown prose.
-The default mode is sentence-per-line ([semantic line breaks](https://sembr.org/)); paragraph-per-line and classic hard wrap are planned on the same pipeline.
+The default mode is sentence-per-line ([semantic line breaks](https://sembr.org/)); paragraph-per-line and classic hard wrap share the same pipeline.
 It is a Go library first, with a thin CLI on top.
 
 mdreflow changes where lines break inside paragraph prose and touches nothing
@@ -16,8 +16,16 @@ Why sentence-per-line?
 Diffs.
 One changed sentence is one changed line, which makes prose reviews readable and gives both humans and agents a stable convention for edits.
 
-**Status: early v0.** The library API and CLI surface are still moving.
-Typography options and released binaries land in the last milestone; see the design doc for the plan.
+**Status: early v0.** The library API and CLI surface are still moving; every milestone in the design doc is implemented, but nothing is frozen until v1.0.0.
+
+## Install
+
+```
+go install github.com/jbeda/mdreflow/cmd/mdreflow@latest
+```
+
+Release archives for linux, macOS, and Windows (amd64 and arm64) are built by [goreleaser](.goreleaser.yaml) on each `v*` tag.
+No tag has been cut yet, so there is nothing on the releases page today; `go install` is the way in for now.
 
 ## Usage
 
@@ -40,6 +48,28 @@ out, err := mdreflow.Format(src, mdreflow.Options{})
 ```
 
 `Options{}` is valid and sensible: sentence mode, no width limit, typography off.
+
+## Typography
+
+`--smart-quotes` curls straight quotes and `--ellipses` turns `...` into `…`.
+Both are off by default, because Markdown headed for prompts, diffs, and tooling usually wants plain ASCII, and both are the only options that change how a document renders.
+They apply to paragraph prose only: never inside inline code, links, autolinks, math, shortcodes, `{expr}` spans, or inline HTML, and never inside a skipped block like a code fence, front matter, or a table.
+Set them in `.mdreflow.yaml` as `typography: [smart-quotes, ellipses]`.
+
+## pre-commit
+
+```yaml
+repos:
+  - repo: https://github.com/jbeda/mdreflow
+    rev: v0.1.0 # or any commit
+    hooks:
+      - id: mdreflow # formats staged Markdown in place
+      # - id: mdreflow-check  # or: fail the commit instead of rewriting
+```
+
+Both hooks cover `.md`, `.mdx`, and `.markdown`.
+The `mdreflow` hook rewrites files and lets pre-commit re-stage them.
+The `mdreflow-check` hook writes nothing and fails if anything would change, which is the shape you want in CI.
 
 ## Documentation
 

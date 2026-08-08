@@ -29,7 +29,23 @@ type Span struct {
 // recognized the same way whether it directly follows prose or trails
 // inline markup like a code span followed by a period, or bold text
 // followed by a period — the flowmark #68 case.
-var terminalRun = regexp.MustCompile("[.!?]+[\"'”’)\\]]*")
+//
+// U+2026 HORIZONTAL ELLIPSIS ("…") is in the terminal set alongside the
+// ASCII trio. A literal "..." already matched (three separate members of
+// "[.!?]+" in one run) and was already treated as sentence-terminal, so a
+// paragraph reading "Well then... Next sentence." has always split there.
+// Options.Typography's Ellipses flag rewrites that run to a single "…"
+// rune, and without this addition the *second* Format pass over its own
+// output would no longer recognize the boundary the first pass had just
+// created — an idempotency break. Recognizing both spellings identically
+// and unconditionally (not gated on the typography flag) fixes it where
+// it belongs: the segmenter has no business caring which of two
+// renderings of the same punctuation the source happens to use. This is a
+// strict superset of the previous behavior — a literal "…" in input text,
+// which was simply never recognized as sentence-terminal before, now is,
+// which is a correctness improvement rather than a behavior anything
+// could reasonably have depended on the absence of.
+var terminalRun = regexp.MustCompile("[.!?…]+[\"'”’)\\]]*")
 
 // Segmenter is mdreflow's built-in Segmenter implementation.
 type Segmenter struct {

@@ -48,6 +48,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs.BoolVar(&ff.noGitignore, "no-gitignore", false, "do not consult .gitignore files when walking directories or checking excludes")
 	fs.StringVar(&ff.hardBreaks, "hard-breaks", "br", "hard line break style: br, spaces, or backslash")
 	fs.BoolVar(&ff.stripSentenceTerminalBreaks, "strip-sentence-terminal-breaks", false, "treat a trailing double-space immediately after sentence-terminal punctuation as an accidental hard break and remove it")
+	fs.BoolVar(&ff.smartQuotes, "smart-quotes", false, "substitute curly quotes for straight quotes in prose (never in code spans, links, or skipped blocks)")
+	fs.BoolVar(&ff.ellipses, "ellipses", false, `substitute "…" for "..." in prose (never in code spans, links, or skipped blocks)`)
+	fs.BoolVar(&ff.version, "version", false, "print version information to stdout and exit 0")
 
 	// Parse errors already name the offending flag; a pointer to --help
 	// beats re-dumping the full usage text on stderr. Explicit --help gets
@@ -65,6 +68,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	fs.Visit(func(fl *flag.Flag) { ff.set[fl.Name] = true })
+
+	// --version, like --help, is informational: one line on stdout,
+	// exit 0, nothing read and nothing written. Handled before any path
+	// or stdin handling so it works with no input available at all.
+	if ff.version {
+		printVersion(stdout)
+		return exitOK
+	}
 
 	paths := fs.Args()
 	if len(paths) == 0 || (len(paths) == 1 && paths[0] == "-") {

@@ -9,10 +9,10 @@
 // parser is used read-only to locate paragraph prose; output is produced
 // by splicing reflowed prose into the verbatim source bytes.
 //
-// M3 status: sentence, para, and wrap modes, and MaxWidth (in sentence and
-// wrap mode), are all implemented. Typography is declared here per the
-// library's full API but returns an error from Format until M5 implements
-// it — see its doc comment.
+// The library API in docs/design.md is complete as of M5: all three
+// modes, MaxWidth, hard-break normalization, the abbreviation list, a
+// pluggable Segmenter, and the opt-in typography substitutions are all
+// implemented.
 package mdreflow
 
 import "github.com/jbeda/mdreflow/internal/segment"
@@ -56,15 +56,33 @@ const (
 	HardBreakBackslash
 )
 
-// Typography selects opt-in, span-level prose substitutions (never
-// applied inside code spans or skip ranges). Not implemented until M5;
-// Format returns an error if non-zero.
+// Typography selects opt-in, span-level prose substitutions. They apply
+// to paragraph prose only: never inside an inline code span, a link or
+// its destination, an autolink, inline math, a footnote reference, an
+// inline shortcode or {expr} span, or an inline HTML/JSX tag, and never
+// inside a skipped construct (code block, front matter, table, raw HTML
+// block, dialect-skipped paragraph), which the reflow pipeline never
+// touches at all.
+//
+// Off by default: Markdown destined for prompts and tooling generally
+// wants ASCII. Typography is the documented exception to mdreflow's
+// render-preservation guarantee — changing quotes is its purpose — but
+// not to idempotency, which holds unconditionally.
 type Typography uint
 
 const (
-	// SmartQuotes substitutes straight quotes for curly quotes.
+	// SmartQuotes substitutes straight quotes for curly quotes, using
+	// the standard open/close heuristic: a quote after start-of-text,
+	// whitespace, or opening punctuation opens; a quote after a word
+	// character or closing punctuation closes; an apostrophe inside a
+	// word is a right single quote ("don't", "the dog's"), as is a
+	// decade abbreviation's elided century ("the '90s"). It is a
+	// per-character heuristic, not a matching-pair stack; see package
+	// internal/typography for the cases it is deliberately naive about
+	// (prime/measurement marks, elisions other than decades).
 	SmartQuotes Typography = 1 << iota
-	// Ellipses substitutes "..." for "…".
+	// Ellipses substitutes "..." — exactly three periods, never part of
+	// a longer run — for "…" (U+2026).
 	Ellipses
 )
 
@@ -117,8 +135,8 @@ type Options struct {
 	//     error for a non-zero MaxWidth rather than silently ignoring it.
 	MaxWidth int
 
-	// Typography enables opt-in prose substitutions. Zero value is off.
-	// Not implemented until M5; Format returns an error if non-zero.
+	// Typography enables opt-in prose substitutions. Zero value is off;
+	// see Typography for what each flag does and what it never touches.
 	Typography Typography
 
 	// HardBreaks selects the normalized hard-break style every preserved

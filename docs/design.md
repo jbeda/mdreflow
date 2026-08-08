@@ -1,7 +1,7 @@
 # mdreflow design
 
 *2026-08-07.
-Status: M0–M4 implemented (all modes, full skip-list, CLI); M5 (typography, release packaging) remains.
+Status: M0–M5 implemented — all modes, full skip-list, CLI, typography flags, and release packaging (goreleaser, pre-commit hooks).
 This is a living document: design changes land here first, then in code.*
 
 `mdreflow` is a Go library and CLI that reflows Markdown prose.

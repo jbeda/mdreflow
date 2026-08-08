@@ -140,6 +140,41 @@ func wholeNodeSkip(trimmedLines []string) bool {
 	return false
 }
 
+// markerLineStartRE matches the opening of any skipRules construct that
+// only means something at the start of a line. It is deliberately a
+// *prefix* form of the rules above — no "$" end anchors, no
+// blockquote-only gating, no wholeNodeAll distinction — because its one
+// caller (package reflow's break-candidate filtering) asks a different
+// question than isBoundaryLine does: not "is this existing line a
+// marker" but "could putting this text at a fresh line start create
+// one". The following text may itself be split again further along, so
+// only its leading bytes can be judged, and a false positive costs one
+// declined break candidate while a false negative costs idempotency.
+//
+// mdx-import-export is deliberately absent: its rule fires only when
+// *every* line of a paragraph matches, which a single relocated break
+// cannot bring about, and "export"/"import" are ordinary enough English
+// words that refusing to start a line with one would be a real
+// line-quality cost for no correctness gain.
+var markerLineStartRE = regexp.MustCompile(`^[ \t]*(:::|\{\{[<%]|\$\$|\+\+\+|\{[^{}]*\}|\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\])`)
+
+// MarkerLineStart reports whether s, placed at the start of a fresh
+// output line, could be recognized as a dialect marker by the skip-list
+// — turning what was mid-paragraph prose into an immovable boundary
+// line, or the whole paragraph into a skipped node, on the next parse.
+//
+// Reflow must not create one: a marker that only exists because of where
+// a line break landed makes the second formatting pass see a different
+// paragraph structure than the first, which is an idempotency break.
+// Found by FuzzFormat on "> >\xc9y, `2XA :::0" in sentence mode at
+// MaxWidth 8: the width cut put ":::0" at a line start, where the next
+// pass read it as a Docusaurus directive fence and stopped joining
+// across it, producing different output on the second pass than the
+// first.
+func MarkerLineStart(s string) bool {
+	return markerLineStartRE.MatchString(s)
+}
+
 // isBoundaryLine reports whether a single trimmed line, in a paragraph
 // nested inBlockquote or not, matches a lineBoundary skip rule.
 func isBoundaryLine(content string, inBlockquote bool) bool {

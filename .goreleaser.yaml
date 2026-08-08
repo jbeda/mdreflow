@@ -1,0 +1,65 @@
+# goreleaser configuration for mdreflow (docs/design.md, M5 "ship").
+# Validate locally with: goreleaser check
+version: 2
+
+project_name: mdreflow
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: mdreflow
+    main: ./cmd/mdreflow
+    binary: mdreflow
+    env:
+      # Pure Go, no cgo: the binaries must run on any machine of the
+      # target platform without a matching libc.
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      # Keep local filesystem paths out of the binary.
+      - -trimpath
+    ldflags:
+      # -s -w drops the symbol table and DWARF data; the -X values feed
+      # cmd/mdreflow's package-level version/commit/date vars, which
+      # --version prints. A plain "go build" leaves them at their
+      # dev/none/unknown defaults.
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
+
+archives:
+  - id: mdreflow
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  # v0.x: every release is a pre-release-grade API promise (design.md's
+  # versioning note), but not marked as a GitHub pre-release.
+  draft: false
+  prerelease: auto

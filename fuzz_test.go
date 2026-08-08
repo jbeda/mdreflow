@@ -753,16 +753,26 @@ func hasHardBreakDeclarationRisk(src []byte) bool {
 }
 
 // deriveOptions computes an mdreflow.Options from src's own bytes, so
-// FuzzFormat exercises all three modes and a spread of MaxWidth values
-// without a second fuzz parameter (which would require re-seeding every
-// existing corpus entry with a paired mode/width byte). The derivation is a
-// simple, deterministic hash of src: fuzzing mutates src, which mutates the
-// derived options right along with the content being formatted, so the
-// corpus ends up covering combinations organically. mode/width are always
-// derived into a combination Format accepts (MaxWidth forced to 0 whenever
-// mode comes out ModePara — see Options.MaxWidth's doc comment), since an
-// error here would always be a deriveOptions bug, never a Format bug worth
-// failing the fuzz target over.
+// FuzzFormat exercises all three modes, a spread of MaxWidth values, and
+// both typography flags without a second fuzz parameter (which would
+// require re-seeding every existing corpus entry with a paired
+// mode/width/typography byte). The derivation is a simple, deterministic
+// hash of src: fuzzing mutates src, which mutates the derived options
+// right along with the content being formatted, so the corpus ends up
+// covering combinations organically. Every field is always derived into a
+// combination Format accepts (MaxWidth forced to 0 whenever mode comes out
+// ModePara — see Options.MaxWidth's doc comment), since an error here
+// would always be a deriveOptions bug, never a Format bug worth failing
+// the fuzz target over.
+//
+// The typography bits come off two different bytes of the same hash than
+// mode and width do, so all four combinations (neither flag, either one,
+// both) occur across the corpus independently of which mode a given input
+// happens to select. Typography weakens no invariant the fuzz target
+// checks except render preservation, which FuzzFormat compensates for by
+// normalizing the substitutions back out of both sides of its comparison
+// (see normalizeForRender in format_test.go); idempotency, no-panic, and
+// structural correctness are still enforced unconditionally.
 func deriveOptions(src []byte) mdreflow.Options {
 	var h uint32
 	for _, b := range src {
@@ -773,7 +783,14 @@ func deriveOptions(src []byte) mdreflow.Options {
 	if mode != mdreflow.ModePara {
 		width = int((h >> 8) % 121) // 0..120: spans "unbounded"/"default" (0) through comfortably wider than most test prose.
 	}
-	return mdreflow.Options{Mode: mode, MaxWidth: width}
+	var typo mdreflow.Typography
+	if (h>>16)&1 == 1 {
+		typo |= mdreflow.SmartQuotes
+	}
+	if (h>>17)&1 == 1 {
+		typo |= mdreflow.Ellipses
+	}
+	return mdreflow.Options{Mode: mode, MaxWidth: width, Typography: typo}
 }
 
 // FuzzFormat fuzzes Format across every testdata fixture as seed corpus
@@ -867,9 +884,18 @@ func FuzzFormat(f *testing.F) {
 		// TestHardBreakStyleMatrix. To keep the fuzz oracle simple and
 		// still meaningful, compare with the same whitespace
 		// normalization format_test.go uses.
+		//
+		// When deriveOptions turned on a typography flag, the comparison
+		// additionally folds the substitutions back out of both sides
+		// (normalizeForRender). That is not a fourth "risky shape"
+		// escape hatch: typography is design.md's one *intended*
+		// render-preservation exception, so the honest check is
+		// "nothing changed except what typography is licensed to
+		// change", not "skip the check entirely" — see
+		// normalizeForRender's doc comment.
 		if !hasRenderRiskyShape(src) && !hasRenderRiskyShape(out) {
-			before := normalizeWhitespace(stripGoldmarkMetaError(renderHTML(t, src)))
-			after := normalizeWhitespace(stripGoldmarkMetaError(renderHTML(t, out)))
+			before := normalizeForRender(stripGoldmarkMetaError(renderHTML(t, src)), opts)
+			after := normalizeForRender(stripGoldmarkMetaError(renderHTML(t, out)), opts)
 			if before != after {
 				t.Fatalf("rendered HTML changed.\nsrc: %q\nout: %q\n--- before ---\n%s\n--- after ---\n%s", src, out, before, after)
 			}

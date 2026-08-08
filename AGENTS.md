@@ -31,6 +31,11 @@ Rule of thumb: identifiers → gopls; prose and literals → grep.
 
 gopls also ships an MCP server (`gopls mcp`) if you'd rather wire these in as first-class tools.
 
+## Subagents
+
+If you spawn a subagent for implementation work in this repo, use Sonnet.
+Do not escalate to Opus on your own initiative (Joe finds Opus 5 too verbose); reserve it for cases where Joe asked.
+
 ## Verify before declaring done
 
 ```

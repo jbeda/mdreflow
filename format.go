@@ -11,6 +11,7 @@ import (
 	"github.com/jbeda/mdreflow/internal/gm"
 	"github.com/jbeda/mdreflow/internal/reflow"
 	"github.com/jbeda/mdreflow/internal/segment"
+	"github.com/jbeda/mdreflow/internal/typography"
 )
 
 // Format reflows src according to opts and returns the result. Everything
@@ -18,9 +19,10 @@ import (
 // lists, blockquotes, tables, and so on — is returned byte-for-byte (see
 // docs/design.md's "Guarantees" section).
 //
-// Format returns an error, without partial output, if opts is invalid or
-// selects behavior not implemented yet: see the doc comments on Mode,
-// Options.MaxWidth, and Options.Typography.
+// Format returns an error, without partial output, if opts is invalid:
+// see the doc comments on Mode and Options.MaxWidth. The one documented
+// exception to byte-for-byte pass-through of prose content is
+// Options.Typography, which is off by default.
 func Format(src []byte, opts Options) ([]byte, error) {
 	if err := validateOptions(opts); err != nil {
 		return nil, err
@@ -35,6 +37,7 @@ func Format(src []byte, opts Options) ([]byte, error) {
 	rOpts := reflow.Options{
 		Mode:                        reflow.Mode(opts.Mode),
 		MaxWidth:                    opts.MaxWidth,
+		Typography:                  typography.Typography(opts.Typography),
 		HardBreaks:                  reflow.HardBreakStyle(opts.HardBreaks),
 		StripSentenceTerminalBreaks: opts.StripSentenceTerminalBreaks,
 	}
@@ -69,10 +72,9 @@ func FormatReader(dst io.Writer, src io.Reader, opts Options) error {
 	return err
 }
 
-// validateOptions rejects any invalid option value or combination, and any
-// option combination not implemented yet, loudly and without partial
-// output — consistent with mdreflow's "loud, machine-legible behavior"
-// design principle for unattended/agent use.
+// validateOptions rejects any invalid option value or combination
+// loudly and without partial output — consistent with mdreflow's "loud,
+// machine-legible behavior" design principle for unattended/agent use.
 func validateOptions(opts Options) error {
 	switch opts.Mode {
 	case ModeSentence, ModePara, ModeWrap:
@@ -85,9 +87,6 @@ func validateOptions(opts Options) error {
 		// Rejecting loudly, rather than silently ignoring it, matches
 		// design.md's "loud, machine-legible behavior" principle.
 		return errors.New("mdreflow: MaxWidth must be 0 with ModePara (para mode always joins to a single line)")
-	}
-	if opts.Typography != 0 {
-		return errors.New("mdreflow: Typography not implemented (M5)")
 	}
 	return nil
 }

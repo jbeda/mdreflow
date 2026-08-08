@@ -23,6 +23,9 @@ type flags struct {
 	noGitignore                 bool
 	hardBreaks                  string
 	stripSentenceTerminalBreaks bool
+	smartQuotes                 bool
+	ellipses                    bool
+	version                     bool
 
 	set map[string]bool // flag name -> explicitly set on the command line
 }
@@ -53,6 +56,26 @@ func parseHardBreaks(s string) (mdreflow.HardBreakStyle, error) {
 	default:
 		return 0, fmt.Errorf("unsupported hard-breaks %q (want one of: br, spaces, backslash)", s)
 	}
+}
+
+// parseTypography turns a config file's typography: list into the
+// corresponding mdreflow.Typography bit set. An unrecognized value is a
+// loud error, matching package config's "unknown keys are a loud error"
+// philosophy: an agent that typos "smartquotes" should be told, not
+// silently given plain ASCII output.
+func parseTypography(list []string) (mdreflow.Typography, error) {
+	var t mdreflow.Typography
+	for _, v := range list {
+		switch v {
+		case "smart-quotes":
+			t |= mdreflow.SmartQuotes
+		case "ellipses":
+			t |= mdreflow.Ellipses
+		default:
+			return 0, fmt.Errorf("unsupported typography %q (want one of: smart-quotes, ellipses)", v)
+		}
+	}
+	return t, nil
 }
 
 // configCache memoizes upward config discovery (by starting directory)
@@ -141,7 +164,11 @@ func mergeOptions(f *flags, cfg *config.File, cfgDir string) (resolvedOptions, e
 			opts.HardBreaks = hb
 		}
 		if len(cfg.Typography) > 0 {
-			return r, fmt.Errorf("config: typography is not implemented yet (M5); remove the typography: key")
+			ty, err := parseTypography(cfg.Typography)
+			if err != nil {
+				return r, fmt.Errorf("config: %w", err)
+			}
+			opts.Typography = ty
 		}
 		opts.Abbreviations = append(opts.Abbreviations, cfg.Abbreviations...)
 		r.excludePatterns = cfg.Exclude
@@ -165,6 +192,21 @@ func mergeOptions(f *flags, cfg *config.File, cfgDir string) (resolvedOptions, e
 		}
 		opts.HardBreaks = hb
 	}
+	// Each typography flag is merged on the isSet pattern rather than
+	// assigned unconditionally the way stripSentenceTerminalBreaks is
+	// below, because typography (unlike that option) has a config-file
+	// equivalent: an explicit --smart-quotes=false must be able to turn
+	// off what a discovered .mdreflow.yaml turned on, and an omitted
+	// flag must leave the config's value alone.
+	if f.isSet("smart-quotes") {
+		opts.Typography = setTypographyBit(opts.Typography, mdreflow.SmartQuotes, f.smartQuotes)
+	}
+	if f.isSet("ellipses") {
+		opts.Typography = setTypographyBit(opts.Typography, mdreflow.Ellipses, f.ellipses)
+	}
+
+	// stripSentenceTerminalBreaks has no config-file key, so its flag
+	// value is simply the answer.
 	opts.StripSentenceTerminalBreaks = f.stripSentenceTerminalBreaks
 
 	if opts.Mode == mdreflow.ModePara && opts.MaxWidth != 0 {
@@ -173,4 +215,12 @@ func mergeOptions(f *flags, cfg *config.File, cfgDir string) (resolvedOptions, e
 
 	r.opts = opts
 	return r, nil
+}
+
+// setTypographyBit returns t with bit set or cleared according to on.
+func setTypographyBit(t, bit mdreflow.Typography, on bool) mdreflow.Typography {
+	if on {
+		return t | bit
+	}
+	return t &^ bit
 }

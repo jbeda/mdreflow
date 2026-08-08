@@ -7,16 +7,15 @@ import (
 	"github.com/jbeda/mdreflow"
 )
 
-// TestFormatRejectsUnimplemented checks that every still-unimplemented or
-// invalid option combination fails loudly, per Format's doc comment,
-// instead of silently ignoring the option or producing wrong output.
-func TestFormatRejectsUnimplemented(t *testing.T) {
+// TestFormatRejectsInvalidOptions checks that every invalid option value
+// or combination fails loudly, per Format's doc comment, instead of
+// silently ignoring the option or producing wrong output.
+func TestFormatRejectsInvalidOptions(t *testing.T) {
 	cases := []struct {
 		name string
 		opts mdreflow.Options
 	}{
 		{"para mode with max width", mdreflow.Options{Mode: mdreflow.ModePara, MaxWidth: 80}},
-		{"typography", mdreflow.Options{Typography: mdreflow.SmartQuotes}},
 		{"unknown mode", mdreflow.Options{Mode: mdreflow.Mode(99)}},
 	}
 	for _, tc := range cases {
@@ -29,9 +28,10 @@ func TestFormatRejectsUnimplemented(t *testing.T) {
 	}
 }
 
-// TestFormatAcceptsModesAndMaxWidth checks that para mode, wrap mode, and
-// sentence-mode MaxWidth — all implemented in M3 — no longer error.
-func TestFormatAcceptsModesAndMaxWidth(t *testing.T) {
+// TestFormatAcceptsEveryDocumentedOption checks that every option
+// docs/design.md's library API lists is accepted — the modes and
+// MaxWidth (M3) and the typography flags (M5).
+func TestFormatAcceptsEveryDocumentedOption(t *testing.T) {
 	cases := []struct {
 		name string
 		opts mdreflow.Options
@@ -40,6 +40,9 @@ func TestFormatAcceptsModesAndMaxWidth(t *testing.T) {
 		{"wrap mode", mdreflow.Options{Mode: mdreflow.ModeWrap}},
 		{"wrap mode zero width", mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 0}},
 		{"sentence mode max width", mdreflow.Options{MaxWidth: 40}},
+		{"smart quotes", mdreflow.Options{Typography: mdreflow.SmartQuotes}},
+		{"ellipses", mdreflow.Options{Typography: mdreflow.Ellipses}},
+		{"both typography flags", mdreflow.Options{Typography: mdreflow.SmartQuotes | mdreflow.Ellipses}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

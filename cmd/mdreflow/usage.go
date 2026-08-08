@@ -81,19 +81,45 @@ Configuration (.mdreflow.yaml):
   the default. Unknown keys are a loud error (exit 2) rather than a
   silent no-op — a typo'd key should not be ignored.
 
-    mode: sentence        # sentence | para | wrap
+    mode: sentence          # sentence | para | wrap
     max-width: 0
-    hard-breaks: br        # br | spaces | backslash
+    typography: []          # any of: smart-quotes, ellipses (default: none)
+    hard-breaks: br         # br | spaces | backslash
     abbreviations:          # additions to the built-in list
       - "et al."
     exclude:                # gitignore syntax, matched like a .gitignore
       - "CHANGELOG.md"
       - "generated/**"
 
-  typography: is a recognized key (reserved for smart quotes/ellipses)
-  but not implemented yet — a non-empty typography: list is a config
-  error (exit 2). There is no --smart-quotes/--ellipses flag for the
-  same reason: this build has nothing to wire them to.
+  An unrecognized typography: value is a config error (exit 2), the same
+  as an unrecognized mode:. --smart-quotes and --ellipses override the
+  config key one flag at a time, in both directions: --smart-quotes=false
+  turns off what a config file turned on.
+
+Typography (off by default):
+
+  --smart-quotes rewrites straight quotes to curly ones using the
+  standard open/close heuristic: a quote after start-of-line,
+  whitespace, or opening punctuation opens; a quote after a word
+  character or closing punctuation closes; an apostrophe inside a word
+  ("don't", "the dog's") and a decade's elided century ("the '90s")
+  become a right single quote.
+
+  --ellipses rewrites exactly three periods to a single "…" character.
+  A longer run of periods is left alone.
+
+  Both apply to paragraph prose only. They never touch an inline code
+  span, a link or its destination, an autolink, inline math, a footnote
+  reference, an inline shortcode or {expr} span, or an inline HTML/JSX
+  tag — and never touch a skipped construct (code block, front matter,
+  table, raw HTML block) at all, since reflow does not process those.
+
+  These are the only options that change how a document renders. Every
+  other transformation mdreflow makes is render-preserving; typography
+  is deliberately opt-in for exactly that reason, since Markdown headed
+  for prompts, diffs, and tooling usually wants plain ASCII. Formatting
+  stays idempotent either way: running mdreflow twice with the same
+  flags produces the same bytes as running it once.
 
 Excludes:
 
