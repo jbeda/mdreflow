@@ -533,7 +533,15 @@ func lineStart(source []byte, pos int) int {
 // protected on the theory that it must be a footnote — turned out to
 // still be consumed as a plain LinkReferenceDefinition (Label "^0"),
 // confirmed by direct AST inspection.
-var bareLinkRefDefLineRE = regexp.MustCompile(`^[ \t>]*\[[^\[\]][^\[\]]*\]:[ \t]*$`)
+// The optional leading backslash: package reflow escapes exactly this
+// line shape when its own emission produces one ("\[label]:"), and a
+// guard keyed on the preceding line's raw bytes must give the same
+// verdict for the escaped spelling it will see on the very next pass —
+// otherwise the paragraph it protects is skipped on pass 1 (quote left
+// straight) and reflowed on pass 2 (quote curled): found by FuzzFormat
+// on "[^0]:\n+ 0\"00" (seed 9dd134290a276e11), an idempotency flip in
+// the guard's own verdict rather than in anything the guard looks at.
+var bareLinkRefDefLineRE = regexp.MustCompile(`^[ \t>]*\\?\[[^\[\]][^\[\]]*\]:[ \t]*$`)
 
 // isSelfCompleteLinkRefDef reports whether lrd (a real
 // *ast.LinkReferenceDefinition, confirmed by its caller) is fully specified
