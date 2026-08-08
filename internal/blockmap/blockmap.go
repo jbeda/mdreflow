@@ -394,6 +394,24 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// the definition's own scan may depend on — never changes shape.
 		return Paragraph{}, true
 	}
+	if startsWithTitleOpenerUnderLRDShapedLine(source, start0, lines.At(0)) {
+		// Raw-byte guard, deliberately independent of AST sibling order:
+		// goldmark hoists LinkReferenceDefinition nodes ahead of the
+		// Paragraph in the sibling list, so "previous sibling" can point
+		// at a definition from a LATER source line while the definition
+		// whose title scan actually reaches into this paragraph sits
+		// directly above it in the raw source — found by FuzzFormat on
+		// "[0]:0\n\"\n\"[^0002]:0 \"\"" (seed 001b3577df0c50f6), where the
+		// quote-only paragraph between two definitions is simultaneously
+		// the first definition's absorbed multi-line title, and curling
+		// its quote destroyed that title on reparse (the AST-adjacency
+		// guards above saw only the second definition, which looks
+		// self-contained). A paragraph whose first content byte is a
+		// title opener directly under (no blank line) any LRD-shaped raw
+		// line is inside the absorption hazard zone whatever the node
+		// order says, and passes through untouched.
+		return Paragraph{}, true
+	}
 	if precededByBareLinkRefDefLine(source, start0) {
 		// Fuzz-found render-preservation hazard in the same family as
 		// this file's other link-reference-definition defenses
@@ -699,6 +717,42 @@ func registeredRefs(src []byte) []string {
 		out = append(out, string(r.Label())+"\x00"+string(r.Destination())+"\x00"+string(r.Title()))
 	}
 	return out
+}
+
+// lrdShapedLineRE matches a raw source line that opens like a link
+// reference definition — optional blockquote/whitespace prefix, optional
+// backslash (reflow's own escape of this shape — see bareLinkRefDefLineRE
+// for why the escaped spelling must verdict identically), "[any label]:",
+// anything after. Any label, caret-leading included: to mdreflow's parser
+// configuration those are ordinary definitions (see linkRefDefOpenerRE in
+// package reflow).
+var lrdShapedLineRE = regexp.MustCompile(`^[ \t>]*\\?\[[^\[\]]*\]:`)
+
+// startsWithTitleOpenerUnderLRDShapedLine reports whether the paragraph
+// whose first content segment is seg sits directly (no blank line) under
+// an LRD-shaped raw source line AND begins with a title-opener character
+// (a double quote, single quote, or open paren) — the shape a preceding
+// definition's title scan can absorb across the line boundary. See the
+// call site in build for the node-order hazard this closes.
+func startsWithTitleOpenerUnderLRDShapedLine(source []byte, contentStart int, seg text.Segment) bool {
+	if seg.Start >= len(source) {
+		return false
+	}
+	switch source[seg.Start] {
+	case '"', '\'', '(':
+	default:
+		return false
+	}
+	ls := lineStart(source, contentStart)
+	if ls == 0 {
+		return false
+	}
+	prevStart := lineStart(source, ls-1)
+	prevLine := bytes.TrimRight(source[prevStart:ls], "\r\n")
+	if len(bytes.Trim(prevLine, " \t")) == 0 {
+		return false
+	}
+	return lrdShapedLineRE.Match(prevLine)
 }
 
 // precededByBlankLine reports whether the raw physical source line
