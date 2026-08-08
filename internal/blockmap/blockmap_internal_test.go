@@ -438,3 +438,31 @@ func TestMarkerLineStart(t *testing.T) {
 		})
 	}
 }
+
+// TestParenGuardRequiresBracket pins issue #14: the paren arm of build's
+// link-hazard guard only fires when a "[" exists somewhere in the
+// paragraph — every hazard it guards (inline link destination, definition
+// title) needs one, and reflow never creates one. Bracket-free prose with
+// a parenthetical spanning a line break must stay reflow-eligible.
+func TestParenGuardRequiresBracket(t *testing.T) {
+	cases := []struct {
+		name     string
+		src      string
+		eligible bool // does Paragraphs return a reflow-eligible paragraph?
+	}{
+		{"paren only, spanning", "A torus (a portal\nyou pass through) here. Second sentence.\n", true},
+		{"bracket spanning", "A torus [a portal\nyou pass through] here. Second sentence.\n", false},
+		{"bare def opener", "[0]:\n0\n\"\"0\n", false},
+		{"def opener mid-paragraph", "[! [0]:0\n0\n", false},
+		{"def title spanning", "[label]: /url (title\ncontinues) here. Second sentence.\n", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := []byte(tc.src)
+			doc := gm.New().Parser().Parse(text.NewReader(b))
+			if got := len(Paragraphs(doc, b)) > 0; got != tc.eligible {
+				t.Errorf("eligible = %v, want %v", got, tc.eligible)
+			}
+		})
+	}
+}

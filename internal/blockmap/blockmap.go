@@ -260,7 +260,8 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// contained in the front-matter block.
 		return Paragraph{}, true
 	}
-	if hasPossibleLinkRefDefOpener(trimmed) || hasUnbalancedBracket(trimmed) || hasUnbalancedParen(trimmed) {
+	if hasPossibleLinkRefDefOpener(trimmed) || hasUnbalancedBracket(trimmed) ||
+		(hasUnbalancedParen(trimmed) && hasAnyBracket(trimmed)) {
 		// Fuzz-found content-loss hazard family, more severe than (and
 		// broader than) reflow.isLinkRefDefOpener's per-output-line
 		// defense: a CommonMark link reference definition's label,
@@ -768,6 +769,26 @@ func hasUnbalancedBracket(trimmedLines []string) bool {
 // the original's link to a literal '"' character.
 func hasUnbalancedParen(trimmedLines []string) bool {
 	return hasUnclosedDelimiterAcrossLine(trimmedLines, '(', ')')
+}
+
+// hasAnyBracket reports whether any of trimmedLines contains a "[" at
+// all. It gates hasUnbalancedParen at build's call site (issue #14): every
+// hazard the paren arm exists for — an inline link's "[text](destination"
+// or a definition's "[label]: /url (title" spanning a line break — needs a
+// "[" to get started, and reflow never creates one. Without this gate,
+// ordinary hard-wrapped prose with a parenthetical spanning a line break
+// ("A torus (a portal\nyou pass through) here.") was silently skipped:
+// measured by the reporter at 692 paragraphs (3,980 lines) over a real
+// 263-file docset, versus 17 skips for the bracket hazard the guard is
+// actually about. Any "[" anywhere in the paragraph keeps the
+// conservative skip (their measured 345 mixed cases stay skipped).
+func hasAnyBracket(trimmedLines []string) bool {
+	for _, line := range trimmedLines {
+		if strings.Contains(line, "[") {
+			return true
+		}
+	}
+	return false
 }
 
 // hasUnclosedDelimiterAcrossLine reports whether trimmedLines, taken
