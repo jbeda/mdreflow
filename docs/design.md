@@ -86,6 +86,40 @@ into the source, which is all we need. From the AST we derive:
   Break points never land inside these; a span longer than any width limit simply overflows.
 - **Skip ranges**: everything below.
 
+### Convergence: reflow runs to fixpoint
+
+A single pipeline pass plans breaks from the *pre*-reflow parse, but the
+guarantees are judged on the *post*-reflow reparse. Fuzzing showed a persistent
+family of corners where the two disagree: the emitted text parses slightly
+differently than the planner assumed (an escape changes code-span pairing, a
+consumed double space changes a sentence-boundary verdict, a join changes a
+link-reference-definition skip decision), so a second run lands differently
+than the first.
+
+Rather than enumerating every such shape, `Format` makes idempotency
+structural: it runs the pipeline, then re-runs it on its own output until the
+output is stable, up to a small cap (4 passes; in practice the first re-run
+already matches). If the cap is hit without convergence — including a cycle
+where two outputs alternate — the paragraphs that are still changing fall back
+to their **original source text**, emitted byte-for-byte like any skipped
+construct, and the stable remainder keeps its reflowed form. "We could not
+safely flow this" is expressed as a no-op, never as churn.
+
+Two things iteration deliberately does *not* do:
+
+- It does not excuse planner bugs. Render-preservation hazards (a split landing
+  a table-delimiter-shaped line at line start, say) converge happily to wrong
+  output; those are planner obligations (line-start hazard filtering) and are
+  fixed at the root, with the fuzz render oracle as referee.
+- It is not a license for sloppy single-pass behavior. Each known
+  non-convergence shape gets a root-cause fix; the iteration is the backstop
+  that turns unknown shapes from correctness bugs into (at worst) unreflowed
+  paragraphs.
+
+Cost: the common case is exactly two passes (one to reflow, one to confirm
+stability). Post the width-measurement fix a pass is milliseconds even on
+large documents; the benchmark suite pins this.
+
 ### Dialect handling: the skip-list
 
 mdreflow targets one permissive superset of dialects ("do our best on
@@ -195,9 +229,20 @@ is its purpose).
 
 ## Guarantees
 
-Stated as testable promises, enforced by the harness in [Testing](#testing):
+Stated as testable promises, enforced by the harness in [Testing](#testing).
 
-1. **Idempotency.** `Format(Format(x)) == Format(x)` for all inputs and option sets.
+**Input domain: valid UTF-8.** `Format` rejects invalid UTF-8 with the typed
+error `ErrInvalidUTF8` and writes nothing; the guarantees below are stated
+over inputs it accepts. (The CLI already refused such files via its binary
+sniff, but the sniff only reads the first 8 KB — the library check is total.
+Markdown is text; reflowing bytes that have no character interpretation was
+never meaningful, and fuzzing spent most of its findings on inputs no user
+could produce with a text editor.)
+
+1. **Idempotency.** `Format(Format(x)) == Format(x)` for every accepted input
+   and option set. This is structural, not aspirational: `Format` runs to
+   fixpoint and falls back to the original text for anything that will not
+   converge (see [Convergence](#convergence-reflow-runs-to-fixpoint)).
 2. **Render preservation.** Reflow does not change the rendered document,
    verified by comparing goldmark HTML output before and after. Documented
    exceptions: typography flags, hard-break style normalization (renders the
@@ -235,6 +280,10 @@ type Options struct {
 
 func Format(src []byte, opts Options) ([]byte, error)
 func Check(src []byte, opts Options) (bool, error)
+
+// Invalid UTF-8 input; returned (wrapped) by Format/Check/FormatReader.
+// Callers branch with errors.Is.
+var ErrInvalidUTF8 = errors.New("input is not valid UTF-8")
 
 // Convenience wrapper; buffers the full input (Markdown is not streamable —
 // e.g. a reference definition on the last line affects the first).
@@ -329,6 +378,7 @@ The wrapping logic is heuristic; a deep test corpus is the only durable defense 
    golden rules, cases our own).
 5. **Exclude parity**: our gitignore matching vs. `git check-ignore` output on a synthetic tree.
 6. **Fuzzing**: Go native fuzzing on `Format` with crash, idempotency, and render preservation as oracles.
+   Invalid-UTF-8 inputs assert only the `ErrInvalidUTF8` refusal (that path must still never panic); the reflow oracles run on accepted inputs.
 
 ## Dependencies
 
