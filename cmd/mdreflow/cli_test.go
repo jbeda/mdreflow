@@ -564,9 +564,12 @@ func TestRunHardBreaksFlag(t *testing.T) {
 // this), mentioning every flag, the exit-code contract, and the config
 // file format.
 func TestRunHelp(t *testing.T) {
-	out, _, code := runCLI(t, []string{"--help"}, "")
+	out, errOut, code := runCLI(t, []string{"--help"}, "")
 	if code != exitOK {
 		t.Fatalf("exit=%d, want %d", code, exitOK)
+	}
+	if errOut != "" {
+		t.Errorf("--help wrote to stderr: %q", errOut)
 	}
 	for _, want := range []string{"-mode", "-max-width", "-check", "-diff", "-stdout", "-force", "-config", "-no-gitignore", "-hard-breaks", "-smart-quotes", "-ellipses", "-version", "Exit codes", "mdreflow.yaml", "Typography", "Examples"} {
 		if !strings.Contains(out, want) {

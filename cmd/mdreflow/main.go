@@ -55,16 +55,17 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// Parse errors already name the offending flag; a pointer to --help
 	// beats re-dumping the full usage text on stderr. Explicit --help gets
 	// the full text on stdout and exits 0 — it is not an error, and agents
-	// branch on that.
-	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: mdreflow [flags] [path ...]  (run 'mdreflow --help' for full documentation)")
-	}
+	// branch on that. fs.Usage must be a no-op: the flag package calls it
+	// on --help too (before Parse returns ErrHelp), which would put a
+	// stray usage line on stderr above the real help text.
+	fs.Usage = func() {}
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			printUsage(stdout, fs)
 			return exitOK
 		}
+		fmt.Fprintln(stderr, "usage: mdreflow [flags] [path ...]  (run 'mdreflow --help' for full documentation)")
 		return exitUsage
 	}
 	fs.Visit(func(fl *flag.Flag) { ff.set[fl.Name] = true })

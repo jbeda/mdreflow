@@ -36,7 +36,8 @@ Paths:
   stdin and writes the formatted result to stdout: a pipe/editor-filter
   mode with no in-place writing, no excludes, and no config-file
   discovery from a target file (config is discovered from the current
-  directory instead).
+  directory instead). --check and --diff work here too, reporting the
+  input as "-".
 
 Flags:
 
@@ -94,7 +95,8 @@ Configuration (.mdreflow.yaml):
   An unrecognized typography: value is a config error (exit 2), the same
   as an unrecognized mode:. --smart-quotes and --ellipses override the
   config key one flag at a time, in both directions: --smart-quotes=false
-  turns off what a config file turned on.
+  turns off what a config file turned on. These are the only config keys;
+  --strip-sentence-terminal-breaks is flag-only.
 
 Typography (off by default):
 

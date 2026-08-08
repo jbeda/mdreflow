@@ -9,7 +9,13 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
-Nothing yet.
+### Fixed
+
+- `--help` no longer prints a stray one-line usage pointer to stderr above the full help text; stderr is now empty and the full documentation goes to stdout alone.
+
+### Changed
+
+- Help text now documents that `--check`/`--diff` work in stdin mode (reporting the input as `-`) and that `--strip-sentence-terminal-breaks` is flag-only with no config-file key.
 
 ## v0.1.1 (2026-08-08)
 
