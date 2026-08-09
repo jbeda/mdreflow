@@ -1473,7 +1473,11 @@ var htmlBlockAnyOpenerRE = regexp.MustCompile(`(?i)^(<[A-Za-z][A-Za-z0-9-]*( [^<
 // history block,
 // third bullet, for the fuzz find). Escaping the bracket renders as the
 // same literal text the paragraph showed before.
-var bareLinkRefDefOpenerLineRE = regexp.MustCompile(`^[ \t]{0,3}\[[^\[\]]*\]:[ \t\f\v]*$`)
+// The trailing class includes "\r": CR is trailing whitespace to
+// goldmark's definition parser ("[0]: \r" followed by a destination line
+// still forms a definition, confirmed directly), the same
+// goldmark-whitespace-alignment family as isTableDelimiterRowShaped's CR.
+var bareLinkRefDefOpenerLineRE = regexp.MustCompile(`^[ \t]{0,3}\[[^\[\]]*\]:[ \t\f\v\r]*$`)
 
 // backtickFenceStart and tildeFenceStart match a fenced-code-block opener's
 // leading run of 3+ backticks or tildes, so isFenceOpener can inspect what
@@ -1937,7 +1941,13 @@ func isSetextUnderline(line string) bool {
 		switch s[i] {
 		case '=':
 			count++
-		case ' ', '\t':
+		case ' ', '\t', '\r':
+			// CR is trailing whitespace to goldmark ("A\n=\r" is a real
+			// heading, confirmed directly), same whitespace-class family
+			// as isTableDelimiterRowShaped's CR. Accepting it anywhere in
+			// the line (goldmark itself rejects an *interior* CR, "=\r=")
+			// over-matches, at the usual documented cost: one
+			// superfluous, identically-rendering escape.
 		default:
 			return false
 		}
@@ -1946,8 +1956,16 @@ func isSetextUnderline(line string) bool {
 }
 
 // isTableDelimiterRowShaped reports whether line is shaped like a GFM
-// table delimiter row: once trimmed of leading/trailing space/tab, it
-// contains only "-", ":", "|", spaces, and tabs, with at least one "-".
+// table delimiter row: once trimmed of leading/trailing whitespace, it
+// contains only "-", ":", "|", spaces, tabs, and CRs, with at least one
+// "-". CR is in the class because it is in goldmark's (util.IsSpace-based)
+// cell-padding whitespace — "|-\r|" is a real delimiter row to goldmark,
+// found by FuzzFormat on "C009019\n , z0cA z0 |-\r| 10" (seed
+// d994c9196409b0fd), where a width-constrained split landed "|-\r|" at
+// line start unescaped and a table formed on reparse. Same
+// goldmark-whitespace-alignment family as the four v0.1.4 finds
+// (design.md: when a scanner disagrees with goldmark about whitespace,
+// goldmark wins).
 // Deliberately crude and permissive, matching GFM's own leniency (a bare
 // "-|" or ":-" already qualifies, and spaces are allowed *within* the
 // shape, not just at its edges — e.g. "-- |" is still a valid delimiter
@@ -1961,8 +1979,8 @@ func isSetextUnderline(line string) bool {
 // that one decides whether to skip an assertion, this one decides whether
 // to change output.
 func isTableDelimiterRowShaped(line string) bool {
-	trimmed := strings.Trim(line, " \t")
-	return trimmed != "" && strings.ContainsRune(trimmed, '-') && strings.Trim(trimmed, "-:| \t") == ""
+	trimmed := strings.Trim(line, " \t\r")
+	return trimmed != "" && strings.ContainsRune(trimmed, '-') && strings.Trim(trimmed, "-:| \t\r") == ""
 }
 
 // attachMarker appends marker directly after s, unless doing so would

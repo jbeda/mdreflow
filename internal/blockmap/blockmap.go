@@ -559,7 +559,11 @@ var footnoteDefFirstLineRE = regexp.MustCompile(`^\\?\[\^[^\[\]]*\]:`)
 // degenerate enough that the over-skip is free.
 var orphanDefCloserRE = regexp.MustCompile(`^(?:\\.|[^\[\]\\])*\]:`)
 
-var bareCaretOpenerRE = regexp.MustCompile(`(^|[ \t])[ \t>]*\\?\[\^[^\[\]]*\]:[ \t]*$`)
+// The trailing class includes "\r": CR is trailing whitespace to
+// goldmark (same whitespace-alignment family as reflow's
+// bareLinkRefDefOpenerLineRE and isTableDelimiterRowShaped), so a bare
+// caret opener with a trailing CR is still a bare caret opener.
+var bareCaretOpenerRE = regexp.MustCompile(`(^|[ \t])[ \t>]*\\?\[\^[^\[\]]*\]:[ \t\r]*$`)
 
 // inLinkRefDefZone reports whether the paragraph whose trimmed lines are
 // trimmed, starting at contentStart, sits in design.md's link-reference-

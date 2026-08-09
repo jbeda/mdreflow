@@ -418,8 +418,8 @@ func hasTableAdjacentSetextLine(src []byte) bool {
 // an earlier, stricter version of this check (space/tab only trimmed at
 // the edges, not allowed inside the shape) missed it).
 func isTableDelimiterRowShaped(line []byte) bool {
-	trimmed := bytes.Trim(line, " \t")
-	return len(trimmed) > 0 && bytes.ContainsRune(trimmed, '-') && len(bytes.Trim(trimmed, "-:| \t")) == 0
+	trimmed := bytes.Trim(line, " \t\r")
+	return len(trimmed) > 0 && bytes.ContainsRune(trimmed, '-') && len(bytes.Trim(trimmed, "-:| \t\r")) == 0
 }
 
 // hasFreshTableAdjacency conservatively reports whether b has a

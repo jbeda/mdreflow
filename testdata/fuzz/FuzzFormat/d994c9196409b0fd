@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("C009019\n , z0cA z0 |-\r| 10")
