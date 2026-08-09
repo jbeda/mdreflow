@@ -573,7 +573,7 @@ func TestCodeSpanBracketsDoNotArmGuards(t *testing.T) {
 		{"code-span bracket spanning a break", "Queues N jobs\n(matrix on `runs-on: [self-hosted,\n<label>]`), analogous. Second.\n", true},
 		{"code span itself spans the break", "Text with `code [span\nacross` lines here. Second sentence.\n", true},
 		// An unmatched run opens no code span, so this bracket is outside one
-		// and keeps whatever behaviour the guards already gave it.
+		// and keeps whatever behavior the guards already gave it.
 		{"unmatched backtick leaves the bracket outside any span", "Text with `unclosed [bracket\nand more. Second sentence.\n", false},
 		{"backtick run length must match to close", "A ``x `y` [z\nw`` here. Second sentence.\n", true},
 		{"real destination outside a code span still arms", "See [t](/a\nb) and `arr[0]` here. Second one.\n", false},
