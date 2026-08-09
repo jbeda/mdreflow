@@ -37,6 +37,7 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ### Fixed
 
+- Trailing double spaces inside a code span that closes on a later marker line (a `:::` fence, say) are no longer treated as a hard break: they are span content, and normalizing them wrote a literal `<br>` into the rendered code. Fuzz-found on pathological input; v0.1.4 renders it corrupted, while the render backstop above already reduced it to a missed reflow before this root fix.
 - A paragraph is no longer skipped just because a code span contains a URL (`` `oci://ghcr.io/org/chart` ``), which is how documentation names a registry or endpoint (#29, contributed by Karl Isenberg).
   The backtick-in-bare-URL guard now requires the URL to start *before* the backtick, which is the only order in which linkify can swallow one.
 - A paragraph whose link text or destination spans a line break is no longer skipped unless the paragraph could actually form a link reference definition (#18, contributed by Karl Isenberg).

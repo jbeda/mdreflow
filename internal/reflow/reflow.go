@@ -190,6 +190,19 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 		if len(curLines) == 0 && marker == "" {
 			return
 		}
+		// The cluster's final line boundary can sit inside a code span
+		// that reaches past the cluster — across a Boundary line into
+		// the rest of the paragraph — in which case its trailing
+		// whitespace is span *content*, not a hard-break spelling
+		// (insideCodeSpanAfterLine computes this over ALL paragraph
+		// lines, boundaries included, so the last frag's
+		// trailingProtected already knows). Found by FuzzFormat on
+		// "``  \n:::``" (seed a2b98c8b49e6b07e): the span opens on line
+		// 1 and closes on the ::: boundary line, so the cluster is line
+		// 1 alone and the join resolves nothing; treating its trailing
+		// double space as a break wrote a literal "<br>" into the
+		// rendered code content.
+		insideSpan := curLines[len(curLines)-1].trailingProtected
 		text := joinClusterLines(curLines, marker != "")
 		curLines = nil
 		if marker == "" {
@@ -210,11 +223,12 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 			// per-line calls use: a paragraph-final backslash or double
 			// space is NOT a break (a lone "\" document must stay a lone
 			// "\" — seed 577e36abd20bf697 pinned the regression from an
-			// earlier hardcoded false here), while the br-tag form
-			// normalizes even paragraph-finally, exactly as pass 2's
-			// per-line pass would. insideSpan=false matches the per-line
-			// call for a line whose span context the join has resolved.
-			if m, rest := detectHardBreak(text, opts, lastCluster, false); m != "" {
+			// earlier hardcoded false here). The br-tag form normalizes
+			// even paragraph-finally, exactly as pass 2's per-line pass
+			// would; insideSpan carries the final line's span context,
+			// which the join resolves for spans within the cluster but
+			// cannot resolve for one reaching past it (see above).
+			if m, rest := detectHardBreak(text, opts, lastCluster, insideSpan); m != "" {
 				marker = m
 				text = rest
 			}
