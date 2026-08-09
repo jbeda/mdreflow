@@ -197,10 +197,29 @@ func TestInLinkRefDefZone(t *testing.T) {
 		{"ordinary prose line above does not qualify", "just prose\nbar", []string{"bar"}, 11, false},
 		{"contentStart at start of source: no previous line", "bar", []string{"bar"}, 0, false},
 		{"blank line above disqualifies (shape can never match blank text)", "[foo]:\n\nbar", []string{"bar"}, 8, false},
+		{
+			// A def line farther up the same non-blank run still counts:
+			// its title scan can reach the paragraph across intervening
+			// lines (seed 97329a80dd2cb7d4; see defRunAbove).
+			name:         "def line beyond the immediate neighbor, same non-blank run",
+			source:       "[1]:0\n\"20\n0\n00\nbar",
+			trimmed:      []string{"bar"},
+			contentStart: 15,
+			want:         true,
+		},
+		{
+			// A blank line between resets the run: the def's reach cannot
+			// cross a blank line (a blank terminates title scanning).
+			name:         "def line above a blank line does not count",
+			source:       "[1]:0\n\ntext\nbar",
+			trimmed:      []string{"bar"},
+			contentStart: 12,
+			want:         false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := inLinkRefDefZone([]byte(tc.source), tc.trimmed, tc.contentStart); got != tc.want {
+			if got := inLinkRefDefZone([]byte(tc.source), tc.trimmed, tc.contentStart, defRunAbove([]byte(tc.source))); got != tc.want {
 				t.Errorf("inLinkRefDefZone(%q, %v, %d) = %v, want %v", tc.source, tc.trimmed, tc.contentStart, got, tc.want)
 			}
 		})
@@ -217,7 +236,11 @@ func TestFootnoteDefFirstLineRE(t *testing.T) {
 		want bool
 	}{
 		{"footnote def opener", "[^1]: body", true},
-		{"empty footnote label", "[^]: body", true},
+		// "[^]:" is NOT footnote-shaped: goldmark's footnote extension
+		// requires a non-space label character after the "^", so this is
+		// an ordinary definition labeled "^" (seed 6042b560f6c7dcd2).
+		{"empty caret label is a plain definition, not a footnote", "[^]: body", false},
+		{"space-led caret label is a plain definition, not a footnote", "[^ ]: body", false},
 		{"reflow-escaped spelling still matches", `\[^1]: body`, true},
 		{"non-footnote def opener does not match", "[1]: body", false},
 		{"ordinary prose does not match", "just prose", false},

@@ -194,15 +194,25 @@ finding a seventh shape. The lesson: precision here buys reflow of prose that
 is rare, ambiguity-laden, and worthless to reflow next to invisible metadata.
 
 The rule is now deliberately blunt and shape-based: **any paragraph that
-contains, or sits directly against (no blank line), a line opening with a
-non-footnote `[label]:` shape — original, reflow-escaped (`\[label]:`), or
-reflow-joined (`text [label]:` at line end) spelling — passes through
-byte-for-byte.** No parsing, no adjacency analysis, one predicate. In the
+contains a non-footnote `[label]:` shape — original, reflow-escaped
+(`\[label]:`), or reflow-joined (`text [label]:` at line end) spelling — or
+that sits below such a line within the same contiguous run of non-blank
+lines, passes through byte-for-byte.** Below-in-the-same-run, not merely
+directly adjacent: a definition's title scan alone can span any number of
+lines, so a paragraph several lines under the `[label]:` opener can still be
+the next text the definition's own scan touches (fuzz-found; a blank line
+terminates the scan and resets the run). The transitive form is also what
+makes verdicts stable: everything in a def-containing run is frozen, so the
+lines a verdict keys on cannot move between passes. No parsing, no
+adjacency analysis, one predicate plus one precomputed per-line bit. In the
 common real-world layout (definitions in their own blank-line-separated
 block) nothing changes: those were already skipped.
 
-**Footnote definitions are exempt and keep reflowing.** The caret is a perfect
-discriminator (`[^label]:` vs `[label]:`), and the content profile is the
+**Footnote definitions are exempt and keep reflowing.** The caret is a
+near-perfect discriminator (`[^label]:` vs `[label]:` — "near": a caret
+label that is empty or starts with a space is not a footnote to goldmark
+but an ordinary definition labeled `^…`, and is classified with the
+definitions, fuzz-found), and the content profile is the
 opposite: a footnote body is real prose. Two protections replace the guard
 pile for the caret case:
 

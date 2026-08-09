@@ -145,7 +145,21 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 	// Format's doc comment on Paragraph.Start), so writeParagraph never
 	// touches them directly, but escapeBlockInterrupt still needs to know
 	// them — see its firstLinePrefix parameter doc comment.
-	firstLinePrefix := string(source[blockmap.LineStart(source, p.Start):p.Start])
+	//
+	// Leading blockquote markers are stripped first: the joint
+	// thematic-break check must judge the line the way a reparse's *block*
+	// scan will, and blockquote markers are consumed by the blockquote
+	// parser before that scan ever sees the rest — so for a paragraph
+	// opening a list item inside a blockquote (raw prefix ">* "), the
+	// spelling CommonMark actually judges is the list marker plus content
+	// ("* " + "**" = "* **", a thematic break). Keeping the ">" in the
+	// joint string masked exactly that: found by FuzzFormat on
+	// " Y& - \"y\x1a\n>* ** y \n>* " (seed ca0b97d6b3cd0380), where a
+	// width-3 split landed "**" as the item's first output line and the
+	// next parse read "* **" as a thematic break instead of a list item —
+	// a structure change pass 2 then compounded.
+	firstLinePrefix := blockquoteMarkersRE.ReplaceAllString(
+		string(source[blockmap.LineStart(source, p.Start):p.Start]), "")
 
 	// rawContents[i] is line i's content (line ending stripped, hard-break
 	// marker bytes not yet stripped). insideSpanAfter[i] reports whether
@@ -1688,12 +1702,21 @@ var orderedListRE = regexp.MustCompile(`^\d{1,9}([.)])(\s|$)`)
 // marker mdreflow itself emits) once a first draft of the type-7 handling
 // folded it into the always-applies set.
 //
+// blockquoteMarkersRE matches a run of leading blockquote markers (each up
+// to 3 spaces of indent, ">", one optional following space or tab —
+// CommonMark's marker spelling), for stripping container-prefix bytes down
+// to what a reparse's block scan will actually judge; see writeParagraph's
+// firstLinePrefix.
+var blockquoteMarkersRE = regexp.MustCompile(`^([ \t]{0,3}>[ \t]?)+`)
+
 // firstLinePrefix is the raw source bytes writeParagraph's caller (package
 // reflow's own Format) already copied byte-for-byte immediately before a
-// nested paragraph's first line — a list item's "- "/"1. " marker or a
-// blockquote's "> ", for instance — and is empty for every other call
-// (continuation lines, and any paragraph not nested in a container at
-// all). It matters only to isThematicBreak, and only for the paragraph's
+// nested paragraph's first line — with leading blockquote markers already
+// stripped (see writeParagraph's firstLinePrefix and blockquoteMarkersRE:
+// a reparse's blockquote parser consumes them before the block scan this
+// check simulates ever runs, so ">* " contributes "* "). It is empty for
+// every other call (continuation lines, and any paragraph not nested in a
+// container at all). It matters only to isThematicBreak, and only for the paragraph's
 // first output line (every other caller passes ""): a thematic break's
 // three-instance-of-the-same-character rule can be satisfied *jointly* by
 // the container marker's own leading byte plus wrapped content that, on

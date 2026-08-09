@@ -14,6 +14,10 @@ At release time the section is retitled to the version and the prose lead is wri
 - Paragraphs containing a link are no longer skipped just because a prose parenthetical spans a line break elsewhere in them (#16, reported with a proposed fix by Karl Isenberg): the guard now fires only on a `](`-opened paren left open at a line end — the one spelling that can open an inline link destination — instead of any unclosed paren in a paragraph that contains a `[` anywhere. On the reporter's 263-file docset this unblocks 137 files.
 - More scanner whitespace classes aligned with goldmark's, which treats a bare carriage return as whitespace where the spec says space/tab: table-delimiter-row and setext-underline recognition, two link-reference-definition opener shapes, and hard-break `<br>` marker detection.
   Fuzz-found on pathological input (paragraphs containing a bare CR); no effect on normal documents.
+- A width split inside a list item nested in a blockquote could land an asterisk run right after the `* ` marker, which the next parse read as a thematic break (`>* **` is `* **` once the quote marker is stripped — a real `<hr>`); the escape that already defended this for plain list items now sees through blockquote markers.
+  Fuzz-found at width 3 on adversarial input; real documents are unaffected.
+- `[^]:` and `[^ ]:` (a caret label that is empty or starts with a space) are ordinary link-reference definitions to goldmark, not footnotes; they now get the definition zone's protection instead of the footnote exemption, closing a fuzz-found corner where joining an adjacent paragraph turned its prose into the definition's title.
+- The definition zone now extends through a whole contiguous run of non-blank lines below a `[label]:` line, not just the line directly against it: a definition's multi-line title scan can reach a paragraph several lines down, and reflowing that paragraph re-carved the title's boundary on the next pass. Definitions in their own blank-line-separated block — the normal layout — are unaffected.
 
 ## v0.1.4 (2026-08-08)
 

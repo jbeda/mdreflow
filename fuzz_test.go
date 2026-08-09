@@ -636,12 +636,19 @@ func hasTagLineWithInsignificantTab(src []byte) bool {
 }
 
 // unclosedTagAtLineEndRE matches a "<" immediately followed by a letter
-// (a tag opener) with no ">" anywhere later on the same line.
+// (a tag opener) with no "<" or ">" later on the same line — an interior
+// "<" is invalid inside a tag, so it ends the candidate. PI and
+// comment/declaration/CDATA openers are handled separately in
+// hasMultilineInlineTagCandidate: their interiors admit "<" freely
+// (found by FuzzFormat on "0<?<  \n?>", seed d9518dbdc42e77ac, ten
+// minutes after the plain "0<?  \n?>" find), so for them the only
+// disqualifier is a ">" later on the line.
 var unclosedTagAtLineEndRE = regexp.MustCompile(`<[A-Za-z][^<>]*$`)
 
 // hasMultilineInlineTagCandidate reports whether src has a non-last line
-// that opens an HTML tag ("<" + letter) without closing it ("]") on that
-// same line.
+// that opens an inline raw-HTML construct — a tag ("<" + letter), a
+// processing instruction ("<?"), or a comment/declaration/CDATA ("<!")
+// — without closing it (">") on that same line.
 //
 // This gates a twelfth, final narrow, documented render-preservation
 // exception: an inline HTML/JSX tag can span a soft *or hard* line break
@@ -657,7 +664,11 @@ var unclosedTagAtLineEndRE = regexp.MustCompile(`<[A-Za-z][^<>]*$`)
 // trailing spaces are part of a real multi-line tag's own interior
 // whitespace ("<A A>", rendering as one inline tag), not a hard break,
 // but mdreflow's hard-break detection has no way to know that and
-// normalizes it to "<br>" regardless, corrupting the tag. This is not
+// normalizes it to "<br>" regardless, corrupting the tag. The other
+// inline raw-HTML spellings have the same interior-whitespace grammar and
+// the same exposure: found again by FuzzFormat on "0<?  \n?>" (seed
+// df905e1cd7af130b), a processing instruction whose interior trailing
+// double-space got normalized into a "<br>" the same way. This is not
 // caught by blockmap's own bracket-balance whole-paragraph-skip checks
 // (hasUnbalancedBracket, hasUnclosedDestParen), which are deliberately
 // scoped to "[" and "(" only — "<" and ">" are far more common in
@@ -674,6 +685,9 @@ func hasMultilineInlineTagCandidate(src []byte) bool {
 			break
 		}
 		if unclosedTagAtLineEndRE.Match(line) {
+			return true
+		}
+		if k := max(bytes.LastIndex(line, []byte("<?")), bytes.LastIndex(line, []byte("<!"))); k >= 0 && !bytes.ContainsRune(line[k:], '>') {
 			return true
 		}
 	}

@@ -72,8 +72,48 @@ type Paragraph struct {
 func Paragraphs(doc ast.Node, source []byte) []Paragraph {
 	var out []Paragraph
 	fmEnd := frontMatterEnd(source)
-	collect(doc, source, false, 0, fmEnd, &out)
+	collect(doc, source, false, 0, fmEnd, defRunAbove(source), &out)
 	return out
+}
+
+// defRunAbove reports, per physical line (keyed by the line's start byte
+// offset), whether a definition-shaped line — the same shapes
+// inLinkRefDefZone checks on the immediately preceding line — occurs
+// anywhere ABOVE that line within its contiguous run of non-blank lines.
+// A blank line resets the run.
+//
+// This exists because a definition's reach downward is not limited to one
+// line: its title alone may span arbitrarily many lines, so a paragraph
+// can sit several lines below the "[label]:" opener yet still be the next
+// text the definition's own scan touches — reflowing that paragraph moves
+// the title's closing boundary and re-carves every line in between on the
+// next parse. Found by FuzzFormat on
+// "[0]:\n1\n\"\n\"[0]:0\n[1]:0\n\"20\n0\n00\n\"" (seed 97329a80dd2cb7d4):
+// the only reflow-eligible paragraph was the two-line tail of a title
+// spanning three lines below its def, one line beyond the neighbor check.
+// The transitive rule is verdict-stable by construction: every paragraph
+// inside a def-containing run is in-zone, so nothing in such a run ever
+// reflows, so the run's line layout — and with it every verdict keyed on
+// it — cannot change between passes. Computed in one top-down pass so the
+// zone check stays O(1) per paragraph.
+func defRunAbove(source []byte) map[int]bool {
+	m := make(map[int]bool)
+	seen := false
+	for ls := 0; ls < len(source); {
+		end := ls
+		for end < len(source) && source[end] != '\n' {
+			end++
+		}
+		line := bytes.TrimRight(source[ls:end], "\r")
+		m[ls] = seen
+		if len(bytes.Trim(line, " \t")) == 0 {
+			seen = false
+		} else if defLineOpenerRE.Match(line) || bareCaretOpenerRE.Match(line) || orphanDefCloserRE.Match(line) {
+			seen = true
+		}
+		ls = end + 1
+	}
+	return m
 }
 
 // maxContainerDepth caps how many List/Blockquote container levels deep a
@@ -105,7 +145,7 @@ const maxContainerDepth = 2
 // through untouched — no reflow is always render-preserving by
 // construction. Found by FuzzFormat on "000000000000000000\n>* >! 0"
 // (blockquote > list > blockquote, three levels).
-func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int, out *[]Paragraph) {
+func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int, zoneAbove map[int]bool, out *[]Paragraph) {
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
 		switch c.(type) {
 		case *ast.Paragraph, *ast.TextBlock:
@@ -130,7 +170,7 @@ func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int,
 			// shape, from build's own raw-byte scan (see
 			// inLinkRefDefZone) — design.md's "The link-reference-
 			// definition zone: skip bluntly, by shape".
-			if pp, skip := build(c, source, inBlockquote, fmEnd, precededByTable); !skip {
+			if pp, skip := build(c, source, inBlockquote, fmEnd, precededByTable, zoneAbove); !skip {
 				*out = append(*out, pp)
 			}
 			continue
@@ -144,7 +184,7 @@ func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int,
 		case *ast.List:
 			childDepth++
 		}
-		collect(c, source, childInBQ, childDepth, fmEnd, out)
+		collect(c, source, childInBQ, childDepth, fmEnd, zoneAbove, out)
 	}
 }
 
@@ -154,7 +194,7 @@ func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int,
 // or -1 if source has no front matter) — see its use below. precededByTable
 // is true when p's immediately preceding sibling in the AST is a GFM
 // *ast.Table — see its use below for why.
-func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTable bool) (pp Paragraph, skip bool) {
+func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTable bool, zoneAbove map[int]bool) (pp Paragraph, skip bool) {
 	lines := p.Lines()
 	n := lines.Len()
 	if n == 0 {
@@ -256,7 +296,7 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// machinery, not paragraph interior).
 		return Paragraph{}, true
 	}
-	if inLinkRefDefZone(source, trimmed, start0) {
+	if inLinkRefDefZone(source, trimmed, start0, zoneAbove) {
 		// design.md, "The link-reference-definition zone: skip bluntly, by
 		// shape": a link reference definition renders nothing (it is URL
 		// metadata) and its grammar is the least reflow-compatible
@@ -469,6 +509,27 @@ func hasHiddenLineGap(source []byte, lines *gmtext.Segments) bool {
 // defLineOpenerRE's doc comment).
 const nonCaretLabelBody = `(?:\\.|[^\^\[\]])(?:\\.|[^\[\]])*`
 
+// nonFootnoteCaretLabelAlt matches the caret-led labels that are NOT
+// footnotes to goldmark and so must count as ordinary definition labels
+// in the def-shape regexes below: goldmark's footnote extension requires
+// at least one non-space label character after the "^" ("[^x]:" and
+// "[^^]:" are footnotes; "[^]:" and "[^ ]:" are plain definitions
+// labeled "^"/"^ ", confirmed directly). Treating those as
+// footnote-shaped exempted from the zone exactly the line goldmark
+// treats as a definition: found by FuzzFormat on
+// "[0]:\n1\n\"\n\"[0]:0\n\"1\"[^]:0\n\"0\n00\n\"" (seed
+// 6042b560f6c7dcd2), where joining the paragraph after "[^]:0" completed
+// that definition and turned the paragraph's prose into its title — a
+// render corruption, not just an idempotency flip.
+const nonFootnoteCaretLabelAlt = `\^(?:[ \t][^\[\]]*)?`
+
+// caretLabelBody is the footnote-shaped label sub-pattern shared by the
+// caret-exemption regexes below: "^" followed by at least one non-space,
+// non-bracket character — the mirror of nonFootnoteCaretLabelAlt's
+// boundary, so every label is classified the same way by the exemption
+// checks and the def-shape checks.
+const caretLabelBody = `\^[^ \t\[\]][^\[\]]*`
+
 // nonCaretDefShapeRE matches a non-footnote link-reference-definition-
 // shaped "[label]:" opener: an optional reflow-escape backslash, "[", an
 // optional non-caret label (nonCaretLabelBody), "]:", ANYWHERE in the
@@ -485,7 +546,7 @@ const nonCaretLabelBody = `(?:\\.|[^\^\[\]])(?:\\.|[^\[\]])*`
 // the next pass: found by FuzzFormat on "0[X1]: &Zz!\n  >0%0c) n2e%11"
 // (seed f6ab6616a4253b35), where the blockquote deferred to a neighbor
 // shape the neighbor itself was allowed to reshape.
-var nonCaretDefShapeRE = regexp.MustCompile(`\\?\[(?:` + nonCaretLabelBody + `)?\]:`)
+var nonCaretDefShapeRE = regexp.MustCompile(`\\?\[(?:` + nonCaretLabelBody + `|` + nonFootnoteCaretLabelAlt + `)?\]:`)
 
 // defLineOpenerRE is nonCaretDefShapeRE's counterpart for judging the
 // raw source line directly above a paragraph (see inLinkRefDefZone). It
@@ -501,7 +562,7 @@ var nonCaretDefShapeRE = regexp.MustCompile(`\\?\[(?:` + nonCaretLabelBody + `)?
 // emission escapes (package reflow's isCompleteLinkRefDefLine and the
 // bare-opener escape), the harness's documented caret scope gate, and
 // the public convergence backstop — see design.md's zone section.
-var defLineOpenerRE = regexp.MustCompile(`^[ \t>]*\\?\[(?:` + nonCaretLabelBody + `)?\]:`)
+var defLineOpenerRE = regexp.MustCompile(`^[ \t>]*\\?\[(?:` + nonCaretLabelBody + `|` + nonFootnoteCaretLabelAlt + `)?\]:`)
 
 // defShapeAnywhereRE is defLineOpenerRE's counterpart with no left-
 // boundary requirement at all — used only for the "spans the boundary"
@@ -519,7 +580,7 @@ var defLineOpenerRE = regexp.MustCompile(`^[ \t>]*\\?\[(?:` + nonCaretLabelBody 
 // once a definition can start immediately after another already-consumed
 // one, so this check accepts some extra false-positive skips as the price
 // of staying blunt rather than tracking definition-chain state.
-var defShapeAnywhereRE = regexp.MustCompile(`\\?\[(?:` + nonCaretLabelBody + `)?\]:`)
+var defShapeAnywhereRE = regexp.MustCompile(`\\?\[(?:` + nonCaretLabelBody + `|` + nonFootnoteCaretLabelAlt + `)?\]:`)
 
 // footnoteDefFirstLineRE matches a footnote definition's own opening
 // "[^label]:" marker at the start of a paragraph's first (trimmed) line,
@@ -530,7 +591,7 @@ var defShapeAnywhereRE = regexp.MustCompile(`\\?\[(?:` + nonCaretLabelBody + `)?
 // FuzzFormat on " [^1]: !Y )9.01" (seed 425ffd537fd28733), whose escaped
 // second-pass first line ("\[^1]: !Y") stopped matching an earlier,
 // escape-blind version of this regex.
-var footnoteDefFirstLineRE = regexp.MustCompile(`^\\?\[\^[^\[\]]*\]:`)
+var footnoteDefFirstLineRE = regexp.MustCompile(`^\\?\[` + caretLabelBody + `\]:`)
 
 // bareCaretOpenerRE matches a BARE footnote-shaped opener — "[^label]:"
 // with nothing after the colon but whitespace, at a line's end. A bare
@@ -563,7 +624,7 @@ var orphanDefCloserRE = regexp.MustCompile(`^(?:\\.|[^\[\]\\])*\]:`)
 // goldmark (same whitespace-alignment family as reflow's
 // bareLinkRefDefOpenerLineRE and isTableDelimiterRowShaped), so a bare
 // caret opener with a trailing CR is still a bare caret opener.
-var bareCaretOpenerRE = regexp.MustCompile(`(^|[ \t])[ \t>]*\\?\[\^[^\[\]]*\]:[ \t\r]*$`)
+var bareCaretOpenerRE = regexp.MustCompile(`(^|[ \t])[ \t>]*\\?\[` + caretLabelBody + `\]:[ \t\r]*$`)
 
 // inLinkRefDefZone reports whether the paragraph whose trimmed lines are
 // trimmed, starting at contentStart, sits in design.md's link-reference-
@@ -601,7 +662,7 @@ var bareCaretOpenerRE = regexp.MustCompile(`(^|[ \t])[ \t>]*\\?\[\^[^\[\]]*\]:[ 
 // open immediately after a previous one's title closes with no separating
 // whitespace at all (found by FuzzFormat on
 // "[0]:0\n\"0\"[00]:0\n\"\n\"[0]:0", seed a651ae68822c7c5c).
-func inLinkRefDefZone(source []byte, trimmed []string, contentStart int) bool {
+func inLinkRefDefZone(source []byte, trimmed []string, contentStart int, zoneAbove map[int]bool) bool {
 	for _, t := range trimmed {
 		if nonCaretDefShapeRE.MatchString(t) || bareCaretOpenerRE.MatchString(t) || orphanDefCloserRE.MatchString(t) {
 			return true
@@ -613,6 +674,13 @@ func inLinkRefDefZone(source []byte, trimmed []string, contentStart int) bool {
 	ls := lineStart(source, contentStart)
 	if ls == 0 {
 		return false
+	}
+	if zoneAbove[ls] {
+		// A def-shaped line anywhere above, in this line's contiguous
+		// non-blank run — not just on the immediately preceding line: a
+		// definition's title scan can reach the paragraph across any
+		// number of intervening machinery lines. See defRunAbove.
+		return true
 	}
 	prevStart := lineStart(source, ls-1)
 	prevLine := bytes.TrimRight(source[prevStart:ls], "\r\n")
