@@ -651,7 +651,18 @@ var orphanDefCloserRE = regexp.MustCompile(`^(?:\\.|[^\[\]\\])*\]:`)
 // goldmark (same whitespace-alignment family as reflow's
 // bareLinkRefDefOpenerLineRE and isTableDelimiterRowShaped), so a bare
 // caret opener with a trailing CR is still a bare caret opener.
-var bareCaretOpenerRE = regexp.MustCompile(`(^|[ \t])[ \t>]*\\?\[` + caretLabelBody + `\]:[ \t\r]*$`)
+//
+// There is deliberately NO left-boundary requirement, for exactly the
+// reason defShapeAnywhereRE has none: a definition can start immediately
+// after a previous one's title closes, with no whitespace between them at
+// all. An earlier version required the shape to sit at a line start or
+// after whitespace, which missed "\"7\"[^0]:" — a bare opener directly
+// against the preceding definition's closing title quote (found by
+// FuzzFormat on "[^0]:110\n\"7\"[^0]:\n軠1\n\"\"0", seed
+// 39bb3b34cfc62d3d, 93 minutes into a soak). The extra over-skip this
+// buys (a footnote body whose line happens to END in "x[^2]:") is the
+// same free trade the rest of the zone makes.
+var bareCaretOpenerRE = regexp.MustCompile(`\\?\[` + caretLabelBody + `\]:[ \t\r]*$`)
 
 // inLinkRefDefZone reports whether the paragraph whose trimmed lines are
 // trimmed, starting at contentStart, sits in design.md's link-reference-

@@ -398,6 +398,34 @@ func TestHasUnbalancedBracketAndDestParen(t *testing.T) {
 	}
 }
 
+// TestBareCaretOpenerRE tables bareCaretOpenerRE: a footnote-shaped
+// opener with nothing but whitespace after its colon, at a line's end,
+// with no left-boundary requirement (seed 39bb3b34cfc62d3d — a
+// definition can start immediately after a previous one's title closes).
+func TestBareCaretOpenerRE(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{"alone on the line", "[^0]:", true},
+		{"after whitespace", "x [^0]:", true},
+		{"directly after a closing title quote", `"7"[^0]:`, true},
+		{"trailing spaces and CR still bare", "[^0]:  \r", true},
+		{"escaped spelling", `\[^0]:`, true},
+		{"content after the colon is a footnote body, not a bare opener", "[^0]: body", false},
+		{"non-caret label is not this regex's business", "[0]:", false},
+		{"empty caret label is not footnote-shaped", "[^]:", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := bareCaretOpenerRE.MatchString(tc.line); got != tc.want {
+				t.Errorf("bareCaretOpenerRE.MatchString(%q) = %v, want %v", tc.line, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestHasBacktickInBareURL tables hasBacktickInBareURL: a backtick inside
 // a linkify-eligible bare URL token (seed 41e98cb4c9e00729), including the
 // mid-token spelling linkify also fires on.
