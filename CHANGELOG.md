@@ -9,6 +9,8 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+## v0.1.4 (2026-08-08)
+
 Hardening and simplification. A day-long fuzzing campaign fixed the whole family of edge cases where reflowed output could parse differently than the input — splits manufacturing accidental tables, definitions, or headings; escapes re-pairing code spans; typography flipping raw-HTML recognition. All were pathological shapes that never occur in normal prose; each is now pinned by a regression seed. Alongside the fixes, some deliberately over-clever handling was descoped in favor of simpler, safer rules.
 
 ### Fixed
