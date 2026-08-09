@@ -26,9 +26,22 @@ func walkDir(root string, ex *excluder) ([]string, error) {
 			// its own base directory exactly.
 			return nil
 		}
+
+		// A symlink (to a file or a directory) discovered by the walk is
+		// skipped silently, like any other walk exclusion (security
+		// review S3/S4): reading or writing through it can escape the
+		// walked tree entirely, and a path named explicitly on the
+		// command line still gets processFile's loud regular-file
+		// refusal instead. filepath.WalkDir already doesn't descend into
+		// symlinked directories, so this only changes symlinked files
+		// from "silently formatted through" to "silently skipped".
+		if d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+
 		isDir := d.IsDir()
 
-		excluded, _, cerr := ex.check(path, isDir)
+		excluded, _, cerr := ex.check(path, isDir, root)
 		if cerr != nil {
 			return cerr
 		}

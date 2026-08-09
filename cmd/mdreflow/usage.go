@@ -63,9 +63,12 @@ Exit codes (a contract other tools and agents can branch on):
   3  at least one input was refused: excluded (gitignore, config
      exclude:, or a built-in .git/node_modules/vendor exclude) without
      --force, or not recognized as Markdown (wrong extension, binary
-     content, or invalid UTF-8) without --force. Other targets in the
-     same run are still processed; a refusal only raises the run's
-     final exit code.
+     content, or invalid UTF-8) without --force, or not a regular file
+     (a symlink, FIFO, device, or socket named explicitly on the
+     command line) without --force. A symlink found while walking a
+     directory is skipped silently instead, same as any other walk
+     exclusion. Other targets in the same run are still processed; a
+     refusal only raises the run's final exit code.
 
   When more than one of these would apply in a single run, the most
   severe wins: 2 > 3 > 1 > 0. In practice this means a config/usage
@@ -80,10 +83,15 @@ Configuration (.mdreflow.yaml):
 
   Discovered by walking upward from each target file's directory (from
   the current directory for stdin), or read directly with --config.
-  Precedence is flags > config file > built-in defaults; a flag
-  explicitly given on the command line wins even if its value equals
-  the default. Unknown keys are a loud error (exit 2) rather than a
-  silent no-op — a typo'd key should not be ignored.
+  Discovery stops at the enclosing git repository's root, or at your
+  home directory if the target isn't inside a repo, so a config in an
+  unrelated shared ancestor directory can't silently apply. Precedence
+  is flags > config file > built-in defaults; a flag explicitly given
+  on the command line wins even if its value equals the default.
+  Unknown keys are a loud error (exit 2) rather than a silent no-op — a
+  typo'd key should not be ignored. A .mdreflow.yaml over 1 MB, or one
+  engineered with pathological bracket nesting or YAML alias chains, is
+  refused (exit 2) rather than parsed.
 
     mode: sentence          # sentence | para | wrap
     max-width: 0            # 0 = unbounded/default; otherwise >= 20

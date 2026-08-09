@@ -30,10 +30,11 @@ func newExcluder(noGitignore bool, repoRoot, explicitCfg string, cfgCache *confi
 	}
 }
 
-// check reports whether path is excluded and by which source. dirHint is
-// the directory to start config discovery from (path itself if it is a
-// directory, otherwise its parent).
-func (e *excluder) check(path string, isDir bool) (bool, exclude.Source, error) {
+// check reports whether path is excluded and by which source.
+// walkRoot is the directory this invocation is processing under — the
+// walked directory argument, or an explicit file's parent — and bounds
+// the built-in-name exclusion when no repo/config scope exists.
+func (e *excluder) check(path string, isDir bool, walkRoot string) (bool, exclude.Source, error) {
 	dir := path
 	if !isDir {
 		dir = filepath.Dir(path)
@@ -56,5 +57,5 @@ func (e *excluder) check(path string, isDir bool) (bool, exclude.Source, error) 
 		e.matchers[cfgDir] = nm
 		m = nm
 	}
-	return m.Excluded(path, isDir)
+	return m.Excluded(path, isDir, walkRoot)
 }

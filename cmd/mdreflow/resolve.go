@@ -61,13 +61,20 @@ func parseHardBreaks(s string) (mdreflow.HardBreakStyle, error) {
 // .mdreflow.yaml is typically discovered from many files during a
 // directory walk.
 type configCache struct {
+	boundary   string                  // upward discovery stops here, inclusive (see config.Discover)
 	discovered map[string]string       // starting dir -> discovered config path ("" = none found)
 	loaded     map[string]*config.File // config path -> parsed file
 	errs       map[string]error        // config path -> load error, if any
 }
 
-func newConfigCache() *configCache {
+// newConfigCache builds a configCache whose upward discovery never walks
+// above boundary — see config.Discover's doc comment. Every call in a
+// single run shares one boundary (there is exactly one repository root
+// or home directory per invocation), so it lives on the cache rather
+// than being threaded through every resolve call.
+func newConfigCache(boundary string) *configCache {
 	return &configCache{
+		boundary:   boundary,
 		discovered: map[string]string{},
 		loaded:     map[string]*config.File{},
 		errs:       map[string]error{},
@@ -84,7 +91,7 @@ func (c *configCache) resolve(dir, explicitPath string) (*config.File, string, e
 		if cached, ok := c.discovered[dir]; ok {
 			path = cached
 		} else {
-			found, err := config.Discover(dir)
+			found, err := config.Discover(dir, c.boundary)
 			if err != nil {
 				return nil, "", err
 			}

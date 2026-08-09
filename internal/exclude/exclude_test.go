@@ -17,7 +17,7 @@ func TestExcludedBuiltin(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{".git", "node_modules", "vendor"} {
-		excluded, source, err := m.Excluded(filepath.Join(dir, name, "x"), false)
+		excluded, source, err := m.Excluded(filepath.Join(dir, name, "x"), false, dir)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -25,12 +25,89 @@ func TestExcludedBuiltin(t *testing.T) {
 			t.Errorf("path under %s: excluded=%v source=%q, want true/%q", name, excluded, source, SourceBuiltin)
 		}
 	}
-	excluded, _, err := m.Excluded(filepath.Join(dir, "src", "x.md"), false)
+	excluded, _, err := m.Excluded(filepath.Join(dir, "src", "x.md"), false, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if excluded {
 		t.Errorf("ordinary path should not be excluded")
+	}
+}
+
+// TestExcludedBuiltinScopedToWalkRoot pins the Go-quality review's S1
+// finding: the built-in-name check must be scoped to path components
+// below the walk root (here simulated via configBase, which sets
+// scopeRoot the same way a repository root would), not the full
+// absolute path. A "vendor" component that only appears in the walk
+// root's own ancestry must not exclude anything; a "vendor" component
+// that appears below the walk root still must.
+func TestExcludedBuiltinScopedToWalkRoot(t *testing.T) {
+	base := t.TempDir()
+	walkRoot := filepath.Join(base, "vendor", "proj") // "vendor" is an ancestor of walkRoot
+	if err := os.MkdirAll(walkRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := NewMatcher("", true, nil, walkRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ordinary := filepath.Join(walkRoot, "a.md")
+	excluded, source, err := m.Excluded(ordinary, false, walkRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if excluded {
+		t.Errorf("Excluded(%q) = true (source %q), want false: \"vendor\" only appears above the walk root", ordinary, source)
+	}
+
+	nested := filepath.Join(walkRoot, "vendor", "b.md") // "vendor" below the walk root
+	excluded, source, err = m.Excluded(nested, false, walkRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !excluded || source != SourceBuiltin {
+		t.Errorf("Excluded(%q) = %v (source %q), want true/%q: \"vendor\" is below the walk root", nested, excluded, source, SourceBuiltin)
+	}
+}
+
+// TestExcludedNoScopeRootUsesWalkRoot pins the Go-quality review's S1
+// finding end-to-end: with no gitignore root and no config directory
+// (scopeRoot == "" at the NewMatcher call), the built-in-name check
+// scopes to the caller-supplied walk root — an explicit file's own
+// directory, or the walked directory argument — rather than scanning
+// the whole absolute path. No Chdir: the review's repro invoked
+// mdreflow from an unrelated working directory, which is exactly the
+// case a CWD fallback would miss.
+func TestExcludedNoScopeRootUsesWalkRoot(t *testing.T) {
+	base := t.TempDir()
+	proj := filepath.Join(base, "vendor", "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := NewMatcher("", true, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ordinary := filepath.Join(proj, "a.md")
+	excluded, source, err := m.Excluded(ordinary, false, proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if excluded {
+		t.Errorf("Excluded(%q) = true (source %q), want false: \"vendor\" only appears above the walk root", ordinary, source)
+	}
+
+	nested := filepath.Join(proj, "vendor", "b.md")
+	excluded, source, err = m.Excluded(nested, false, proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !excluded || source != SourceBuiltin {
+		t.Errorf("Excluded(%q) = %v (source %q), want true/%q: \"vendor\" is below the walk root", nested, excluded, source, SourceBuiltin)
 	}
 }
 
@@ -51,7 +128,7 @@ func TestExcludedConfigPattern(t *testing.T) {
 		{filepath.Join(dir, "README.md"), false, false},
 	}
 	for _, c := range cases {
-		excluded, source, err := m.Excluded(c.path, c.isDir)
+		excluded, source, err := m.Excluded(c.path, c.isDir, dir)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -163,7 +240,7 @@ func TestGitignoreParity(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		ourExcluded, _, err := m.Excluded(abs, info.IsDir())
+		ourExcluded, _, err := m.Excluded(abs, info.IsDir(), root)
 		if err != nil {
 			t.Fatalf("Excluded(%q): %v", rel, err)
 		}

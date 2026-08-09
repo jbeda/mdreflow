@@ -66,6 +66,10 @@ func NewMatcher(gitignoreRoot string, noGitignore bool, configPatterns []string,
 	case configBase != "":
 		m.scopeRoot = configBase
 	}
+	// When neither is known (e.g. --no-gitignore outside a git repo
+	// with no .mdreflow.yaml found), scopeRoot stays "" and Excluded
+	// scopes the built-in check to the caller-supplied walk root
+	// instead — see Excluded's doc comment (Go quality review S1).
 
 	if !noGitignore && gitignoreRoot != "" {
 		repo, err := gitignore.NewRepository(gitignoreRoot)
@@ -95,7 +99,7 @@ func NewMatcher(gitignoreRoot string, noGitignore bool, configPatterns []string,
 // an absolute path for matching. isDir must accurately reflect whether
 // path is a directory (gitignore directory-only patterns, e.g.
 // "build/", depend on it).
-func (m *Matcher) Excluded(path string, isDir bool) (bool, Source, error) {
+func (m *Matcher) Excluded(path string, isDir bool, walkRoot string) (bool, Source, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return false, "", err
@@ -112,11 +116,23 @@ func (m *Matcher) Excluded(path string, isDir bool) (bool, Source, error) {
 	// The built-in-name check is scoped to scopeRoot (typically the
 	// repository root, or the config file's directory as a fallback) so
 	// an unrelated ancestor directory that happens to be named "vendor"
-	// or similar doesn't spuriously exclude everything below it.
+	// or similar doesn't spuriously exclude everything below it. When no
+	// scopeRoot is known, walkRoot — the directory the invocation is
+	// actually walking, or an explicit file argument's own directory —
+	// bounds the check the same way: components above what the user
+	// named are never the user's vendor tree (Go quality review S1
+	// reproduced `mdreflow --no-gitignore /tmp/.../vendor/proj/a.md`
+	// wrongly refusing an ordinary file). Only if both are unknown, or
+	// the path escapes both, does the check degrade to the full
+	// absolute path.
 	builtinScope := abs
-	if m.scopeRoot != "" {
-		if rel, err := filepath.Rel(m.scopeRoot, abs); err == nil && !strings.HasPrefix(rel, "..") {
+	for _, root := range []string{m.scopeRoot, walkRoot} {
+		if root == "" {
+			continue
+		}
+		if rel, err := filepath.Rel(root, abs); err == nil && !strings.HasPrefix(rel, "..") {
 			builtinScope = rel
+			break
 		}
 	}
 	for _, part := range strings.Split(filepath.ToSlash(builtinScope), "/") {

@@ -83,14 +83,36 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return runPaths(ff, paths, stdout, stderr)
 }
 
+// configDiscoveryBoundary returns the directory config.Discover should
+// stop at, inclusive (security review S5): gitRepoRoot if the caller
+// found an enclosing git repository, otherwise the invoking user's home
+// directory, otherwise "" (unbounded, matching pre-hardening behavior)
+// if neither is available. A boundary caps how far upward a
+// .mdreflow.yaml can be discovered from, so a config planted in a
+// shared ancestor directory (a world-writable /tmp, a multi-tenant CI
+// workspace) can't silently apply to files far below it.
+func configDiscoveryBoundary(gitRepoRoot string) string {
+	if gitRepoRoot != "" {
+		return gitRepoRoot
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return home
+	}
+	return ""
+}
+
 func runStdin(ff *flags, stdin io.Reader, stdout, stderr io.Writer) int {
 	cwd, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintf(stderr, "mdreflow: %v\n", err)
 		return exitUsage
 	}
+	gitRepoRoot := ""
+	if root, err := exclude.FindRepoRoot(cwd); err == nil {
+		gitRepoRoot = root
+	}
 
-	cc := newConfigCache()
+	cc := newConfigCache(configDiscoveryBoundary(gitRepoRoot))
 	cfg, cfgDir, err := cc.resolve(cwd, ff.configPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "mdreflow: %v\n", err)
@@ -131,14 +153,21 @@ func runPaths(ff *flags, paths []string, stdout, stderr io.Writer) int {
 	if info, err := os.Stat(startDir); err != nil || !info.IsDir() {
 		startDir = filepath.Dir(startDir)
 	}
+	// gitRepoRoot is computed unconditionally: config discovery needs it
+	// as a boundary (security review S5) even under --no-gitignore,
+	// which only disables *.gitignore* matching, not the repo-root
+	// concept itself. The excluder still only receives it when gitignore
+	// matching is enabled.
+	gitRepoRoot := ""
+	if root, err := exclude.FindRepoRoot(startDir); err == nil {
+		gitRepoRoot = root
+	}
 	repoRoot := ""
 	if !ff.noGitignore {
-		if root, err := exclude.FindRepoRoot(startDir); err == nil {
-			repoRoot = root
-		}
+		repoRoot = gitRepoRoot
 	}
 
-	cc := newConfigCache()
+	cc := newConfigCache(configDiscoveryBoundary(gitRepoRoot))
 	ex := newExcluder(ff.noGitignore, repoRoot, ff.configPath, cc)
 
 	var targets []target

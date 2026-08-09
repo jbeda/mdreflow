@@ -72,6 +72,41 @@ func TestRunInPlaceCleanFileUntouched(t *testing.T) {
 	}
 }
 
+// TestRunInPlaceWritePreservesModeAndReplacesInode pins security review
+// S6's atomic-write fix: the file's permission mode survives the
+// temp-file-then-rename dance, and no ".mdreflow-*" temp file is left
+// behind in the directory afterward.
+func TestRunInPlaceWritePreservesModeAndReplacesInode(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a.md")
+	writeFile(t, p, unformatted)
+	if err := os.Chmod(p, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	_, errOut, code := runCLI(t, []string{p}, "")
+	if code != exitOK {
+		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitOK, errOut)
+	}
+	info, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o640 {
+		t.Errorf("mode after in-place write = %v, want 0640", info.Mode().Perm())
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".mdreflow-") {
+			t.Errorf("leftover temp file %q after a successful write", e.Name())
+		}
+	}
+}
+
 // --- --check / --diff ---
 
 func TestRunCheckReportsAndExitsOne(t *testing.T) {
@@ -291,6 +326,36 @@ func TestRunExplicitConfigFlag(t *testing.T) {
 	}
 }
 
+// TestRunConfigDiscoveryStopsAtRepoRoot pins security review S5: a
+// .mdreflow.yaml planted outside the repository (here, in its
+// grandparent) must not govern files inside it. The ancestor config
+// excludes everything; if discovery incorrectly walked past the repo
+// root and found it, a.md would be silently skipped and left
+// unformatted. With the boundary in place, discovery stops at the repo
+// root, the ancestor config is never consulted, and a.md is reformatted
+// normally.
+func TestRunConfigDiscoveryStopsAtRepoRoot(t *testing.T) {
+	requireGit(t)
+	base := t.TempDir()
+	writeFile(t, filepath.Join(base, ".mdreflow.yaml"), "exclude:\n  - \"**/*.md\"\n")
+
+	repo := filepath.Join(base, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustGitInit(t, repo)
+	p := filepath.Join(repo, "a.md")
+	writeFile(t, p, unformatted)
+
+	_, errOut, code := runCLI(t, []string{repo}, "")
+	if code != exitOK {
+		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitOK, errOut)
+	}
+	if got := readFile(t, p); got != formatted {
+		t.Errorf("a.md should have been reformatted (ancestor config outside the repo must not apply), got %q", got)
+	}
+}
+
 // --- excludes ---
 
 func TestRunExcludeGitignoreRespectedByDefault(t *testing.T) {
@@ -377,6 +442,84 @@ func TestRunExplicitExcludedFileForced(t *testing.T) {
 	}
 	if got := readFile(t, p); got != formatted {
 		t.Errorf("--force should have formatted the file despite the exclude, got %q", got)
+	}
+}
+
+// --- symlinks and non-regular files (security review S3/S4) ---
+
+func TestRunExplicitSymlinkRefused(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(dir, "outside.md")
+	writeFile(t, outside, "line one\nline two\n")
+	link := filepath.Join(dir, "link.md")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks not supported: %v", err)
+	}
+
+	_, errOut, code := runCLI(t, []string{link}, "")
+	if code != exitRefused {
+		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitRefused, errOut)
+	}
+	if !strings.Contains(errOut, "not a regular file") || !strings.Contains(errOut, "symlink") {
+		t.Errorf("stderr = %q, want a not-a-regular-file/symlink message", errOut)
+	}
+	if got := readFile(t, outside); got != "line one\nline two\n" {
+		t.Errorf("symlink target must not be written through, got %q", got)
+	}
+}
+
+// TestRunExplicitSymlinkForced: --force skips the regular-file refusal,
+// so the read still follows the symlink and formats the target's
+// content — but the atomic write (security review S6) renames the
+// result into place at the named path, which replaces the symlink
+// itself rather than following it through to the target (S3's write
+// half is closed "for free" by the same rename, per the review). So
+// --force on a symlink formats what the symlink pointed to, but leaves
+// that original target file untouched and turns the symlink into an
+// ordinary file holding the formatted content.
+func TestRunExplicitSymlinkForced(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(dir, "outside.md")
+	writeFile(t, outside, unformatted)
+	link := filepath.Join(dir, "link.md")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks not supported: %v", err)
+	}
+
+	_, errOut, code := runCLI(t, []string{"--force", link}, "")
+	if code != exitOK {
+		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitOK, errOut)
+	}
+	if got := readFile(t, outside); got != unformatted {
+		t.Errorf("the original symlink target must be left untouched, got %q", got)
+	}
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink != 0 {
+		t.Errorf("the atomic rename should have replaced the symlink with a regular file")
+	}
+	if got := readFile(t, link); got != formatted {
+		t.Errorf("link.md content = %q, want the formatted content", got)
+	}
+}
+
+func TestRunDirectoryWalkSkipsSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(dir, "outside.md")
+	writeFile(t, outside, unformatted)
+	writeFile(t, filepath.Join(dir, "repo", "keep.md"), unformatted)
+	link := filepath.Join(dir, "repo", "link.md")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks not supported: %v", err)
+	}
+
+	_, _, code := runCLI(t, []string{filepath.Join(dir, "repo")}, "")
+	if code != exitOK {
+		t.Fatalf("exit=%d, want %d", code, exitOK)
+	}
+	if got := readFile(t, filepath.Join(dir, "repo", "keep.md")); got != formatted {
+		t.Errorf("keep.md should have been reformatted, got %q", got)
+	}
+	if got := readFile(t, outside); got != unformatted {
+		t.Errorf("a symlink picked up by a directory walk must be skipped silently, target = %q", got)
 	}
 }
 
