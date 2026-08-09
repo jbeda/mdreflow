@@ -2279,7 +2279,21 @@ func stripLineEnding(raw []byte) (content string, hadNewline bool) {
 // found by FuzzFormat on "0<Br\n\t>" (seed a9266695f535279c). A real
 // "<br >" in source loses marker normalization and passes through as the
 // raw HTML it already is; renders identically either way.
-var hardBreakBrRE = regexp.MustCompile(`(?i)[ \t]*<br([ \t]*/)?>[ \t]*$`)
+//
+// The *outer* whitespace runs (before the tag, and after it to line end)
+// include '\r', matching joinClusterLines' [ \t\r] fragment-trim class:
+// a bare CR next to the marker is whitespace the join will trim whenever
+// the marker has been stripped off first (per-line path), but not when
+// the marker is still attached at trim time (post-join detection path) —
+// so leaving CR out of these classes let the two paths disagree about
+// "0\r<Br\n/>" (pass 1 emitted "0\r<br>", pass 2 trimmed to "0<br>"),
+// found by FuzzFormat 25 minutes into a soak (seed bd0bd1a98740a08d).
+// Consuming the CR into the match resolves it the same direction the
+// join trims. The *interior* class stays [ \t] only: a CR inside the tag
+// ("<br\r/>") stops goldmark parsing it as a tag at all (confirmed
+// directly — it renders as literal escaped text), exactly like the \f/\v
+// case above.
+var hardBreakBrRE = regexp.MustCompile(`(?i)[ \t\r]*<br([ \t]*/)?>[ \t\r]*$`)
 
 // sentenceTerminalEndRE matches text ending in sentence-terminal
 // punctuation (optionally followed by closing quotes/brackets), used by
