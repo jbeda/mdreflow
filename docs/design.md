@@ -98,6 +98,11 @@ This inverts the safety architecture.
 The blockmap guards (spanning-delimiter checks, line-start hazard filtering, definition zones) stop being the mechanism that makes render preservation true and become a coverage mechanism: their job is maximizing how much prose reflows without tripping the backstop, and an incomplete guard now costs a missed reflow instead of corrupted content.
 Guard narrowing becomes correspondingly lower-stakes.
 
+One carve-out, for dialect recognitions that *reinterpret* a construct: under the mkdocs dialect an admonition body is prose to the target renderer but an indented code block to goldmark, so reflowing it changes goldmark's render by design, and a naive comparison would veto every such reflow.
+The backstop therefore checks each dialect-recognized reflow-eligible range against its own invariant — the word sequence is unchanged, only inter-word whitespace moved (for an indented block, goldmark's `<pre>` output preserves line breaks, so whitespace-insensitive comparison of that block's rendered text is exactly this check) — and the whole-document comparison normalizes those ranges' rendered content identically on both sides.
+Everything outside a recognized range keeps the exact comparison.
+This is not a loosening in disguise: "words unchanged, whitespace moved" is the same promise reflow makes for an ordinary paragraph; it is simply enforced directly where goldmark's semantics cannot express it.
+
 What the backstop measures is self-consistency under goldmark's semantics: input and output pass through the same parser, so goldmark's own bugs largely cancel — the comparison still detects whether reflow changed anything *under those semantics*.
 What it cannot measure is goldmark-vs-target-renderer divergence (Python-Markdown above all; cmark-gfm marginally; Hugo not at all, Hugo *is* goldmark).
 That exposure predates the backstop — the planner has always used goldmark's AST as its parse authority — and is bounded by conservative per-dialect recognition and external verification (site-build diffs), not by this check.
