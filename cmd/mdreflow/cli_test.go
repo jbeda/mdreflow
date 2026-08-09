@@ -239,25 +239,12 @@ func TestRunConfigInvalidModeIsUsageError(t *testing.T) {
 	}
 }
 
-func TestRunConfigTypographyApplies(t *testing.T) {
+// Typography was removed (docs/design.md, "Typography: removed"); a
+// leftover typography: key in a discovered config must be a loud config
+// error, never a silent no-op.
+func TestRunConfigTypographyKeyIsLoudError(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".mdreflow.yaml"), "typography: [smart-quotes, ellipses]\n")
-	p := filepath.Join(dir, "a.md")
-	writeFile(t, p, "He said \"hi\" and don't...\n")
-
-	_, errOut, code := runCLI(t, []string{p}, "")
-	if code != exitOK {
-		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitOK, errOut)
-	}
-	want := "He said “hi” and don’t…\n"
-	if got := readFile(t, p); got != want {
-		t.Errorf("file content = %q, want %q", got, want)
-	}
-}
-
-func TestRunConfigInvalidTypographyIsUsageError(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".mdreflow.yaml"), "typography: [smartquotes]\n")
+	writeFile(t, filepath.Join(dir, ".mdreflow.yaml"), "typography: [smart-quotes]\n")
 	p := filepath.Join(dir, "a.md")
 	writeFile(t, p, "Hi.\n")
 
@@ -265,29 +252,8 @@ func TestRunConfigInvalidTypographyIsUsageError(t *testing.T) {
 	if code != exitUsage {
 		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitUsage, errOut)
 	}
-	if !strings.Contains(errOut, "smartquotes") {
-		t.Errorf("stderr = %q, want it to name the bad typography value", errOut)
-	}
-}
-
-// An explicitly-given flag beats the config file in both directions —
-// docs/design.md's precedence rule, which for a bool means --flag=false
-// must be able to turn off what config turned on.
-func TestRunTypographyFlagOverridesConfig(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".mdreflow.yaml"), "typography: [smart-quotes, ellipses]\n")
-	p := filepath.Join(dir, "a.md")
-	const src = "He said \"hi\" and so...\n"
-	writeFile(t, p, src)
-
-	_, errOut, code := runCLI(t, []string{"--smart-quotes=false", p}, "")
-	if code != exitOK {
-		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitOK, errOut)
-	}
-	// Ellipses (config) still applies; smart quotes (flag) does not.
-	want := "He said \"hi\" and so…\n"
-	if got := readFile(t, p); got != want {
-		t.Errorf("file content = %q, want %q", got, want)
+	if !strings.Contains(errOut, "typography") {
+		t.Errorf("stderr = %q, want it to name the unknown typography key", errOut)
 	}
 }
 
@@ -571,7 +537,7 @@ func TestRunHelp(t *testing.T) {
 	if errOut != "" {
 		t.Errorf("--help wrote to stderr: %q", errOut)
 	}
-	for _, want := range []string{"-mode", "-max-width", "-check", "-diff", "-stdout", "-force", "-config", "-no-gitignore", "-hard-breaks", "-smart-quotes", "-ellipses", "-version", "Exit codes", "mdreflow.yaml", "Typography", "Examples"} {
+	for _, want := range []string{"-mode", "-max-width", "-check", "-diff", "-stdout", "-force", "-config", "-no-gitignore", "-hard-breaks", "-version", "Exit codes", "mdreflow.yaml", "Examples"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("--help output missing %q", want)
 		}
@@ -582,42 +548,6 @@ func TestRunHelp(t *testing.T) {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("--help output still contains stale text %q", unwanted)
 		}
-	}
-}
-
-// --- typography flags ---
-
-func TestRunSmartQuotesFlag(t *testing.T) {
-	out, errOut, code := runCLI(t, []string{"--smart-quotes"}, "He said \"hi\" and don't stop...\n")
-	if code != exitOK {
-		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitOK, errOut)
-	}
-	// Ellipses is off, so the three periods survive as ASCII.
-	want := "He said “hi” and don’t stop...\n"
-	if out != want {
-		t.Errorf("stdout = %q, want %q", out, want)
-	}
-}
-
-func TestRunEllipsesFlag(t *testing.T) {
-	out, errOut, code := runCLI(t, []string{"--ellipses"}, "Well then... \"quoted\" stays straight.\n")
-	if code != exitOK {
-		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitOK, errOut)
-	}
-	want := "Well then…\n\"quoted\" stays straight.\n"
-	if out != want {
-		t.Errorf("stdout = %q, want %q", out, want)
-	}
-}
-
-func TestRunTypographyOffByDefault(t *testing.T) {
-	const src = "He said \"hi\" and don't stop...\n"
-	out, errOut, code := runCLI(t, nil, src)
-	if code != exitOK {
-		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitOK, errOut)
-	}
-	if out != src {
-		t.Errorf("stdout = %q, want it unchanged (%q)", out, src)
 	}
 }
 

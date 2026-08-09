@@ -80,59 +80,20 @@ func runGoldenCase(t *testing.T, srcPath, goldenPath string, opts mdreflow.Optio
 	})
 
 	t.Run("render-preserving", func(t *testing.T) {
-		before := normalizeForRender(renderHTML(t, src), opts)
-		after := normalizeForRender(renderHTML(t, got), opts)
+		before := normalizeForRender(renderHTML(t, src))
+		after := normalizeForRender(renderHTML(t, got))
 		if before != after {
 			t.Errorf("rendered HTML changed.\n--- before ---\n%s\n--- after ---\n%s", before, after)
 		}
 	})
 }
 
-// typographyNormalizer maps every character the typography substitutions
-// can *produce* back to the ASCII it was produced from. Both curly
-// spellings of a quote collapse onto the one straight character, and
-// "…" back onto three periods; "&quot;" and "&#39;" are folded in too,
-// since goldmark's HTML renderer escapes a straight quote in text
-// content but leaves the curly ones alone, so the two sides of a
-// comparison would otherwise differ purely in escaping.
-var typographyNormalizer = strings.NewReplacer(
-	"&quot;", `"`,
-	"&#39;", "'",
-	"“", `"`,
-	"”", `"`,
-	"‘", "'",
-	"’", "'",
-	"…", "...",
-)
-
-// normalizeForRender applies normalizeWhitespace and, when opts enables
-// typography, also folds the typography substitutions back out of the
-// rendered HTML before comparison.
-//
-// docs/design.md names typography as *the* documented exception to
-// render preservation, and it is a different kind of exception from the
-// narrow byte-pattern escape hatches in fuzz_test.go: it is not a rare
-// shape that happens to break, it is the entire point of the flag, and
-// every document containing a quote or three periods renders differently
-// with it on. Skipping the render check outright for typography-enabled
-// runs would therefore throw away the check on precisely the runs that
-// change the most content. Normalizing instead keeps it: the mapping is
-// many-to-one and applied identically to both sides, so it can mask
-// exactly the substitutions typography is licensed to make and nothing
-// else — a quote that reflow *lost*, moved, or duplicated still fails
-// the comparison, as does any other content change.
-//
-// The alternative considered was to assert only against the golden
-// files. That is weaker, not stronger: goldens pin the bytes for the six
-// typography fixtures, whereas this keeps the corpus-wide property
-// (TestTypographyOverCorpus) meaningful across every fixture in the
-// repository.
-func normalizeForRender(html string, opts mdreflow.Options) string {
-	s := normalizeWhitespace(html)
-	if opts.Typography != 0 {
-		s = typographyNormalizer.Replace(s)
-	}
-	return s
+// normalizeForRender applies normalizeWhitespace to rendered HTML before
+// comparison. (It once also folded typography substitutions back out of
+// both sides; typography is removed, so the whitespace normalization —
+// shared with the fuzz oracle — is all that remains.)
+func normalizeForRender(html string) string {
+	return normalizeWhitespace(html)
 }
 
 // modeWidthRE extracts a fixture's encoded MaxWidth from its base name:
@@ -187,61 +148,6 @@ func TestGoldenFixturesModes(t *testing.T) {
 	}
 }
 
-// typographyPrefixes maps a testdata/typography/ fixture's filename
-// prefix to the Typography bits that family exercises. The prefix
-// encoding follows the same convention the mode families use for
-// MaxWidth ("w<N>-"): the fixture name states the option it was
-// generated under, so a fixture and its golden can never drift apart
-// from the options the test runs them with.
-var typographyPrefixes = []struct {
-	prefix string
-	bits   mdreflow.Typography
-}{
-	{"off-", 0},
-	{"sq-", mdreflow.SmartQuotes},
-	{"el-", mdreflow.Ellipses},
-	{"both-", mdreflow.SmartQuotes | mdreflow.Ellipses},
-}
-
-// TestGoldenFixturesTypography runs testdata/typography/ through the same
-// golden/idempotency/render checks as the other fixture families, under
-// the typography flags each fixture's name prefix encodes. The "off-"
-// family is the control: with no flags set, quotes and periods must pass
-// through byte-for-byte.
-func TestGoldenFixturesTypography(t *testing.T) {
-	dir := filepath.Join("testdata", "typography")
-	matches, err := filepath.Glob(filepath.Join(dir, "*.golden.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(matches) == 0 {
-		t.Fatalf("no golden fixtures found under %s", dir)
-	}
-	for _, goldenPath := range matches {
-		base := filepath.Base(goldenPath)
-		name := base[:len(base)-len(".golden.md")]
-		t.Run(name, func(t *testing.T) {
-			runGoldenCase(t, filepath.Join(dir, name+".md"), goldenPath, mdreflow.Options{
-				Typography: mustTypographyBits(t, name),
-			})
-		})
-	}
-}
-
-// mustTypographyBits resolves a typography fixture's name prefix to its
-// Typography bits, failing the test if the fixture is misnamed (the same
-// contract mustModeWidth enforces for the mode families).
-func mustTypographyBits(t *testing.T, base string) mdreflow.Typography {
-	t.Helper()
-	for _, p := range typographyPrefixes {
-		if strings.HasPrefix(base, p.prefix) {
-			return p.bits
-		}
-	}
-	t.Fatalf("fixture %q has no recognized typography name prefix (want one of off-, sq-, el-, both-)", base)
-	return 0
-}
-
 // TestParagraphAdjacentToLinkRefDefPassesThrough pins design.md's blunt
 // link-reference-definition zone rule (superseding the driver-review
 // regression this test used to pin — an earlier version of blockmap's
@@ -281,14 +187,13 @@ func TestParagraphAdjacentToLinkRefDefPassesThrough(t *testing.T) {
 }
 
 // corpusFixtures returns every fixture input in testdata/ — the top-level
-// family, the mode families, and the typography family — as paths.
+// family and the mode families — as paths.
 func corpusFixtures(t *testing.T) []string {
 	t.Helper()
 	var out []string
 	for _, pattern := range []string{
 		filepath.Join("testdata", "*.md"),
 		filepath.Join("testdata", "modes", "*", "*.md"),
-		filepath.Join("testdata", "typography", "*.md"),
 	} {
 		matches, err := filepath.Glob(pattern)
 		if err != nil {
@@ -302,33 +207,20 @@ func corpusFixtures(t *testing.T) []string {
 	return out
 }
 
-// TestTypographyOverCorpus is the fixtures-by-options property loop
-// docs/design.md's Testing section item 2 calls for, extended to the
-// typography flags: every fixture in the repository (goldens included,
-// since a golden is itself a valid input) is formatted under every
-// typography combination, in every mode, and must satisfy the two
-// guarantees typography does *not* weaken.
-//
-//   - Idempotency holds unconditionally. Typography is an exception to
-//     render preservation, never to this: Format(Format(x)) == Format(x)
-//     for every option set, always. This is the check that would catch
-//     an ellipsis substitution the sentence segmenter cannot re-read on
-//     a second pass (see segment.terminalRun's doc comment).
-//   - Render preservation holds modulo the substitutions themselves
-//     (normalizeForRender), skipped only for the same narrow, documented
-//     shapes fuzz_test.go's hasRenderRiskyShape already gates on — those
-//     are orthogonal to typography and apply to every mode equally.
-func TestTypographyOverCorpus(t *testing.T) {
+// TestPropertyOverCorpus is the fixtures-by-options property loop
+// docs/design.md's Testing section item 2 calls for: every fixture in
+// the repository (goldens included, since a golden is itself a valid
+// input) is formatted under a spread of mode/width option sets, and must
+// be idempotent and render-preserving under each.
+func TestPropertyOverCorpus(t *testing.T) {
 	optionSets := []struct {
 		name string
 		opts mdreflow.Options
 	}{
-		{"sentence/smart-quotes", mdreflow.Options{Typography: mdreflow.SmartQuotes}},
-		{"sentence/ellipses", mdreflow.Options{Typography: mdreflow.Ellipses}},
-		{"sentence/both", mdreflow.Options{Typography: mdreflow.SmartQuotes | mdreflow.Ellipses}},
-		{"sentence-maxwidth-40/both", mdreflow.Options{MaxWidth: 40, Typography: mdreflow.SmartQuotes | mdreflow.Ellipses}},
-		{"para/both", mdreflow.Options{Mode: mdreflow.ModePara, Typography: mdreflow.SmartQuotes | mdreflow.Ellipses}},
-		{"wrap-30/both", mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 30, Typography: mdreflow.SmartQuotes | mdreflow.Ellipses}},
+		{"sentence", mdreflow.Options{}},
+		{"sentence-maxwidth-40", mdreflow.Options{MaxWidth: 40}},
+		{"para", mdreflow.Options{Mode: mdreflow.ModePara}},
+		{"wrap-30", mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 30}},
 	}
 
 	paths := corpusFixtures(t)
@@ -356,10 +248,10 @@ func TestTypographyOverCorpus(t *testing.T) {
 						// (go-quality review S5).
 						t.Skip("render-preservation check skipped: fixture matches a documented risky shape")
 					}
-					before := normalizeForRender(renderHTML(t, src), set.opts)
-					after := normalizeForRender(renderHTML(t, once), set.opts)
+					before := normalizeForRender(renderHTML(t, src))
+					after := normalizeForRender(renderHTML(t, once))
 					if before != after {
-						t.Errorf("rendered HTML changed beyond the typography substitutions.\n--- before ---\n%s\n--- after ---\n%s", before, after)
+						t.Errorf("rendered HTML changed.\n--- before ---\n%s\n--- after ---\n%s", before, after)
 					}
 				})
 			}

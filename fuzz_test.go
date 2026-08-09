@@ -840,26 +840,21 @@ func hasHardBreakDeclarationRisk(src []byte) bool {
 }
 
 // deriveOptions computes an mdreflow.Options from src's own bytes, so
-// FuzzFormat exercises all three modes, a spread of MaxWidth values, and
-// both typography flags without a second fuzz parameter (which would
-// require re-seeding every existing corpus entry with a paired
-// mode/width/typography byte). The derivation is a simple, deterministic
-// hash of src: fuzzing mutates src, which mutates the derived options
-// right along with the content being formatted, so the corpus ends up
-// covering combinations organically. Every field is always derived into a
-// combination Format accepts (MaxWidth forced to 0 whenever mode comes out
-// ModePara — see Options.MaxWidth's doc comment), since an error here
-// would always be a deriveOptions bug, never a Format bug worth failing
-// the fuzz target over.
+// FuzzFormat exercises all three modes and a spread of MaxWidth values
+// without a second fuzz parameter (which would require re-seeding every
+// existing corpus entry with a paired mode/width byte). The derivation is
+// a simple, deterministic hash of src: fuzzing mutates src, which mutates
+// the derived options right along with the content being formatted, so
+// the corpus ends up covering combinations organically. Every field is
+// always derived into a combination Format accepts (MaxWidth forced to 0
+// whenever mode comes out ModePara — see Options.MaxWidth's doc comment),
+// since an error here would always be a deriveOptions bug, never a Format
+// bug worth failing the fuzz target over.
 //
-// The typography bits come off two different bytes of the same hash than
-// mode and width do, so all four combinations (neither flag, either one,
-// both) occur across the corpus independently of which mode a given input
-// happens to select. Typography weakens no invariant the fuzz target
-// checks except render preservation, which FuzzFormat compensates for by
-// normalizing the substitutions back out of both sides of its comparison
-// (see normalizeForRender in format_test.go); idempotency, no-panic, and
-// structural correctness are still enforced unconditionally.
+// (Bits 16/17 of the hash once selected typography flags; typography is
+// removed, and the bits are deliberately left unused rather than
+// re-purposed so existing corpus entries keep deriving the same mode and
+// width they were minimized under.)
 func deriveOptions(src []byte) mdreflow.Options {
 	var h uint32
 	for _, b := range src {
@@ -870,40 +865,7 @@ func deriveOptions(src []byte) mdreflow.Options {
 	if mode != mdreflow.ModePara {
 		width = int((h >> 8) % 121) // 0..120: spans "unbounded"/"default" (0) through comfortably wider than most test prose.
 	}
-	var typo mdreflow.Typography
-	if (h>>16)&1 == 1 {
-		typo |= mdreflow.SmartQuotes
-	}
-	if (h>>17)&1 == 1 {
-		typo |= mdreflow.Ellipses
-	}
-	return mdreflow.Options{Mode: mode, MaxWidth: width, Typography: typo}
-}
-
-// caretDefShapeRE matches a footnote-shaped "[^label]:" opener anywhere in
-// src — a crude, unanchored net (not package blockmap's own precise
-// per-line shape check), deliberately broad enough to cover the caret
-// zone's adjacency corners this gate exists for.
-var caretDefShapeRE = regexp.MustCompile(`\[\^[^\[\]]*\]:`)
-
-// hasCaretDefTypographyAmbiguity reports whether src contains a footnote-
-// shaped "[^label]:" opener together with a typography-substitutable quote
-// or paren character ('"', '\”, '('). See its call site in FuzzFormat and
-// docs/design.md's Testing section for the documented scope gate this
-// gates: the caret zone (package blockmap's footnote exemption — see the
-// link-reference-definition zone section) is deliberately reflow-eligible,
-// and its residual adversarial corners — typography verdicts flipping next
-// to a "[^label]:" shape built out of quote soup — are owned by the
-// convergence backstop, not a seventh adjacency guard. Found by FuzzFormat
-// on "0\n[^0]:\n* \"0" (seed ec99ee890331d9f8): typography curls the lone
-// quote differently once reflow's own joining changes which characters sit
-// next to it, single-pass non-idempotent but a fixpoint once run through
-// the public, backstop-included Format.
-func hasCaretDefTypographyAmbiguity(src []byte) bool {
-	if !caretDefShapeRE.Match(src) {
-		return false
-	}
-	return bytes.ContainsAny(src, `"'(`)
+	return mdreflow.Options{Mode: mode, MaxWidth: width}
 }
 
 // FuzzFormat fuzzes Format across every testdata fixture as seed corpus
@@ -997,30 +959,6 @@ func FuzzFormat(f *testing.F) {
 		if err != nil {
 			t.Fatalf("Format(Format(x)) returned an error: %v", err)
 		}
-		caretGated := opts.Typography != 0 && (hasCaretDefTypographyAmbiguity(src) || hasCaretDefTypographyAmbiguity(out))
-		if caretGated {
-			// docs/design.md, Testing's documented scope gate: a footnote-
-			// shaped "[^label]:" opener sitting next to typography-
-			// substitutable quote characters is a caret-zone corner
-			// design.md deliberately leaves to the convergence backstop
-			// rather than a seventh adjacency guard (see the link-
-			// reference-definition zone section). Re-run the idempotency
-			// check against the *public* (backstop-included) Format —
-			// recomputing both calls from src, not reusing the single-pass
-			// `out` above, since the guarantee being checked here is the
-			// public Format's own fixpoint property, not single-pass
-			// idempotency.
-			mdreflow.SetConvergenceBackstop(true)
-			out, err = mdreflow.Format(src, opts)
-			if err != nil {
-				t.Fatalf("Format returned an error for opts %+v: %v", opts, err)
-			}
-			twice, err = mdreflow.Format(out, opts)
-			mdreflow.SetConvergenceBackstop(false)
-			if err != nil {
-				t.Fatalf("Format(Format(x)) returned an error: %v", err)
-			}
-		}
 		if !bytes.Equal(twice, out) {
 			t.Fatalf("Format is not idempotent.\nopts: %+v\nsrc:  %q\nonce: %q\ntwice: %q", opts, src, out, twice)
 		}
@@ -1038,17 +976,9 @@ func FuzzFormat(f *testing.F) {
 		// still meaningful, compare with the same whitespace
 		// normalization format_test.go uses.
 		//
-		// When deriveOptions turned on a typography flag, the comparison
-		// additionally folds the substitutions back out of both sides
-		// (normalizeForRender). That is not a fourth "risky shape"
-		// escape hatch: typography is design.md's one *intended*
-		// render-preservation exception, so the honest check is
-		// "nothing changed except what typography is licensed to
-		// change", not "skip the check entirely" — see
-		// normalizeForRender's doc comment.
-		if !caretGated && !hasRenderRiskyShape(src) && !hasRenderRiskyShape(out) {
-			before := normalizeForRender(renderHTML(t, src), opts)
-			after := normalizeForRender(renderHTML(t, out), opts)
+		if !hasRenderRiskyShape(src) && !hasRenderRiskyShape(out) {
+			before := normalizeForRender(renderHTML(t, src))
+			after := normalizeForRender(renderHTML(t, out))
 			if before != after {
 				t.Fatalf("rendered HTML changed.\nsrc: %q\nout: %q\n--- before ---\n%s\n--- after ---\n%s", src, out, before, after)
 			}
@@ -1069,14 +999,11 @@ func FuzzFormat(f *testing.F) {
 // existing check.
 //
 // Two former exceptions here — hasTypographySubstitutableInHTMLTag and
-// hasTypographySubstitutableInLinkDestination — are gone: package
-// segment's no-break-span derivation (used both by reflow's own line
-// breaking and, via segment.NoBreakSpans, by package typography's
-// substitution pass) now correctly finds an inline HTML tag with a "<"
-// inside a quoted attribute value, and correctly resolves nearest-opener
-// link brackets, so both underlying gaps are fixed rather than merely
-// gated. See internal/segment/nobreak.go's htmlTagSpans and
-// bracketedSpans doc comments, and mdreflow issue #3.
+// hasTypographySubstitutableInLinkDestination — are gone: their
+// underlying gaps in package segment's no-break-span derivation were
+// fixed rather than merely gated (see internal/segment/nobreak.go's
+// htmlTagSpans and bracketedSpans doc comments, and mdreflow issue #3),
+// and the typography feature they existed for has since been removed.
 func hasRenderRiskyShape(b []byte) bool {
 	return hasHardBreakAdjacentDelimiter(b) ||
 		hasMultilineCodeSpanCandidate(b) ||

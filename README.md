@@ -56,7 +56,7 @@ import "github.com/jbeda/mdreflow"
 out, err := mdreflow.Format(src, mdreflow.Options{})
 ```
 
-`Options{}` is valid and sensible: sentence mode, no width limit, typography off.
+`Options{}` is valid and sensible: sentence mode, no width limit.
 The full API reference is on [pkg.go.dev](https://pkg.go.dev/github.com/jbeda/mdreflow).
 
 ## Modes
@@ -74,7 +74,6 @@ Unknown keys and unrecognized values are a loud error (exit 2), not a silent no-
 ```yaml
 mode: sentence          # sentence | para | wrap
 max-width: 0
-typography: []          # any of: smart-quotes, ellipses (default: none)
 hard-breaks: br         # br | spaces | backslash
 abbreviations:          # additions to the built-in list
   - "et al."
@@ -84,13 +83,6 @@ exclude:                # gitignore syntax, matched like a .gitignore
 ```
 
 These are all the keys; `--strip-sentence-terminal-breaks` is flag-only.
-
-## Typography
-
-`--smart-quotes` curls straight quotes and `--ellipses` turns `...` into `…`.
-Both are off by default, because Markdown headed for prompts, diffs, and tooling usually wants plain ASCII, and both are the only options that change how a document renders.
-They apply to paragraph prose only: never inside inline code, links, autolinks, math, shortcodes, `{expr}` spans, or inline HTML, and never inside a skipped block like a code fence, front matter, or a table.
-Set them in `.mdreflow.yaml` as `typography: [smart-quotes, ellipses]`.
 
 ## Excludes
 

@@ -9,10 +9,9 @@
 // parser is used read-only to locate paragraph prose; output is produced
 // by splicing reflowed prose into the verbatim source bytes.
 //
-// The library API in docs/design.md is complete as of M5: all three
-// modes, MaxWidth, hard-break normalization, the abbreviation list, a
-// pluggable Segmenter, and the opt-in typography substitutions are all
-// implemented.
+// The library API in docs/design.md is complete: all three modes,
+// MaxWidth, hard-break normalization, the abbreviation list, and a
+// pluggable Segmenter are all implemented.
 package mdreflow
 
 import "github.com/jbeda/mdreflow/internal/segment"
@@ -56,36 +55,6 @@ const (
 	HardBreakBackslash
 )
 
-// Typography selects opt-in, span-level prose substitutions. They apply
-// to paragraph prose only: never inside an inline code span, a link or
-// its destination, an autolink, inline math, a footnote reference, an
-// inline shortcode or {expr} span, or an inline HTML/JSX tag, and never
-// inside a skipped construct (code block, front matter, table, raw HTML
-// block, dialect-skipped paragraph), which the reflow pipeline never
-// touches at all.
-//
-// Off by default: Markdown destined for prompts and tooling generally
-// wants ASCII. Typography is the documented exception to mdreflow's
-// render-preservation guarantee — changing quotes is its purpose — but
-// not to idempotency, which holds unconditionally.
-type Typography uint
-
-const (
-	// SmartQuotes substitutes straight quotes for curly quotes, using
-	// the standard open/close heuristic: a quote after start-of-text,
-	// whitespace, or opening punctuation opens; a quote after a word
-	// character or closing punctuation closes; an apostrophe inside a
-	// word is a right single quote ("don't", "the dog's"), as is a
-	// decade abbreviation's elided century ("the '90s"). It is a
-	// per-character heuristic, not a matching-pair stack; see package
-	// internal/typography for the cases it is deliberately naive about
-	// (prime/measurement marks, elisions other than decades).
-	SmartQuotes Typography = 1 << iota
-	// Ellipses substitutes "..." — exactly three periods, never part of
-	// a longer run — for "…" (U+2026).
-	Ellipses
-)
-
 // Span is a half-open byte range [Start, End) into the text passed to a
 // Segmenter's Breaks method.
 type Span = segment.Span
@@ -102,9 +71,9 @@ type Segmenter interface {
 }
 
 // Options configures Format, Check, and FormatReader. The zero value is
-// the default and is always valid: sentence mode, unbounded width, no
-// typography substitutions, <br> hard-break style, the built-in segmenter
-// with its default abbreviation list.
+// the default and is always valid: sentence mode, unbounded width, <br>
+// hard-break style, the built-in segmenter with its default abbreviation
+// list.
 type Options struct {
 	// Mode selects the reflow strategy. Zero value is ModeSentence.
 	Mode Mode
@@ -134,10 +103,6 @@ type Options struct {
 	//     single line unconditionally in this mode, so Format returns an
 	//     error for a non-zero MaxWidth rather than silently ignoring it.
 	MaxWidth int
-
-	// Typography enables opt-in prose substitutions. Zero value is off;
-	// see Typography for what each flag does and what it never touches.
-	Typography Typography
 
 	// HardBreaks selects the normalized hard-break style every preserved
 	// hard break is rewritten to. Zero value is HardBreakBr.

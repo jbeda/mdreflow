@@ -30,7 +30,7 @@ func TestFormatRejectsInvalidOptions(t *testing.T) {
 
 // TestFormatAcceptsEveryDocumentedOption checks that every option
 // docs/design.md's library API lists is accepted — the modes and
-// MaxWidth (M3) and the typography flags (M5).
+// MaxWidth (M3).
 func TestFormatAcceptsEveryDocumentedOption(t *testing.T) {
 	cases := []struct {
 		name string
@@ -40,9 +40,6 @@ func TestFormatAcceptsEveryDocumentedOption(t *testing.T) {
 		{"wrap mode", mdreflow.Options{Mode: mdreflow.ModeWrap}},
 		{"wrap mode zero width", mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 0}},
 		{"sentence mode max width", mdreflow.Options{MaxWidth: 40}},
-		{"smart quotes", mdreflow.Options{Typography: mdreflow.SmartQuotes}},
-		{"ellipses", mdreflow.Options{Typography: mdreflow.Ellipses}},
-		{"both typography flags", mdreflow.Options{Typography: mdreflow.SmartQuotes | mdreflow.Ellipses}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

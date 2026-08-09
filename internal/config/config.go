@@ -24,7 +24,6 @@ const FileName = ".mdreflow.yaml"
 type File struct {
 	Mode          string   `yaml:"mode"`
 	MaxWidth      int      `yaml:"max-width"`
-	Typography    []string `yaml:"typography"`
 	HardBreaks    string   `yaml:"hard-breaks"`
 	Abbreviations []string `yaml:"abbreviations"`
 	Exclude       []string `yaml:"exclude"`

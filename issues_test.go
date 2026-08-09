@@ -36,7 +36,7 @@ func TestInvalidUTF8Refused(t *testing.T) {
 func TestConvergenceBackstop(t *testing.T) {
 	// Issue #11's repro: single-pass non-idempotent until root-fixed.
 	src := []byte("[\\]\n]:0\n\"\"0")
-	opts := mdreflow.Options{Mode: mdreflow.ModePara, Typography: mdreflow.Ellipses}
+	opts := mdreflow.Options{Mode: mdreflow.ModePara}
 
 	out, err := mdreflow.Format(src, opts)
 	if err != nil {
@@ -89,13 +89,12 @@ func TestFuzzFamilyRegressions(t *testing.T) {
 			opts: mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 6},
 		},
 		{
-			name: "issue8-fence-escape-codespan-pairing-smartquotes",
+			// Originally fuzz-found with typography's SmartQuotes flag
+			// (since removed) exposing the pairing flip; the input keeps
+			// pinning the fence-escape/code-span-pairing shape itself.
+			name: "issue8-fence-escape-codespan-pairing",
 			src:  "\r~~~``'``1100X00",
-			opts: mdreflow.Options{
-				Mode:       mdreflow.ModeWrap,
-				MaxWidth:   25,
-				Typography: mdreflow.SmartQuotes | mdreflow.Ellipses,
-			},
+			opts: mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 25},
 		},
 		{
 			name: "issue10-sentence-boundary-double-space-consumed",
@@ -105,7 +104,7 @@ func TestFuzzFamilyRegressions(t *testing.T) {
 		{
 			name: "issue11-para-linkrefdef-skip-flip",
 			src:  "[\\]\n]:0\n\"\"0",
-			opts: mdreflow.Options{Mode: mdreflow.ModePara, Typography: mdreflow.Ellipses},
+			opts: mdreflow.Options{Mode: mdreflow.ModePara},
 		},
 		{
 			// The issue says "default sentence mode" but the split only
@@ -138,8 +137,8 @@ func TestFuzzFamilyRegressions(t *testing.T) {
 				t.Errorf("not idempotent.\nsrc:   %q\nonce:  %q\ntwice: %q", tc.src, once, twice)
 			}
 			if tc.checkRender {
-				before := normalizeForRender(renderHTML(t, []byte(tc.src)), tc.opts)
-				after := normalizeForRender(renderHTML(t, once), tc.opts)
+				before := normalizeForRender(renderHTML(t, []byte(tc.src)))
+				after := normalizeForRender(renderHTML(t, once))
 				if before != after {
 					t.Errorf("rendered HTML changed.\nsrc: %q\nout: %q\n--- before ---\n%s\n--- after ---\n%s", tc.src, once, before, after)
 				}

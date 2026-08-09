@@ -34,12 +34,12 @@ type Span struct {
 // ASCII trio. A literal "..." already matched (three separate members of
 // "[.!?]+" in one run) and was already treated as sentence-terminal, so a
 // paragraph reading "Well then... Next sentence." has always split there.
-// Options.Typography's Ellipses flag rewrites that run to a single "…"
-// rune, and without this addition the *second* Format pass over its own
-// output would no longer recognize the boundary the first pass had just
-// created — an idempotency break. Recognizing both spellings identically
-// and unconditionally (not gated on the typography flag) fixes it where
-// it belongs: the segmenter has no business caring which of two
+// (The since-removed typography Ellipses flag rewrote that run to a
+// single "…" rune, and without this addition the *second* Format pass
+// over its own output would no longer recognize the boundary the first
+// pass had just created — an idempotency break.) Recognizing both
+// spellings identically and unconditionally fixes it where it belongs:
+// the segmenter has no business caring which of two
 // renderings of the same punctuation the source happens to use. This is a
 // strict superset of the previous behavior — a literal "…" in input text,
 // which was simply never recognized as sentence-terminal before, now is,

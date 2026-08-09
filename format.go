@@ -12,7 +12,6 @@ import (
 	"github.com/jbeda/mdreflow/internal/gm"
 	"github.com/jbeda/mdreflow/internal/reflow"
 	"github.com/jbeda/mdreflow/internal/segment"
-	"github.com/jbeda/mdreflow/internal/typography"
 )
 
 // ErrInvalidUTF8 is returned (possibly wrapped) by Format, Check, and
@@ -41,9 +40,7 @@ var convergenceBackstop = true
 //
 // Format returns an error, without partial output, if src is not valid
 // UTF-8 (ErrInvalidUTF8) or opts is invalid: see the doc comments on Mode
-// and Options.MaxWidth. The one documented exception to byte-for-byte
-// pass-through of prose content is Options.Typography, which is off by
-// default.
+// and Options.MaxWidth.
 //
 // Format's output is a fixpoint: formatting it again returns it
 // unchanged. In the vanishingly rare case where reflow will not converge
@@ -64,7 +61,6 @@ func Format(src []byte, opts Options) ([]byte, error) {
 	rOpts := reflow.Options{
 		Mode:                        reflow.Mode(opts.Mode),
 		MaxWidth:                    opts.MaxWidth,
-		Typography:                  typography.Typography(opts.Typography),
 		HardBreaks:                  reflow.HardBreakStyle(opts.HardBreaks),
 		StripSentenceTerminalBreaks: opts.StripSentenceTerminalBreaks,
 	}

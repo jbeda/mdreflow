@@ -48,8 +48,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs.BoolVar(&ff.noGitignore, "no-gitignore", false, "do not consult .gitignore files when walking directories or checking excludes")
 	fs.StringVar(&ff.hardBreaks, "hard-breaks", "br", "hard line break style: br, spaces, or backslash")
 	fs.BoolVar(&ff.stripSentenceTerminalBreaks, "strip-sentence-terminal-breaks", false, "treat a trailing double-space immediately after sentence-terminal punctuation as an accidental hard break and remove it")
-	fs.BoolVar(&ff.smartQuotes, "smart-quotes", false, "substitute curly quotes for straight quotes in prose (never in code spans, links, or skipped blocks)")
-	fs.BoolVar(&ff.ellipses, "ellipses", false, `substitute "…" for "..." in prose (never in code spans, links, or skipped blocks)`)
 	fs.BoolVar(&ff.version, "version", false, "print version information to stdout and exit 0")
 
 	// Parse errors already name the offending flag; a pointer to --help

@@ -87,7 +87,6 @@ Configuration (.mdreflow.yaml):
 
     mode: sentence          # sentence | para | wrap
     max-width: 0
-    typography: []          # any of: smart-quotes, ellipses (default: none)
     hard-breaks: br         # br | spaces | backslash
     abbreviations:          # additions to the built-in list
       - "et al."
@@ -95,36 +94,11 @@ Configuration (.mdreflow.yaml):
       - "CHANGELOG.md"
       - "generated/**"
 
-  An unrecognized typography: value is a config error (exit 2), the same
-  as an unrecognized mode:. --smart-quotes and --ellipses override the
-  config key one flag at a time, in both directions: --smart-quotes=false
-  turns off what a config file turned on. These are the only config keys;
-  --strip-sentence-terminal-breaks is flag-only.
-
-Typography (off by default):
-
-  --smart-quotes rewrites straight quotes to curly ones using the
-  standard open/close heuristic: a quote after start-of-line,
-  whitespace, or opening punctuation opens; a quote after a word
-  character or closing punctuation closes; an apostrophe inside a word
-  ("don't", "the dog's") and a decade's elided century ("the '90s")
-  become a right single quote.
-
-  --ellipses rewrites exactly three periods to a single "…" character.
-  A longer run of periods is left alone.
-
-  Both apply to paragraph prose only. They never touch an inline code
-  span, a link or its destination, an autolink, inline math, a footnote
-  reference, an inline shortcode or {expr} span, or an inline HTML/JSX
-  tag — and never touch a skipped construct (code block, front matter,
-  table, raw HTML block) at all, since reflow does not process those.
-
-  These are the only options that change how a document renders. Every
-  other transformation mdreflow makes is render-preserving; typography
-  is deliberately opt-in for exactly that reason, since Markdown headed
-  for prompts, diffs, and tooling usually wants plain ASCII. Formatting
-  stays idempotent either way: running mdreflow twice with the same
-  flags produces the same bytes as running it once.
+  These are the only config keys; --strip-sentence-terminal-breaks is
+  flag-only. (Earlier releases had a typography: key and matching flags;
+  the feature was removed, so a leftover key is an unknown-key error —
+  substitute quotes and ellipses at render time instead, e.g. goldmark
+  Typographer or smartypants.)
 
 Excludes:
 

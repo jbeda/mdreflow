@@ -6,7 +6,7 @@ Release notes are narrative-first: CHANGELOG.md is the source of truth, and the 
 ## During development
 
 Every user-visible change adds a line to CHANGELOG.md's `## Unreleased` section **in the same commit**.
-Write entries in user terms ("`--smart-quotes` no longer curls quotes inside HTML attributes"), not commit-message terms.
+Write entries in user terms ("paragraphs documenting YAML syntax are no longer skipped"), not commit-message terms.
 
 ## Cutting a release
 

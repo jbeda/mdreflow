@@ -23,7 +23,6 @@ import (
 	"github.com/jbeda/mdreflow/internal/blockmap"
 	"github.com/jbeda/mdreflow/internal/gm"
 	"github.com/jbeda/mdreflow/internal/segment"
-	"github.com/jbeda/mdreflow/internal/typography"
 )
 
 // Segmenter is the subset of mdreflow.Segmenter the pipeline needs. A
@@ -73,12 +72,6 @@ type Options struct {
 	// responsible for rejecting MaxWidth != 0 with ModePara before this
 	// package ever sees it.
 	MaxWidth int
-	// Typography selects the opt-in span-level prose substitutions
-	// (smart quotes, ellipsis); 0 is off. Unlike Mode and
-	// HardBreakStyle, this needs no local mirror type: package
-	// typography is internal too, so both this package and format.go
-	// can name its type directly.
-	Typography typography.Typography
 	// HardBreaks selects the normalized hard-break style every preserved
 	// hard break is rewritten to.
 	HardBreaks HardBreakStyle
@@ -223,31 +216,6 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 				marker = m
 				text = rest
 			}
-		}
-		// Typography substitution happens here — on the whole joined
-		// cluster, *before* computeLines segments or wraps it — not on
-		// the per-line output afterwards. Two reasons:
-		//
-		//   - Idempotency of the ellipsis. Sentence segmentation must
-		//     see the same terminal punctuation on every pass. Pass 1
-		//     would segment against literal "..." and pass 2 against an
-		//     already-substituted "…"; substituting first makes both
-		//     passes segment the identical text. (segment.terminalRun
-		//     recognizes both spellings regardless, so the two agree —
-		//     but only doing the substitution up front makes that
-		//     agreement structural rather than incidental.)
-		//   - One mental model. Quote directionality is decided from
-		//     local raw-text context, which is unaffected by where a
-		//     later line break lands, so quotes could go either way;
-		//     keeping both substitutions in the same place, on the same
-		//     text, is simpler than splitting them.
-		//
-		// The protected ranges are computed on this same
-		// pre-substitution text, which is what lets Apply consult them
-		// by original-text byte position while a quote substitution
-		// grows from 1 byte to 3 (see typography.Apply).
-		if opts.Typography != 0 {
-			text = typography.Apply(text, segment.NoBreakSpans(fenceEscapeNeutralize(text)), opts.Typography)
 		}
 		// A fence-opener-shaped cluster is pre-escaped here, before
 		// computeLines ever measures or wraps it — not left for
@@ -1517,8 +1485,7 @@ func isFenceOpener(line string) bool {
 
 // fenceOpenerRunLen returns the length of line's leading run of backticks
 // and/or tildes — the run isFenceOpener recognizes and that
-// escapeBlockInterrupt's fence-opener branch (and fenceEscapeNeutralize)
-// both walk. Factored out so the two stay in lockstep.
+// escapeBlockInterrupt's fence-opener branch walks.
 func fenceOpenerRunLen(line string) int {
 	i := 0
 	for i < len(line) && (line[i] == '`' || line[i] == '~') {
@@ -1554,95 +1521,6 @@ func escapeFenceOpenerRun(line string) string {
 	}
 	b.WriteString(line[n:])
 	return b.String()
-}
-
-// fenceEscapeNeutralize returns text with its leading fence-opener run's
-// backtick characters (if any) replaced by tildes, matching the same
-// byte length so that a Span computed against the result still indexes
-// correctly into the real, unmodified text.
-//
-// This exists because a hard-break cluster's whole joined text (what flush
-// calls this with) always becomes its first *output* line's own leading
-// bytes — computeLines never introduces a break before position 0 — so a
-// fence-opener-shaped text is always, eventually, run through
-// escapeBlockInterrupt's fence-opener branch. That branch runs much later
-// (per output line, after wrapping), well after this cluster's
-// typography.Apply/segment.NoBreakSpans have already decided what to
-// protect from the *pre*-escape text. If the leading run is itself one
-// side of a genuine code span reaching further into the cluster,
-// pre-escape text answers a question about a span that will not survive
-// to the emitted output: escaping the run's backticks (whichever escape
-// form is used, backslash or the current HTML-entity form — see
-// escapeBlockInterrupt) removes them from ever pairing as a delimiter
-// again, so the span's *other* side goes unmatched, and whatever it used
-// to protect (e.g. a quote typography would otherwise leave alone)
-// reparses completely differently on the very next pass.
-//
-// Found by FuzzFormat (issue #8, see issues_test.go's
-// issue8-fence-escape-codespan-pairing-smartquotes for the exact repro
-// bytes: ModeWrap, SmartQuotes, a tilde-fence-shaped leading run whose
-// trailing backtick pair genuinely pairs with a later, matching backtick
-// pair further into the line): the leading run's backtick pair pairs
-// with that later one on the pre-escape text, so typography leaves the
-// apostrophe between them straight — but escaping the leading run to
-// defeat the tilde-fence
-// block trigger destroys that pairing, so a second pass (parsing the
-// first pass's own output fresh) finds no code span there at all and
-// curls it: an idempotency break, and incidentally a render-preservation
-// one too (the original source genuinely renders that apostrophe inside
-// a <code> span; escaping the fence run unavoidably loses it either way,
-// but the decision should agree with that loss immediately, not one pass
-// late). Neutralizing the run here — before NoBreakSpans ever sees it —
-// makes this cluster's *own* protection decision agree with what its
-// output will actually reparse as, so there is nothing left for a second
-// pass to disagree about.
-//
-// The placeholder is '~', not deletion or any other rewrite, specifically
-// to keep every later byte offset identical to the real text: the caller
-// passes this function's result to segment.NoBreakSpans only, and applies
-// the resulting spans against the real, unescaped text directly — no
-// offset remapping needed. '~' is never itself scanned by
-// segment.codeSpans (backtick-only) and is inert to every other
-// NoBreakSpans sub-scanner (brackets, autolinks, HTML tags, ...), none of
-// which treats a bare run of tildes specially.
-func fenceEscapeNeutralize(text string) string {
-	// Second instance of the same mismatch, for the link-ref-def escapes
-	// instead of the fence escape: a cluster that will itself be emitted
-	// def-opener-shaped gets its leading "[" backslash-escaped at
-	// emission, which destroys any bracketed span NoBreakSpans would
-	// otherwise derive from that "[" — and with it, e.g., smart-quote
-	// protection for a quote inside the brackets, which then curls one
-	// pass late. Found by FuzzFormat on "[^\\]:\"1A0]" in ModePara with
-	// SmartQuotes (seed 38cbdf400862101d). Neutralize the leading "["
-	// (length-preserving, same rationale as the fence case below) so the
-	// protection decision matches the escaped output's reparse.
-	if isCompleteLinkRefDefLine(text) || bareLinkRefDefOpenerLineRE.MatchString(text) {
-		// The opener bracket may sit after up to 3 columns of indent
-		// (up to 3 columns of indent); neutralize the bracket itself.
-		b := []byte(text)
-		i := 0
-		for i < len(b) && (b[i] == ' ' || b[i] == '\t') {
-			i++
-		}
-		if i < len(b) && b[i] == '[' {
-			b[i] = '~'
-		}
-		return string(b)
-	}
-	if !isFenceOpener(text) {
-		return text
-	}
-	n := fenceOpenerRunLen(text)
-	if !strings.ContainsRune(text[:n], '`') {
-		return text // pure tilde run: nothing here for codeSpans to see anyway
-	}
-	b := []byte(text)
-	for i := 0; i < n; i++ {
-		if b[i] == '`' {
-			b[i] = '~'
-		}
-	}
-	return string(b)
 }
 
 // orderedListRE matches an ordered-list marker: 1-9 digits followed by "."
@@ -1808,8 +1686,8 @@ func escapeBlockInterrupt(line string, isFirstLine bool, firstLinePrefix string,
 		// escaped, one of them can spuriously close against that
 		// dangling backtick on reparse — retroactively manufacturing a
 		// code span (and its no-break protection) that never existed,
-		// changing what a hard-break marker or a typography substitution
-		// downstream of it decided. Found by FuzzFormat (issues #6/#12)
+		// changing what a hard-break marker downstream of it decided.
+		// Found by FuzzFormat (issues #6/#12)
 		// on "`  \n    ```" in ModeWrap: the hard-break-separated "`"
 		// has no partner pre-escape, but pass 1's fence-defeating escape
 		// of the following "```" pairs one of its now-individual

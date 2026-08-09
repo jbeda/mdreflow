@@ -183,37 +183,6 @@ func TestTrailingBackslashCount(t *testing.T) {
 	}
 }
 
-// TestFenceEscapeNeutralize tables fenceEscapeNeutralize's doc comment:
-// non-fence-opener text passes through unchanged; a pure-tilde fence run
-// passes through unchanged; a backtick-containing fence run gets its
-// leading run's backticks replaced by tildes (same byte length), text
-// after the run untouched.
-func TestFenceEscapeNeutralize(t *testing.T) {
-	cases := []struct {
-		name string
-		text string
-		want string
-	}{
-		{"not a fence opener passes through", "hello world", "hello world"},
-		{"pure tilde fence unchanged", "~~~go", "~~~go"},
-		{"backtick fence run neutralized", "```go", "~~~go"},
-		{"mixed backtick tilde run in leading run neutralized", "```~go", "~~~~go"},
-		{"backtick fence with clean info string, rest untouched", "```code", "~~~code"},
-		{"empty string not a fence opener", "", ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := fenceEscapeNeutralize(tc.text)
-			if got != tc.want {
-				t.Errorf("fenceEscapeNeutralize(%q) = %q, want %q", tc.text, got, tc.want)
-			}
-			if len(got) != len(tc.text) {
-				t.Errorf("fenceEscapeNeutralize(%q) changed byte length: got %d, want %d", tc.text, len(got), len(tc.text))
-			}
-		})
-	}
-}
-
 // TestCanonicalizeForWidth tables canonicalizeForWidth's doc comment: a
 // space/tab/CR run containing a real space or tab collapses to one space
 // when it is 2+ bytes wide and not inside a no-break span; a pure-CR run,
