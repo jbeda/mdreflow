@@ -345,7 +345,7 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		return Paragraph{}, true
 	}
 	masked := maskCodeSpans(trimmed)
-	if hasUnbalancedBracket(masked) ||
+	if (hasUnbalancedBracket(masked) && couldFormLinkRefDef(masked)) ||
 		hasUnclosedDestParen(masked) ||
 		hasUnclosedAngleDestOpener(masked) {
 		// Fuzz-found content-loss hazard family, more severe than (and
@@ -1055,4 +1055,41 @@ func maskCodeSpans(trimmedLines []string) []string {
 		i = closed + run
 	}
 	return strings.Split(string(out), "\n")
+}
+
+// couldFormLinkRefDef reports whether a "]:" appears anywhere in the
+// paragraph, the only shape a link reference definition can be built from.
+//
+// hasUnbalancedBracket exists for one hazard, named in its own doc comment:
+// a definition *label* spanning a soft line break, so that reflow's join or
+// re-split changes which bytes complete it ("[\n0]:0\n\"\"0"). Every other
+// bracket construct tolerates a soft break in its label or text by
+// construction. CommonMark allows a newline inside inline-link text,
+// reference-link labels, image alt text and footnote labels, and label
+// matching collapses internal whitespace, so "[a\nb]" and "[a b]" resolve
+// to the same definition. The destination side, where a newline genuinely
+// is load-bearing, is guarded separately by hasUnclosedDestParen and
+// hasUnclosedAngleDestOpener.
+//
+// Without a "]:" no definition can form however the lines are rearranged,
+// so a spanning bracket is a wrapped link and safe to reflow. This is worth
+// more than tidiness: such a paragraph is otherwise a fixed point. It is
+// skipped because a link spans a break, and being skipped is exactly what
+// stops that break ever being removed, so it keeps its pre-reflow wrapping
+// permanently. Adopting sentence-per-line across a 27,848-line docset left
+// 60 such lines stranded, recoverable only by joining each link by hand.
+func couldFormLinkRefDef(trimmedLines []string) bool {
+	for _, line := range trimmedLines {
+		if strings.Contains(line, "]:") {
+			return true
+		}
+	}
+	// A "]" ending one line and a ":" opening the next is the same shape
+	// spread across the break.
+	for i := 0; i < len(trimmedLines)-1; i++ {
+		if strings.HasSuffix(trimmedLines[i], "]") && strings.HasPrefix(trimmedLines[i+1], ":") {
+			return true
+		}
+	}
+	return false
 }

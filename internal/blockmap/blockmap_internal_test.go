@@ -572,9 +572,11 @@ func TestCodeSpanBracketsDoNotArmGuards(t *testing.T) {
 	}{
 		{"code-span bracket spanning a break", "Queues N jobs\n(matrix on `runs-on: [self-hosted,\n<label>]`), analogous. Second.\n", true},
 		{"code span itself spans the break", "Text with `code [span\nacross` lines here. Second sentence.\n", true},
-		// An unmatched run opens no code span, so this bracket is outside one
-		// and keeps whatever behavior the guards already gave it.
-		{"unmatched backtick leaves the bracket outside any span", "Text with `unclosed [bracket\nand more. Second sentence.\n", false},
+		// An unmatched run opens no code span, so this bracket is outside
+		// one and the masking does not touch it. It is eligible only
+		// because the paragraph holds no "]:" for a definition to form
+		// from — see couldFormLinkRefDef.
+		{"unmatched backtick leaves the bracket outside any span", "Text with `unclosed [bracket\nand more. Second sentence.\n", true},
 		{"backtick run length must match to close", "A ``x `y` [z\nw`` here. Second sentence.\n", true},
 		{"real destination outside a code span still arms", "See [t](/a\nb) and `arr[0]` here. Second one.\n", false},
 		// inLinkRefDefZone runs ahead of the masking and is deliberately blunt
@@ -601,7 +603,10 @@ func TestParenGuardNarrowing(t *testing.T) {
 	}{
 		{"paren only, spanning", "A torus (a portal\nyou pass through) here. Second sentence.\n", true},
 		{"paren spanning with unrelated bracket elsewhere (#16)", "Control plane (GMC rolls to\nrc.6, [self-hosted] ready). Second sentence here.\n", true},
-		{"bracket spanning", "A torus [a portal\nyou pass through] here. Second sentence.\n", false},
+		// Narrowed here: with no "]:" anywhere, no definition can form, so a
+		// wrapped link is safe to reflow.
+		{"bracket spanning, no definition shape", "A torus [a portal\nyou pass through] here. Second sentence.\n", true},
+		{"bracket spanning into a definition shape", "A torus [a portal\nyou pass through]: /url here.\n", false},
 		{"bare def opener", "[0]:\n0\n\"\"0\n", false},
 		{"def opener mid-paragraph", "[! [0]:0\n0\n", false},
 		{"def title spanning", "[label]: /url (title\ncontinues) here. Second sentence.\n", false},
