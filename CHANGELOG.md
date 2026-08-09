@@ -11,6 +11,7 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ### Fixed
 
+- A bracket inside an inline code span no longer counts toward the spanning-delimiter safety guards, so paragraphs that document Markdown or YAML syntax (`` `runs-on: [self-hosted,` `` wrapping across a line) reflow instead of being skipped (#17, contributed by Karl Isenberg).
 - Paragraphs containing a link are no longer skipped just because a prose parenthetical spans a line break elsewhere in them (#16, reported with a proposed fix by Karl Isenberg): the guard now fires only on a `](`-opened paren left open at a line end — the one spelling that can open an inline link destination — instead of any unclosed paren in a paragraph that contains a `[` anywhere. On the reporter's 263-file docset this unblocks 137 files.
 - More scanner whitespace classes aligned with goldmark's, which treats a bare carriage return as whitespace where the spec says space/tab: table-delimiter-row and setext-underline recognition, two link-reference-definition opener shapes, and hard-break `<br>` marker detection.
   Fuzz-found on pathological input (paragraphs containing a bare CR); no effect on normal documents.
