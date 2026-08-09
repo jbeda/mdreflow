@@ -11,6 +11,7 @@ import (
 
 	"github.com/jbeda/mdreflow/internal/gm"
 	"github.com/jbeda/mdreflow/internal/reflow"
+	"github.com/jbeda/mdreflow/internal/render"
 	"github.com/jbeda/mdreflow/internal/segment"
 )
 
@@ -32,6 +33,15 @@ const maxFormatPasses = 4
 // idempotency oracles exercise the single-pass core — a planner that
 // needs the backstop is a bug to find, not behavior to mask.
 var convergenceBackstop = true
+
+// renderBackstop gates Format's render-preservation fallback. Always
+// true in production; the test harness turns it off (via export_test.go)
+// where it needs to observe the raw pipeline output, and a dedicated
+// corpus test asserts the backstop never trips on legitimate documents.
+// Like the convergence backstop it is for users and internally a bug
+// detector: any input that needs it is a planner bug to root-cause
+// (docs/design.md, "Render preservation is also structural").
+var renderBackstop = true
 
 // widthFloor gates the MinMaxWidth validation. Always true in production;
 // the test harness turns it off (via export_test.go) so the fuzzer and
@@ -86,11 +96,46 @@ func Format(src []byte, opts Options) ([]byte, error) {
 	for i := 1; i < maxFormatPasses; i++ {
 		next := formatOnce(cur, seg, rOpts)
 		if bytes.Equal(next, cur) {
-			return cur, nil
+			return renderChecked(src, cur, opts), nil
 		}
 		cur = next
 	}
 	return src, nil
+}
+
+// renderChecked is the render backstop (docs/design.md, "Render
+// preservation is also structural"): it returns out only if out renders
+// to the same normalized HTML as src, and src unchanged otherwise — "we
+// could not safely flow this" is a no-op, never corruption. The
+// comparison runs through internal/render, the production home of the
+// fuzz harness's render oracle, so "same" means "modulo the two
+// documented cosmetic normalizations" (soft-break whitespace, <br>
+// spelling) and nothing else.
+//
+// StripSentenceTerminalBreaks is the one option whose entire purpose is
+// a render change (removing an accidental hard break removes a <br>), so
+// the check is skipped when it is set — it is design.md's documented,
+// flag-reversible exception, and the flag is opt-in.
+//
+// A render error is treated as "cannot verify": src is returned
+// unchanged. In practice goldmark's renderer only fails on writer
+// errors, which a bytes.Buffer never produces.
+func renderChecked(src, out []byte, opts Options) []byte {
+	if !renderBackstop || opts.StripSentenceTerminalBreaks || bytes.Equal(src, out) {
+		return out
+	}
+	before, err := render.Normalized(src)
+	if err != nil {
+		return src
+	}
+	after, err := render.Normalized(out)
+	if err != nil {
+		return src
+	}
+	if before != after {
+		return src
+	}
+	return out
 }
 
 // segmenterAdapter bridges a caller-supplied Segmenter (whose Breaks

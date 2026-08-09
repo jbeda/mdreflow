@@ -1,6 +1,8 @@
 package mdreflow_test
 
 import (
+	"github.com/jbeda/mdreflow/internal/render"
+
 	"testing"
 
 	"github.com/jbeda/mdreflow"
@@ -44,8 +46,8 @@ func TestHardBreakStyleMatrix(t *testing.T) {
 					t.Errorf("Format(%s hard break, style %s) = %q, want %q", in.name, st.name, got, want)
 				}
 
-				before := normalizeWhitespace(renderHTML(t, []byte(in.src)))
-				after := normalizeWhitespace(renderHTML(t, got))
+				before := render.Normalize(renderHTML(t, []byte(in.src)))
+				after := render.Normalize(renderHTML(t, got))
 				if before != after {
 					t.Errorf("hard-break style normalization changed rendered HTML.\n--- before ---\n%s\n--- after ---\n%s", before, after)
 				}

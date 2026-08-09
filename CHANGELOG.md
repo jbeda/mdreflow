@@ -9,6 +9,10 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+### Added
+
+- Render preservation is now structurally guaranteed, not just tested for: after reflowing, `Format` renders the input and the output through the same parser and compares them (modulo soft-break whitespace and `<br>` spelling — the two documented cosmetic differences). On any other difference the document is returned unchanged, so an unknown formatter bug can now cost you a reflow, never your content. The opt-in `--strip-sentence-terminal-breaks` remains the one documented exception, since removing an accidental hard break is a render change by design.
+
 ### Changed
 
 - Running unattended on an untrusted tree is now hardened end to end: symlinks, FIFOs, and device nodes are refused (exit 3) instead of read or written through — a directory walk skips symlinks silently, `--force` remains the escape hatch; in-place writes go through a same-directory temp file and atomic rename, so a crash or full disk mid-write can no longer truncate a file; a discovered `.mdreflow.yaml` is capped at 1 MB and screened against YAML alias/nesting bombs before parsing; and config discovery stops at the enclosing git repository root (or your home directory outside one), so a config planted in a shared ancestor directory like `/tmp` no longer applies.

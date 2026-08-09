@@ -6,12 +6,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
-	"strings"
 	"testing"
 
-	"github.com/yuin/goldmark/text"
-
-	"github.com/jbeda/mdreflow/internal/gm"
+	"github.com/jbeda/mdreflow/internal/render"
 
 	"github.com/jbeda/mdreflow"
 )
@@ -88,12 +85,12 @@ func runGoldenCase(t *testing.T, srcPath, goldenPath string, opts mdreflow.Optio
 	})
 }
 
-// normalizeForRender applies normalizeWhitespace to rendered HTML before
-// comparison. (It once also folded typography substitutions back out of
-// both sides; typography is removed, so the whitespace normalization —
-// shared with the fuzz oracle — is all that remains.)
+// normalizeForRender normalizes rendered HTML before comparison. The
+// rules were promoted to internal/render when the render backstop made
+// them production code; the harness and the backstop now share one
+// definition by construction.
 func normalizeForRender(html string) string {
-	return normalizeWhitespace(html)
+	return render.Normalize(html)
 }
 
 // modeWidthRE extracts a fixture's encoded MaxWidth from its base name:
@@ -289,66 +286,52 @@ func mustModeWidth(t *testing.T, base string) int {
 // TestGoldenFixtures/render-preserving is apples to apples.
 func renderHTML(t *testing.T, src []byte) string {
 	t.Helper()
-	md := gm.New()
-	doc := md.Parser().Parse(text.NewReader(src))
-	var buf bytes.Buffer
-	if err := md.Renderer().Render(&buf, src, doc); err != nil {
+	h, err := render.HTML(src)
+	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	return buf.String()
+	return h
 }
 
-// whitespaceRun matches a run of whitespace, including the literal "\n"
-// goldmark's HTML renderer emits for a paragraph's soft line breaks.
-var whitespaceRun = regexp.MustCompile(`\s+`)
+// TestRenderBackstopNeverTripsOnCorpus asserts the render backstop is a
+// no-op on every legitimate document: for every fixture under every
+// option spread, the public Format (backstop enabled) must return the
+// same bytes as the raw pipeline (backstop disabled). A difference means
+// the backstop silently suppressed a reflow — the false-fallback bug
+// class the design doc names as this feature's own product risk (an
+// over-strict normalization would make ordinary documents mysteriously
+// stop reflowing, visible only as a diff nobody gets).
+func TestRenderBackstopNeverTripsOnCorpus(t *testing.T) {
+	optionSets := []struct {
+		name string
+		opts mdreflow.Options
+	}{
+		{"sentence", mdreflow.Options{}},
+		{"sentence-maxwidth-40", mdreflow.Options{MaxWidth: 40}},
+		{"para", mdreflow.Options{Mode: mdreflow.ModePara}},
+		{"wrap-30", mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 30}},
+	}
+	for _, set := range optionSets {
+		t.Run(set.name, func(t *testing.T) {
+			for _, path := range corpusFixtures(t) {
+				t.Run(filepath.ToSlash(path), func(t *testing.T) {
+					src := mustReadFile(t, path)
 
-// spaceBeforeBr matches a single space directly before a "<br>" tag, left
-// over after whitespaceRun has already collapsed any longer run to one
-// space.
-var spaceBeforeBr = regexp.MustCompile(` <br>`)
-
-// anyBrTag matches any spelling of a <br> tag: case-insensitive, optional
-// internal spacing, optional self-closing slash — e.g. "<Br>", "<BR />",
-// "<br/>". HTML tag names are case-insensitive per the HTML spec, so a
-// browser renders all of these identically; goldmark's raw-HTML pass-
-// through does not normalize them, so they can differ byte-for-byte
-// without differing in rendered meaning. HardBreakStyle normalization
-// canonicalizes to "<br>" regardless of which spelling the source used
-// (matching design.md's documented hard-break-style render-preservation
-// exception), so this rule canonicalizes both sides of a comparison the
-// same way — found by FuzzFormat on input "\x00<Br>\n00".
-var anyBrTag = regexp.MustCompile(`(?i)<br\s*/?>`)
-
-// normalizeWhitespace collapses whitespace runs to a single space before
-// comparing rendered HTML. Reflow moves *where* a paragraph's soft line
-// breaks fall without changing that they render as inter-word whitespace
-// (a browser collapses "\n" the same as " "), so a literal byte comparison
-// of the HTML would flag every reflowed paragraph as a false positive.
-//
-// It also drops a single leftover space immediately before "<br>". This is
-// a second, narrower normalization for a goldmark rendering quirk found by
-// FuzzFormat: CommonMark attaches no meaning to more than two trailing
-// spaces before a hard break, but goldmark's HTML renderer keeps
-// spaces-beyond-two as literal preceding text instead of also collapsing
-// them into the break, e.g. "x    \ny" (4 trailing spaces) renders as
-// "x <br>\ny", not "x<br>\ny". mdreflow's hard-break detection treats any
-// run of 2+ trailing spaces as one break (matching the CommonMark spec's
-// stated semantics, and required for HardBreakStyle normalization to have
-// one canonical output regardless of how many spaces the source used), so
-// it does not reproduce that single leftover space. Dropping it here
-// (after normalizeWhitespace, so it also can't reappear from an unrelated
-// spelled-out multi-space run elsewhere) treats it as the goldmark
-// rendering artifact it is, not a real content difference — a browser
-// collapses that one space against the block boundary identically either
-// way.
-//
-// Both normalizations are applied identically to both sides of every
-// comparison, so neither can mask a real content change — only the two
-// cosmetic differences reflow (and hard-break normalization) are
-// explicitly allowed to make.
-func normalizeWhitespace(html string) string {
-	s := whitespaceRun.ReplaceAllString(html, " ")
-	s = anyBrTag.ReplaceAllString(s, "<br>")
-	s = spaceBeforeBr.ReplaceAllString(s, "<br>")
-	return strings.TrimSpace(s)
+					withBackstop, err := mdreflow.Format(src, set.opts)
+					if err != nil {
+						t.Fatalf("Format: %v", err)
+					}
+					mdreflow.SetRenderBackstop(false)
+					raw, err := mdreflow.Format(src, set.opts)
+					mdreflow.SetRenderBackstop(true)
+					if err != nil {
+						t.Fatalf("Format (backstop off): %v", err)
+					}
+					if !bytes.Equal(withBackstop, raw) {
+						t.Errorf("render backstop suppressed a reflow.\n--- raw pipeline ---\n%s\n--- with backstop ---\n%s", raw, withBackstop)
+					}
+				})
+			}
+		})
+	}
 }

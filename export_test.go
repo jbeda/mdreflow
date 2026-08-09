@@ -9,6 +9,15 @@ func SetConvergenceBackstop(enabled bool) {
 	convergenceBackstop = enabled
 }
 
+// SetRenderBackstop enables or disables Format's render-preservation
+// fallback for tests. The harness turns it off where it needs the raw
+// pipeline output; TestRenderBackstopNeverTripsOnCorpus asserts the
+// enabled path is a no-op on every legitimate fixture. Not safe to
+// toggle from parallel tests.
+func SetRenderBackstop(enabled bool) {
+	renderBackstop = enabled
+}
+
 // SetWidthFloor enables or disables the MinMaxWidth validation for tests.
 // The harness turns it off so the fuzzer and the narrow-width fixtures
 // drive the unrestricted core (docs/design.md, "The width floor"). Not

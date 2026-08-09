@@ -63,3 +63,25 @@ func BenchmarkFormat(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkFormatRawPipeline is BenchmarkFormat's control with the render
+// backstop disabled: the delta between the two is the backstop's cost
+// (two extra parse+render+normalize passes per changed document), pinned
+// here so a regression in it is visible.
+func BenchmarkFormatRawPipeline(b *testing.B) {
+	mdreflow.SetRenderBackstop(false)
+	defer mdreflow.SetRenderBackstop(true)
+	for _, words := range []int{400, 1600} {
+		src := benchParagraph(words)
+		b.Run(fmt.Sprintf("wrap80/words=%d", words), func(b *testing.B) {
+			b.SetBytes(int64(len(src)))
+			b.ReportAllocs()
+			opts := mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 80}
+			for i := 0; i < b.N; i++ {
+				if _, err := mdreflow.Format(src, opts); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
