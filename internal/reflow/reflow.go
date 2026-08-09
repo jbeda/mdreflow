@@ -177,7 +177,7 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 	var outLines []outLine
 	var curLines []lineFrag
 
-	flush := func(marker string) {
+	flush := func(marker string, lastCluster bool) {
 		if len(curLines) == 0 && marker == "" {
 			return
 		}
@@ -194,14 +194,18 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 			// spelling is legitimate and cannot be dropped from
 			// hardBreakBrRE). Run the same detection pass 2 will run on
 			// this joined line, so pass 1 already speaks with pass 2's
-			// voice. isLastLine=false: the cluster boundary this flush
+			// voice. The cluster boundary a non-final flush
 			// creates means a following line exists in the emitted
-			// paragraph whenever the manufactured marker could matter,
-			// and pass 2's twice-output on the fuzz find shows goldmark's
-			// per-line pass normalizes even a paragraph-final one.
-			// insideSpan=false matches the per-line call for a line whose
-			// span context the join has already resolved.
-			if m, rest := detectHardBreak(text, opts, false, false); m != "" {
+			// paragraph whenever the manufactured marker could matter.
+			// lastCluster threads the same isLastLine semantics the
+			// per-line calls use: a paragraph-final backslash or double
+			// space is NOT a break (a lone "\" document must stay a lone
+			// "\" — seed 577e36abd20bf697 pinned the regression from an
+			// earlier hardcoded false here), while the br-tag form
+			// normalizes even paragraph-finally, exactly as pass 2's
+			// per-line pass would. insideSpan=false matches the per-line
+			// call for a line whose span context the join has resolved.
+			if m, rest := detectHardBreak(text, opts, lastCluster, false); m != "" {
 				marker = m
 				text = rest
 			}
@@ -283,7 +287,7 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 		content := rawContents[i]
 
 		if p.Boundary[i] {
-			flush("")
+			flush("", false)
 			text := content
 			verbatim := false
 			if i > 0 {
@@ -340,7 +344,7 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 			trailingProtected: insideSpanAfter[i],
 		})
 		if marker != "" || i == n-1 {
-			flush(marker)
+			flush(marker, i == n-1)
 		}
 	}
 
