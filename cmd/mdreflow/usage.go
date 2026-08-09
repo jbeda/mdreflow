@@ -103,8 +103,8 @@ Configuration (.mdreflow.yaml):
       - "CHANGELOG.md"
       - "generated/**"
 
-  The default dialect, gfm, is the GitHub-flavored superset mdreflow
-  has always parsed (GFM extensions plus footnotes). --dialect mkdocs
+  The default dialect, gfm, is the permissive GitHub-flavored superset:
+  GFM extensions plus footnotes. --dialect mkdocs
   additionally reflows MkDocs/Python-Markdown admonition bodies
   ("!!! note" plus a 4-space-indented body), which CommonMark parsers
   read as code blocks — opt-in because that changes what a CommonMark

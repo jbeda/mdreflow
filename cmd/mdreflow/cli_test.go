@@ -793,8 +793,8 @@ func TestRunDialectCommonmarkIsReservedError(t *testing.T) {
 	if code != exitUsage {
 		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitUsage, errOut)
 	}
-	if !strings.Contains(errOut, "reserved") || !strings.Contains(errOut, "gfm") {
-		t.Errorf("stderr = %q, want a reserved-name explanation pointing at gfm", errOut)
+	if !strings.Contains(errOut, "future") || !strings.Contains(errOut, "gfm") {
+		t.Errorf("stderr = %q, want a kept-for-the-future explanation pointing at gfm", errOut)
 	}
 }
 

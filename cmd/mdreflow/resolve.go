@@ -120,10 +120,8 @@ func (c *configCache) resolve(dir, explicitPath string) (*config.File, string, e
 
 // resolvedOptions is the outcome of merging built-in defaults, a
 // discovered config file, and explicit CLI flags for one target.
-// (It once also carried excludePatterns/excludeBase, computed and never
-// read — the excluder does its own config lookup. Deleted per the
-// go-quality review's N6: two paths to the same answer, one unused, is
-// silent drift waiting to happen.)
+// Exclude patterns are deliberately not carried here: the excluder does
+// its own config lookup, and a second copy would be drift bait.
 type resolvedOptions struct {
 	opts mdreflow.Options
 }
@@ -213,7 +211,7 @@ func parseDialect(s string) (mdreflow.Dialect, error) {
 	case "mkdocs":
 		return mdreflow.DialectMkDocs, nil
 	case "commonmark":
-		return 0, fmt.Errorf("dialect %q is reserved: the default profile is %q (GitHub-flavored, what mdreflow has always parsed); a strict commonmark profile may exist later", s, "gfm")
+		return 0, fmt.Errorf("dialect %q is not accepted: the default profile is %q (the GitHub-flavored superset); the commonmark name is kept for a possible future strict profile", s, "gfm")
 	}
 	return 0, fmt.Errorf("unsupported dialect %q (want one of: gfm, mkdocs)", s)
 }

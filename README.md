@@ -71,7 +71,7 @@ The full API reference is on [pkg.go.dev](https://pkg.go.dev/github.com/jbeda/md
 
 ## Dialects
 
-The default dialect, `gfm`, is the GitHub-flavored superset mdreflow has always parsed (GFM plus footnotes); Docusaurus, Hugo, and MDX constructs are recognized and passed through untouched in every dialect.
+The default dialect, `gfm`, is the permissive GitHub-flavored superset: GFM extensions plus footnotes. Docusaurus, Hugo, and MDX constructs are recognized and passed through untouched in every dialect.
 `--dialect mkdocs` additionally reflows MkDocs/Python-Markdown admonition bodies (`!!! note` followed by a 4-space-indented body), which CommonMark parsers can only see as indented code blocks — opt-in because reflowing one changes what a CommonMark renderer emits.
 Recognition is deliberately narrow: bodies containing a fence marker or more than one paragraph are left alone.
 

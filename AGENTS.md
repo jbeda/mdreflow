@@ -42,7 +42,8 @@ Releases follow RELEASING.md.
 Every user-visible change adds a line to CHANGELOG.md's Unreleased section in the same commit, written in user terms.
 
 Any change to the user-facing surface — a flag, a config key, an exit code, a public API symbol, a dialect — updates **all three doc surfaces in the same commit**: `--help` (cmd/mdreflow/usage.go, the complete agent-facing reference), README.md (the front door; its Configuration block presents itself as the complete key list, so an omission there is a false claim), and CHANGELOG.md.
-The #19 merge shipped `--dialect` in help and changelog but not the README — this rule exists so that class of drift is caught at commit time, not by a reader.
+
+Docs and comments describe **current state only** — no history, no "used to", no references to the change that introduced a thing. History lives in git and CHANGELOG.md; everywhere else it is confusion.
 
 ## Verify before declaring done
 

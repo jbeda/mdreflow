@@ -93,13 +93,12 @@ const MinMaxWidth = 20
 type Dialect = opts.Dialect
 
 const (
-	// DialectGFM is the default and names the configuration mdreflow has
-	// always parsed with: the permissive GitHub-flavored superset (GFM
-	// extensions plus footnotes). Existing behavior, renamed rather than
-	// changed. There is deliberately no "commonmark" value yet — that
-	// name is reserved for a possible future strict profile with the GFM
-	// extensions off, and aliasing it to the default would burn the name
-	// on the one thing it doesn't accurately describe.
+	// DialectGFM is the default: the permissive GitHub-flavored superset
+	// (GFM extensions plus footnotes). There is deliberately no
+	// "commonmark" value — that name is kept for a possible future
+	// strict profile with the GFM extensions off, and aliasing it to the
+	// default would burn the name on the one thing it doesn't accurately
+	// describe.
 	DialectGFM Dialect = opts.DialectGFM
 	// DialectMkDocs additionally reflows MkDocs / Python-Markdown
 	// admonition bodies ("!!! note" plus a 4-space-indented body). A
