@@ -687,8 +687,26 @@ func hasMultilineInlineTagCandidate(src []byte) bool {
 		if unclosedTagAtLineEndRE.Match(line) {
 			return true
 		}
-		if k := max(bytes.LastIndex(line, []byte("<?")), bytes.LastIndex(line, []byte("<!"))); k >= 0 && !bytes.ContainsRune(line[k:], '>') {
-			return true
+		// Each non-tag inline raw-HTML construct has its OWN terminator,
+		// not a bare ">": a processing instruction ends at "?>", an HTML
+		// comment at "-->", a CDATA section at "]]>", and only a
+		// declaration ("<!" + anything else) ends at ">". Testing them all
+		// against ">" left "0<?0>0  \n?>" ungated — its interior ">" is
+		// ordinary PI content, so the construct really does span the line
+		// (seed c9c2958ff1a32f79, the third find in this family).
+		for _, c := range []struct{ open, close string }{
+			{"<!--", "-->"},
+			{"<![CDATA[", "]]>"},
+			{"<?", "?>"},
+			{"<!", ">"},
+		} {
+			k := bytes.LastIndex(line, []byte(c.open))
+			if k < 0 {
+				continue
+			}
+			if !bytes.Contains(line[k+len(c.open):], []byte(c.close)) {
+				return true
+			}
 		}
 	}
 	return false

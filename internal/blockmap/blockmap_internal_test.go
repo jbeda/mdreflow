@@ -398,6 +398,32 @@ func TestHasUnbalancedBracketAndDestParen(t *testing.T) {
 	}
 }
 
+// TestHasBacktickInBareURL tables hasBacktickInBareURL: a backtick inside
+// a linkify-eligible bare URL token (seed 41e98cb4c9e00729), including the
+// mid-token spelling linkify also fires on.
+func TestHasBacktickInBareURL(t *testing.T) {
+	cases := []struct {
+		name  string
+		lines []string
+		want  bool
+	}{
+		{"backtick inside a scheme URL", []string{"see http://e.m/`x here"}, true},
+		{"backtick inside a www URL", []string{"see www.e.m/`x here"}, true},
+		{"mid-token URL after a stray \"](\"", []string{"[a](https://e.m/p`q rest"}, true},
+		{"URL without a backtick", []string{"see http://e.m/x here"}, false},
+		{"backtick without a URL", []string{"see `code` here"}, false},
+		{"backtick and URL in separate tokens", []string{"see `code` and http://e.m/x"}, false},
+		{"no lines", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hasBacktickInBareURL(tc.lines); got != tc.want {
+				t.Errorf("hasBacktickInBareURL(%v) = %v, want %v", tc.lines, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestHasEmptyLine checks hasEmptyLine's simple membership test.
 func TestHasEmptyLine(t *testing.T) {
 	cases := []struct {

@@ -317,6 +317,33 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// shape-based predicate — see its own doc comment.
 		return Paragraph{}, true
 	}
+	if hasBacktickInBareURL(trimmed) {
+		// A backtick inside a GFM-linkify-eligible bare URL is not a code
+		// span delimiter to goldmark — linkify's URL parser consumes it
+		// into the link destination before the code-span parser can see
+		// it — so every backtick after it pairs one delimiter out of step
+		// with what this package's own scanner (segment.CodeSpans, which
+		// does not model linkify) computes. The protected no-break spans
+		// then cover the wrong bytes and a break can land *inside* a real
+		// code span, where a newline is whitespace: found by FuzzFormat on
+		// "http://e.m/` ``e`\tg `" (seed 41e98cb4c9e00729, minimized from
+		// a 4 KB corpus-derived input), whose real span content "\tg "
+		// became " g " once the tab was replaced by the break, which
+		// CommonMark then strips at both edges to "g" — a rendered content
+		// change.
+		//
+		// Skipping the paragraph rather than teaching segment.CodeSpans to
+		// model linkify is deliberate, and not the usual bluntness trade:
+		// mirroring linkify's grammar (scheme and "www." forms, email
+		// forms, and its trailing-punctuation trimming rules) is exactly
+		// the kind of hand-mirrored grammar this codebase has repeatedly
+		// lost to implementation quirks (see isCompleteLinkRefDefLine's
+		// history), and here a wrong mirror would misjudge the no-break
+		// spans of the very many *ordinary* documents that contain URLs.
+		// The skip costs only paragraphs with a backtick inside a bare
+		// URL, which is close to nonexistent in real prose.
+		return Paragraph{}, true
+	}
 	if hasUnbalancedBracket(trimmed) ||
 		hasUnclosedDestParen(trimmed) ||
 		hasUnclosedAngleDestOpener(trimmed) {
@@ -785,6 +812,39 @@ var unterminatedTagStartRE = regexp.MustCompile(`^<[A-Za-z]`)
 // why this triggers a whole-paragraph skip.
 func looksLikeUnterminatedTag(firstLineTrimmed string) bool {
 	return unterminatedTagStartRE.MatchString(firstLineTrimmed) && !strings.ContainsRune(firstLineTrimmed, '>')
+}
+
+// linkifyStartRE matches where GFM's linkify extension turns text into a
+// bare link: a scheme-prefixed URL, a "www."-prefixed one, or an email
+// address. Same shape as package reflow's linkifyTokenStart (kept as an
+// independent copy — the two serve different roles: that one decides
+// whether a break may move a token, this one decides whether to skip a
+// paragraph) but deliberately UNANCHORED: linkify fires mid-token too,
+// e.g. after a "](" that never opened a real link, which is exactly the
+// shape seed 41e98cb4c9e00729 carries.
+var linkifyStartRE = regexp.MustCompile(
+	"(?i)(?:[a-z][a-z0-9+.-]*://|www\\.|[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\\.[a-z0-9-]+)+)")
+
+// hasBacktickInBareURL reports whether any whitespace-delimited token in
+// trimmedLines both starts like a linkify-eligible bare URL and contains
+// a backtick — see build's call site for the code-span pairing hazard.
+//
+// Verdict-stable by construction: a matching paragraph is skipped whole,
+// so its own tokens never move, and reflow can never *create* such a
+// token in another paragraph (joining lines inserts a space between
+// fragments, so two tokens never fuse; splitting only breaks tokens
+// apart).
+func hasBacktickInBareURL(trimmedLines []string) bool {
+	for _, line := range trimmedLines {
+		for _, tok := range strings.FieldsFunc(line, func(r rune) bool {
+			return r == ' ' || r == '\t' || r == '\r'
+		}) {
+			if strings.Contains(tok, "`") && linkifyStartRE.MatchString(tok) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // hasUnbalancedBracket reports whether trimmedLines, taken together (a
