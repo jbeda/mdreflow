@@ -660,3 +660,35 @@ func TestParenGuardNarrowing(t *testing.T) {
 		})
 	}
 }
+
+// TestMaskCodeSpansRequiresBareURLGuard pins maskCodeSpans's ordering
+// invariant (issue #28): its backtick pairing does not model GFM
+// linkify, so on a paragraph with a backtick inside a bare URL it masks
+// bytes goldmark treats as live prose — here swallowing a real
+// "[label]:" opener, which flips couldFormLinkRefDef. The guard that
+// makes this harmless is hasBacktickInBareURL returning first in build;
+// this test fails loudly if either half of that arrangement changes.
+func TestMaskCodeSpansRequiresBareURLGuard(t *testing.T) {
+	lines := []string{"see http://e.m/` and [label]: http://x.example/ ` tail"}
+
+	if !hasBacktickInBareURL(lines) {
+		t.Fatal("hasBacktickInBareURL = false; the guard that shields maskCodeSpans's linkify blind spot no longer covers this input")
+	}
+	// Directly demonstrate the blind spot the guard exists to shield:
+	// masking must disagree with the raw text about the definition
+	// opener. If this ever passes with agreement, maskCodeSpans has
+	// learned about linkify and the ordering invariant can be relaxed.
+	if !couldFormLinkRefDef(lines) {
+		t.Fatal("couldFormLinkRefDef(raw) = false, want true: the input contains a literal \"[label]:\"")
+	}
+	if couldFormLinkRefDef(maskCodeSpans(lines)) {
+		t.Fatal("couldFormLinkRefDef(masked) = true; masking no longer swallows the opener — revisit whether the ordering invariant still holds")
+	}
+
+	// End to end: the paragraph must be skipped.
+	src := []byte(lines[0] + "\n")
+	doc := gm.New().Parser().Parse(text.NewReader(src))
+	if got := len(Paragraphs(doc, src)); got != 0 {
+		t.Fatalf("Paragraphs = %d, want 0: a backtick inside a bare URL must skip the paragraph before masking can misfire", got)
+	}
+}

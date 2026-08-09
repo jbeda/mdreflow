@@ -270,12 +270,24 @@ Residual adversarial corners in the caret zone are owned by the emission escapes
 ### Spanning-construct guards: skip only what can actually span
 
 A CommonMark inline link's label and destination can each span a soft line break, so reflow's line-joining and line-splitting can change what they parse to.
-Three whole-paragraph skip guards defend this, each scoped to the shape that can actually start the hazard:
+Two preparation steps and three whole-paragraph skip arms defend this, each scoped to the shape that can actually start the hazard:
 
-- **Bracket arm**: any `[` left structurally open at a line's end (even one
-  a later line closes — the span across the break is itself the hazard).
-  A bare `[` is enough to start a label or definition, so this arm stays
-  broad; measured cost on a real docset was 17 paragraphs.
+**Linkify pre-check.** A paragraph with a backtick inside a GFM-linkify-eligible bare URL is skipped outright before anything else runs: linkify consumes such a backtick into the link destination, so every later backtick pairs one delimiter out of step with this package's own code-span scanning, which deliberately does not model linkify's grammar (scheme/`www.`/email forms plus trailing-punctuation trimming — a hand-mirror this codebase refuses to attempt; the skip costs only paragraphs with a backtick inside a bare URL, near-nonexistent in real prose).
+This check must stay ahead of the masking step below, which shares the same blind spot — `maskCodeSpans`'s doc comment and `TestMaskCodeSpansRequiresBareURLGuard` pin the ordering (issue #28).
+
+**Code-span masking.** The three arms scan a copy of the paragraph with every closed inline code span's interior replaced by filler bytes (same byte geometry, CommonMark's run-length pairing rule). A bracket or paren inside a code span is literal and can open nothing, so it arms no guard — paragraphs that merely *document* Markdown or YAML syntax (`` `runs-on: [self-hosted,` `` wrapping across a line) reflow. An unmatched backtick run opens no span and masks nothing, so a bracket after one still arms normally.
+
+- **Bracket arm**: a `[` left structurally open at a line's end (even one
+  a later line closes — the span across the break is itself the hazard),
+  but only in a paragraph that also contains a `]:` — on one line, or as
+  `]` ending one line with `:` opening the next — the only shape a link
+  reference definition can be built from. Without it, no rearrangement of
+  the lines can form a definition (CommonMark permits a newline inside
+  every other bracket construct's label or text, and label matching
+  collapses internal whitespace), so a wrapped link is safe to reflow —
+  and needs to be, since a skipped-because-wrapped paragraph is otherwise
+  a permanent fixed point: the skip preserves the very break that causes
+  it.
 - **Destination-paren arm**: a `(` left open at a non-final line's end
   skips the paragraph only if that specific paren was opened by `](` — the
   only spelling that opens an inline destination, since CommonMark admits
@@ -283,9 +295,7 @@ Three whole-paragraph skip guards defend this, each scoped to the shape that can
   its own armed flag (a stack, not a depth-0 check: the hazard nests
   inside ordinary prose parens). An ordinary prose parenthetical spanning
   a line break arms nothing and keeps reflowing regardless of what
-  brackets appear elsewhere in the paragraph (issues #14 and #16: the
-  earlier any-`[`-in-paragraph gate stalled sentence-per-line adoption on
-  every link-containing paragraph — 137 files on a 263-file docset).
+  brackets appear elsewhere in the paragraph.
 - **Angle-destination arm**: `](` then optional spaces then `<` with no
   `>` on the same line — joining can complete it into a real
   angle-bracket destination.

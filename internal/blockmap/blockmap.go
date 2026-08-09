@@ -1021,6 +1021,20 @@ func hasUnclosedDelimiterAcrossLine(trimmedLines []string, open, close byte) boo
 // literal text and is deliberately left unmasked — that is what keeps an
 // unclosed "`unclosed [bracket" arming the guard, where the bracket is
 // ordinary prose and the paragraph really is hazardous.
+//
+// ORDERING INVARIANT (issue #28): this pairing does not model GFM
+// linkify, so a backtick inside a linkify-eligible bare URL — which
+// goldmark consumes into the link destination, never a delimiter — pairs
+// one out of step here and masks bytes goldmark treats as live prose,
+// including a real "[label]:" opener (which would disarm
+// couldFormLinkRefDef on a paragraph that genuinely contains a
+// definition). This function is only sound because build's
+// hasBacktickInBareURL check returns first and skips every such
+// paragraph before masking runs. Anyone narrowing that guard must keep
+// this blind spot covered; TestMaskCodeSpansRequiresBareURLGuard pins
+// the dependency. The render backstop bounds the damage if this ever
+// regresses — a wrongly-disarmed guard becomes a reverted reflow, not
+// content loss — but a silently dead guard is still a bug.
 func maskCodeSpans(trimmedLines []string) []string {
 	joined := strings.Join(trimmedLines, "\n")
 	b := []byte(joined)
