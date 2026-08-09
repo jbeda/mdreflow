@@ -31,6 +31,14 @@ const (
 	HardBreakBackslash
 )
 
+// Dialect selects the renderer profile; see mdreflow.Dialect.
+type Dialect int
+
+const (
+	DialectGFM Dialect = iota
+	DialectMkDocs
+)
+
 // Span is a half-open byte range [Start, End). The public
 // mdreflow.Span is a distinct, concrete struct with the same shape —
 // not an alias — so pkg.go.dev shows its fields (go-quality review S3);

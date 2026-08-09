@@ -14,6 +14,7 @@ import (
 // beats config even at its zero value).
 type flags struct {
 	mode                        string
+	dialect                     string
 	maxWidth                    int
 	check                       bool
 	diff                        bool
@@ -148,11 +149,25 @@ func mergeOptions(f *flags, cfg *config.File, cfgDir string) (resolvedOptions, e
 			}
 			opts.HardBreaks = hb
 		}
+		if cfg.Dialect != "" {
+			d, err := parseDialect(cfg.Dialect)
+			if err != nil {
+				return r, fmt.Errorf("config: %w", err)
+			}
+			opts.Dialect = d
+		}
 		opts.Abbreviations = append(opts.Abbreviations, cfg.Abbreviations...)
 		r.excludePatterns = cfg.Exclude
 		r.excludeBase = cfgDir
 	}
 
+	if f.isSet("dialect") {
+		d, err := parseDialect(f.dialect)
+		if err != nil {
+			return r, fmt.Errorf("--dialect: %w", err)
+		}
+		opts.Dialect = d
+	}
 	if f.isSet("mode") {
 		m, err := parseMode(f.mode)
 		if err != nil {
@@ -183,4 +198,22 @@ func mergeOptions(f *flags, cfg *config.File, cfgDir string) (resolvedOptions, e
 
 	r.opts = opts
 	return r, nil
+}
+
+// parseDialect validates a dialect name. An unrecognized value is a loud
+// error, matching mode: a typo must not silently disable the recognition
+// it was meant to enable. "commonmark" is rejected with its own message:
+// the name is reserved for a possible future strict profile (GFM
+// extensions off), and quietly aliasing it to the gfm default would both
+// burn the name and mislead about what the parser actually does.
+func parseDialect(s string) (mdreflow.Dialect, error) {
+	switch s {
+	case "", "gfm":
+		return mdreflow.DialectGFM, nil
+	case "mkdocs":
+		return mdreflow.DialectMkDocs, nil
+	case "commonmark":
+		return 0, fmt.Errorf("dialect %q is reserved: the default profile is %q (GitHub-flavored, what mdreflow has always parsed); a strict commonmark profile may exist later", s, "gfm")
+	}
+	return 0, fmt.Errorf("unsupported dialect %q (want one of: gfm, mkdocs)", s)
 }

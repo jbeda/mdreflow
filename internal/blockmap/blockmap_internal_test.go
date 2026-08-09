@@ -1,6 +1,7 @@
 package blockmap
 
 import (
+	"github.com/yuin/goldmark/ast"
 	"testing"
 
 	"github.com/yuin/goldmark/text"
@@ -589,6 +590,42 @@ func TestCodeSpanBracketsDoNotArmGuards(t *testing.T) {
 			b := []byte(tc.src)
 			doc := gm.New().Parser().Parse(text.NewReader(b))
 			if got := len(Paragraphs(doc, b)) > 0; got != tc.eligible {
+				t.Errorf("eligible = %v, want %v", got, tc.eligible)
+			}
+		})
+	}
+}
+
+// A MkDocs admonition body is prose that every CommonMark parser sees as
+// an indented code block, so it is recognized only under the mkdocs
+// dialect and never by default.
+func TestMkDocsAdmonitionBody(t *testing.T) {
+	const body = "!!! tip \"T\"\n\n    Use the selector to switch. A capability listed\n    under dev has not shipped.\n"
+	cases := []struct {
+		name     string
+		src      string
+		mkdocs   bool
+		eligible bool
+	}{
+		{"body is invisible under the default dialect", body, false, false},
+		{"body reflows under the mkdocs dialect", body, true, true},
+		{"marker needs a type word", "!!!\n\n    Some prose here. And more of it.\n", true, false},
+		{"plain indented code after prose is untouched", "Some prose here.\n\n    func main() { x := 1\n    fmt.Println(x) }\n", true, false},
+		{"a fenced block inside the body is untouched", "!!! note \"X\"\n\n    ```go\n    x := 1\n    ```\n", true, false},
+		{"a multi-paragraph body is left alone", "!!! note \"X\"\n\n    First para here.\n\n    Second para here.\n", true, false},
+		{"collapsible marker is recognized", "??? note \"X\"\n\n    Use the selector to switch. A capability listed\n    under dev has not shipped.\n", true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := []byte(tc.src)
+			doc := gm.New().Parser().Parse(text.NewReader(b))
+			got := false
+			for _, p := range ParagraphsForDialect(doc, b, tc.mkdocs) {
+				if _, isCode := p.Node.(*ast.CodeBlock); isCode {
+					got = true
+				}
+			}
+			if got != tc.eligible {
 				t.Errorf("eligible = %v, want %v", got, tc.eligible)
 			}
 		})

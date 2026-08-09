@@ -86,6 +86,7 @@ func Format(src []byte, opts Options) ([]byte, error) {
 		MaxWidth:                    opts.MaxWidth,
 		HardBreaks:                  opts.HardBreaks,
 		StripSentenceTerminalBreaks: opts.StripSentenceTerminalBreaks,
+		MkDocs:                      opts.Dialect == DialectMkDocs,
 	}
 
 	out := formatOnce(src, seg, rOpts)
@@ -206,6 +207,11 @@ func validateOptions(opts Options) error {
 	}
 	if widthFloor && opts.MaxWidth != 0 && opts.MaxWidth < MinMaxWidth {
 		return fmt.Errorf("mdreflow: MaxWidth must be 0 (unbounded) or at least %d, got %d", MinMaxWidth, opts.MaxWidth)
+	}
+	switch opts.Dialect {
+	case DialectGFM, DialectMkDocs:
+	default:
+		return fmt.Errorf("mdreflow: unknown Dialect value %d", opts.Dialect)
 	}
 	return nil
 }

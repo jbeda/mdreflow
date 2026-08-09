@@ -744,3 +744,66 @@ func mustGitInit(t *testing.T, dir string) {
 		t.Fatalf("git init: %v\n%s", err, out)
 	}
 }
+
+// --- --dialect ---
+
+const admonitionDoc = "!!! tip \"T\"\n\n    Use the selector to switch. A capability listed\n    under dev has not shipped.\n"
+
+func TestRunDialectMkDocsReflowsAdmonitionBody(t *testing.T) {
+	out, errOut, code := runCLI(t, []string{"--dialect=mkdocs"}, admonitionDoc)
+	if code != exitOK {
+		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitOK, errOut)
+	}
+	want := "!!! tip \"T\"\n\n    Use the selector to switch.\n    A capability listed under dev has not shipped.\n"
+	if out != want {
+		t.Errorf("stdout = %q, want %q", out, want)
+	}
+}
+
+func TestRunDialectDefaultLeavesAdmonitionBodyAlone(t *testing.T) {
+	out, errOut, code := runCLI(t, nil, admonitionDoc)
+	if code != exitOK {
+		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitOK, errOut)
+	}
+	if out != admonitionDoc {
+		t.Errorf("stdout = %q, want input unchanged", out)
+	}
+}
+
+func TestRunDialectConfigKey(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".mdreflow.yaml"), "dialect: mkdocs\n")
+	p := filepath.Join(dir, "a.md")
+	writeFile(t, p, admonitionDoc)
+
+	_, errOut, code := runCLI(t, []string{p}, "")
+	if code != exitOK {
+		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitOK, errOut)
+	}
+	if got := readFile(t, p); got == admonitionDoc {
+		t.Errorf("config dialect: mkdocs did not reflow the admonition body")
+	}
+}
+
+// "commonmark" is reserved for a future strict profile; accepting it as
+// an alias for the gfm default would burn the name on the one profile it
+// doesn't describe.
+func TestRunDialectCommonmarkIsReservedError(t *testing.T) {
+	_, errOut, code := runCLI(t, []string{"--dialect=commonmark"}, "Hi.\n")
+	if code != exitUsage {
+		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitUsage, errOut)
+	}
+	if !strings.Contains(errOut, "reserved") || !strings.Contains(errOut, "gfm") {
+		t.Errorf("stderr = %q, want a reserved-name explanation pointing at gfm", errOut)
+	}
+}
+
+func TestRunDialectUnknownIsUsageError(t *testing.T) {
+	_, errOut, code := runCLI(t, []string{"--dialect=mkdoc"}, "Hi.\n")
+	if code != exitUsage {
+		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitUsage, errOut)
+	}
+	if !strings.Contains(errOut, "mkdoc") {
+		t.Errorf("stderr = %q, want it to name the bad value", errOut)
+	}
+}

@@ -39,6 +39,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	ff := &flags{set: map[string]bool{}}
 	fs.StringVar(&ff.mode, "mode", "sentence", "reflow mode: sentence, para, or wrap")
+	fs.StringVar(&ff.dialect, "dialect", "gfm", "Markdown flavor: gfm (GitHub-flavored, default), or mkdocs to also reflow admonition bodies")
 	fs.IntVar(&ff.maxWidth, "max-width", 0, "max line width in runes, 0 or >= 20 (0 = unbounded in sentence mode, 80 in wrap mode; invalid in para mode)")
 	fs.BoolVar(&ff.check, "check", false, "report files that would be reformatted, write nothing, exit 1 if any would change")
 	fs.BoolVar(&ff.diff, "diff", false, "like --check, but print a unified diff to stdout instead of a one-line report")

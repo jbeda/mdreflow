@@ -70,9 +70,16 @@ type Paragraph struct {
 // mdreflow-configured goldmark instance (see package gm); source must be
 // the exact bytes that were parsed, since the returned ranges index into it.
 func Paragraphs(doc ast.Node, source []byte) []Paragraph {
+	return ParagraphsForDialect(doc, source, false)
+}
+
+// ParagraphsForDialect is Paragraphs with dialect-specific block
+// recognition enabled. mkdocs additionally treats a MkDocs admonition body
+// as prose; see admonitionBody for why that cannot be the default.
+func ParagraphsForDialect(doc ast.Node, source []byte, mkdocs bool) []Paragraph {
 	var out []Paragraph
 	fmEnd := frontMatterEnd(source)
-	collect(doc, source, false, 0, fmEnd, defRunAbove(source), &out)
+	collect(doc, source, false, 0, fmEnd, defRunAbove(source), &out, mkdocs)
 	return out
 }
 
@@ -145,8 +152,12 @@ const maxContainerDepth = 2
 // through untouched — no reflow is always render-preserving by
 // construction. Found by FuzzFormat on "000000000000000000\n>* >! 0"
 // (blockquote > list > blockquote, three levels).
-func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int, zoneAbove map[int]bool, out *[]Paragraph) {
+func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int, zoneAbove map[int]bool, out *[]Paragraph, mkdocs bool) {
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+		if cb, ok := c.(*ast.CodeBlock); ok {
+			*out = append(*out, admonitionBodies(cb, source, mkdocs)...)
+			continue
+		}
 		switch c.(type) {
 		case *ast.Paragraph, *ast.TextBlock:
 			if depth > maxContainerDepth {
@@ -184,7 +195,7 @@ func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int,
 		case *ast.List:
 			childDepth++
 		}
-		collect(c, source, childInBQ, childDepth, fmEnd, zoneAbove, out)
+		collect(c, source, childInBQ, childDepth, fmEnd, zoneAbove, out, mkdocs)
 	}
 }
 
@@ -1092,4 +1103,78 @@ func couldFormLinkRefDef(trimmedLines []string) bool {
 		}
 	}
 	return false
+}
+
+// admonitionMarkerRE matches a MkDocs / Python-Markdown admonition marker
+// line: "!!! note", "??? warning", "???+ tip", optionally with a quoted
+// title. The type word is required, which is what keeps an ordinary
+// paragraph merely starting with "!!!" from claiming the block below it.
+var admonitionMarkerRE = regexp.MustCompile(`^(?:!{3}|\?{3}\+?)[ \t]+[A-Za-z][\w-]*(?:[ \t]+"[^"]*")?[ \t]*$`)
+
+// admonitionBody reports whether cb is the indented body of a MkDocs
+// admonition and, if so, describes it as a reflow-eligible paragraph.
+//
+// MkDocs and Python-Markdown write an admonition as a marker line followed
+// by a blank line and a 4-space-indented body. That body is ordinary prose,
+// but no CommonMark parser can know it: an indented block is an indented
+// code block, so goldmark hands it over as *ast.CodeBlock and the paragraph
+// walk never sees it. On a real MkDocs docset that silently excludes every
+// callout from reflow — 17 blocks and 69 prose lines on the 27,848-line
+// tree this was measured against.
+//
+// Two conditions keep the recognition honest. The previous sibling must be
+// a paragraph whose only line is an admonition marker, so a genuine
+// indented code block after ordinary prose is untouched. And the body must
+// contain no fence marker: a fenced block indented inside an admonition is
+// literal text to goldmark, so reflowing it would rewrap real code.
+func admonitionBodies(cb *ast.CodeBlock, source []byte, mkdocs bool) []Paragraph {
+	if !mkdocs {
+		return nil
+	}
+	prev := cb.PreviousSibling()
+	if prev == nil || prev.Kind() != ast.KindParagraph || prev.Lines().Len() != 1 {
+		return nil
+	}
+	ps := prev.Lines().At(0)
+	if !admonitionMarkerRE.Match(bytes.TrimRight(ps.Value(source), " \t\r\n")) {
+		return nil
+	}
+	lines := cb.Lines()
+	if lines.Len() == 0 {
+		return nil
+	}
+	for i := 0; i < lines.Len(); i++ {
+		seg := lines.At(i)
+		t := bytes.TrimLeft(seg.Value(source), " \t")
+		if bytes.HasPrefix(t, []byte("```")) || bytes.HasPrefix(t, []byte("~~~")) {
+			return nil
+		}
+	}
+	first := lines.At(0)
+	start := lineStart(source, first.Start)
+	contPrefix := string(source[start:first.Start])
+	if strings.TrimLeft(contPrefix, " \t") != "" {
+		return nil
+	}
+	// A multi-paragraph body is left alone. goldmark keeps the separating
+	// blank lines inside the one code block and package reflow works from
+	// Node.Lines() rather than the Start/End range, so every run would be
+	// reflowed as a single cluster and two rendered paragraphs would merge
+	// into one <p>. Splitting them needs a per-run node, which is more
+	// surgery than the recognition itself is worth; a single-paragraph
+	// callout is the overwhelmingly common shape.
+	for i := 0; i < lines.Len(); i++ {
+		seg := lines.At(i)
+		if len(bytes.TrimSpace(seg.Value(source))) == 0 {
+			return nil
+		}
+	}
+	last := lines.At(lines.Len() - 1)
+	return []Paragraph{{
+		Node:       cb,
+		Start:      first.Start,
+		End:        last.Stop,
+		ContPrefix: contPrefix,
+		Boundary:   make([]bool, lines.Len()),
+	}}
 }

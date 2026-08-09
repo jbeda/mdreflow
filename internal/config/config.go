@@ -51,6 +51,7 @@ const (
 // treated as additive lists.
 type File struct {
 	Mode          string   `yaml:"mode"`
+	Dialect       string   `yaml:"dialect"`
 	MaxWidth      int      `yaml:"max-width"`
 	HardBreaks    string   `yaml:"hard-breaks"`
 	Abbreviations []string `yaml:"abbreviations"`

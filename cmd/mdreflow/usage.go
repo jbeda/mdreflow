@@ -94,6 +94,7 @@ Configuration (.mdreflow.yaml):
   refused (exit 2) rather than parsed.
 
     mode: sentence          # sentence | para | wrap
+    dialect: gfm            # gfm | mkdocs (mkdocs also reflows admonition bodies)
     max-width: 0            # 0 = unbounded/default; otherwise >= 20
     hard-breaks: br         # br | spaces | backslash
     abbreviations:          # additions to the built-in list
@@ -101,6 +102,15 @@ Configuration (.mdreflow.yaml):
     exclude:                # gitignore syntax, matched like a .gitignore
       - "CHANGELOG.md"
       - "generated/**"
+
+  The default dialect, gfm, is the GitHub-flavored superset mdreflow
+  has always parsed (GFM extensions plus footnotes). --dialect mkdocs
+  additionally reflows MkDocs/Python-Markdown admonition bodies
+  ("!!! note" plus a 4-space-indented body), which CommonMark parsers
+  read as code blocks — opt-in because that changes what a CommonMark
+  renderer emits. "commonmark" is not accepted as an alias for gfm: the
+  name is being kept for a possible future strict profile, so passing it
+  is an error that says exactly that.
 
   These are the only config keys; --strip-sentence-terminal-breaks is
   flag-only. (Earlier releases had a typography: key and matching flags;

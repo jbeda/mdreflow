@@ -80,13 +80,16 @@ type Options struct {
 	// ordinary soft break instead). Only the double-space syntax is
 	// eligible; backslash and <br> hard breaks are always respected.
 	StripSentenceTerminalBreaks bool
+	// MkDocs enables MkDocs-specific block recognition, currently the
+	// admonition body; see blockmap.admonitionBody.
+	MkDocs bool
 }
 
 // Format reflows every eligible paragraph in doc (see package blockmap) and
 // returns the full document bytes, splicing reflowed prose into the
 // otherwise-untouched source.
 func Format(source []byte, doc ast.Node, seg Segmenter, opts Options) []byte {
-	paras := blockmap.Paragraphs(doc, source)
+	paras := blockmap.ParagraphsForDialect(doc, source, opts.MkDocs)
 
 	var out bytes.Buffer
 	cursor := 0

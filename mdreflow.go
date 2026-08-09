@@ -86,13 +86,40 @@ type Segmenter interface {
 // see Options.MaxWidth's doc comment for why tiny widths are refused.
 const MinMaxWidth = 20
 
+// Dialect names the renderer profile a document tree targets. It is a
+// single-select enum like Mode, and a bundle rather than a feature flag:
+// a dialect selects which flavor-specific block recognitions are on
+// (docs/design.md, "Dialects: renderer profiles, and the skip-list").
+type Dialect = opts.Dialect
+
+const (
+	// DialectGFM is the default and names the configuration mdreflow has
+	// always parsed with: the permissive GitHub-flavored superset (GFM
+	// extensions plus footnotes). Existing behavior, renamed rather than
+	// changed. There is deliberately no "commonmark" value yet — that
+	// name is reserved for a possible future strict profile with the GFM
+	// extensions off, and aliasing it to the default would burn the name
+	// on the one thing it doesn't accurately describe.
+	DialectGFM Dialect = opts.DialectGFM
+	// DialectMkDocs additionally reflows MkDocs / Python-Markdown
+	// admonition bodies ("!!! note" plus a 4-space-indented body). A
+	// CommonMark parser can only see such a body as an indented code
+	// block, so reflowing it changes what a CommonMark renderer emits —
+	// which is why it is opt-in and can never be the default.
+	DialectMkDocs Dialect = opts.DialectMkDocs
+)
+
 // Options configures Format, Check, and FormatReader. The zero value is
 // the default and is always valid: sentence mode, unbounded width, <br>
-// hard-break style, the built-in segmenter with its default abbreviation
-// list.
+// hard-break style, the GFM dialect, the built-in segmenter with its
+// default abbreviation list.
 type Options struct {
 	// Mode selects the reflow strategy. Zero value is ModeSentence.
 	Mode Mode
+
+	// Dialect opts into flavor-specific block recognition. Zero value
+	// is DialectGFM (today's behavior); see the Dialect constants.
+	Dialect Dialect
 
 	// MaxWidth bounds line length, measured in runes — not bytes, and not
 	// Unicode grapheme clusters or East-Asian display width. That is a
