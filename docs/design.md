@@ -324,7 +324,7 @@ const (
 
 type Options struct {
     Mode          Mode
-    MaxWidth      int            // 0 = unbounded; on ModeSentence enables secondary clause breaks
+    MaxWidth      int            // 0 = unbounded; otherwise >= MinMaxWidth (20); on ModeSentence enables secondary clause breaks
     HardBreaks    HardBreakStyle // default: HardBreakBr
     StripSentenceTerminalBreaks bool
     Abbreviations []string       // additions to the built-in list
@@ -346,6 +346,10 @@ func DefaultAbbreviations() []string
 ```
 
 Every zero value is the default (`Options{}` is valid and sensible): zero `Mode` is sentence mode, zero `MaxWidth` is unbounded, zero `HardBreakStyle` is `<br>`.
+
+**The width floor** (amendment 2026-08-09): a non-zero `MaxWidth` below `MinMaxWidth` (20) is an options error, in the library and the CLI alike.
+Nearly every pathological width finding from the fuzz campaign needed single-digit widths, where geometry *forces* breaks inside constructs; no human asks for width 12.
+Refusing the range deletes that adversarial surface from the product without weakening the harness: like the convergence backstop, the floor has a test-only disable so the fuzzer and the narrow-width fixtures keep driving the unrestricted core, and a tiny-width find is still root-caused (some generalize to legal widths with long tokens) — it just can no longer be a user-facing bug on its own.
 No constructor needed.
 
 `[]byte` (not `string`, not streams) because goldmark's API and AST offsets are byte-based, `os.ReadFile` hands you bytes, and a string API would force copies both directions for no gain.
