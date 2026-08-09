@@ -862,7 +862,15 @@ func hasBacktickInBareURL(trimmedLines []string) bool {
 		for _, tok := range strings.FieldsFunc(line, func(r rune) bool {
 			return r == ' ' || r == '\t' || r == '\r'
 		}) {
-			if strings.Contains(tok, "`") && linkifyStartRE.MatchString(tok) {
+			bt := strings.IndexByte(tok, '`')
+			if bt < 0 {
+				continue
+			}
+			// Only a URL that STARTS before the backtick can swallow it.
+			// A backtick that opens first is a code-span delimiter whose
+			// span merely contains a URL ("`oci://host/path`"), which is
+			// the ordinary way documentation names a registry or endpoint.
+			if loc := linkifyStartRE.FindStringIndex(tok); loc != nil && loc[0] < bt {
 				return true
 			}
 		}
