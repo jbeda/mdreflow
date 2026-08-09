@@ -1,5 +1,9 @@
 # mdreflow
 
+[![CI build status badge](https://github.com/jbeda/mdreflow/actions/workflows/ci.yaml/badge.svg)](https://github.com/jbeda/mdreflow/actions/workflows/ci.yaml)
+[![Go reference documentation badge](https://pkg.go.dev/badge/github.com/jbeda/mdreflow.svg)](https://pkg.go.dev/github.com/jbeda/mdreflow)
+[![Latest release version badge](https://img.shields.io/github/v/release/jbeda/mdreflow)](https://github.com/jbeda/mdreflow/releases/latest)
+
 Reflow Markdown prose.
 The default mode is sentence-per-line ([semantic line breaks](https://sembr.org/)); paragraph-per-line and classic hard wrap share the same pipeline.
 It is a Go library first, with a thin CLI on top.
