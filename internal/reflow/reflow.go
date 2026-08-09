@@ -1827,6 +1827,30 @@ func escapeAfterIndent(line string) string {
 // optionally separated by spaces — CommonMark's thematic-break rule. Go's
 // RE2 regexp engine has no backreferences, so this can't be expressed as
 // a single regex the way the other triggers can; it is checked directly.
+//
+// The separator class is ' ', '\t', AND a bare '\r': goldmark's own
+// thematic-break scanner (parser.isThematicBreak, via util.IsSpace, whose
+// spaceTable includes 0x0D) treats a lone '\r' as just another ignorable
+// separator between the repeated marks, not as a disqualifying character —
+// the same asymmetry already documented on filterUnsafeLineEnds and
+// joinClusterLines, where a bare '\r' is ordinary literal content to
+// mdreflow's own line-splitting but goldmark's scanners still fold it in
+// as whitespace in specific places. Missing that asymmetry here left a
+// joint-context gap in escapeBlockInterrupt's firstLinePrefix check (see
+// its doc comment): a list item's own marker plus a wrapped first line
+// like "---\r-" reads as only two real dashes to this function without the
+// '\r' concession, so it never escaped — but goldmark's actual parser DOES
+// count it as thematic-break-shaped ("- ---\r-" scans as marker "-" plus
+// three dashes separated by a space and an ignorable '\r'), reparsing the
+// list item as a ThematicBreak instead. That flips the item from a List
+// (whose content the following empty "*" bullet cannot lazily join) to a
+// bare Paragraph (which an empty bullet line CANNOT interrupt, so it
+// lazily continues into it instead) — an idempotency break found by
+// FuzzFormat (ModeWrap, MaxWidth 6, SmartQuotes|Ellipses) on
+// "\n- ---\r- % \n*" (seed ad20670286270350): pass 1 wrapped the list
+// item's "---\r- %" onto "---\r-" / "%", pass 2 reparsed "- ---\r-" as a
+// thematic break and merged "%" with the following "*" that pass 1 had
+// kept as a separate, empty list item.
 func isThematicBreak(line string) bool {
 	s := line
 	for i := 0; i < 3 && strings.HasPrefix(s, " "); i++ {
@@ -1844,7 +1868,7 @@ func isThematicBreak(line string) bool {
 		switch s[i] {
 		case want:
 			count++
-		case ' ', '\t':
+		case ' ', '\t', '\r':
 		default:
 			return false
 		}
