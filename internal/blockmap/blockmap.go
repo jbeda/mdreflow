@@ -545,6 +545,19 @@ var footnoteDefFirstLineRE = regexp.MustCompile(`^\\?\[\^[^\[\]]*\]:`)
 // (trailing content disqualifies it), and a single-token "[^1]: word"
 // line is already a LinkReferenceDefinition node that never reaches
 // reflow as a paragraph.
+// orphanDefCloserRE matches a line whose "]:" has no unescaped "[" before
+// it on the same line — the orphaned tail of a definition label that
+// OPENED on an earlier line ("[\]\n0\n]:0": the escaped bracket keeps the
+// label open across two line breaks before "]:" closes it). The zone's
+// other shapes all require the opener and closer on one line or in the
+// two-line boundary window, so a label spanning three or more lines left
+// its closer line invisible to them: found by FuzzFormat on
+// "[\]\n0\n]:0\n\"\"0" (seed 0df31d8ad2438ba6), issue #11's shape one
+// line deeper, where the closer-line's paragraph joined on pass 1 and the
+// whole construct joined on pass 2. A literal "]:"-led line in prose is
+// degenerate enough that the over-skip is free.
+var orphanDefCloserRE = regexp.MustCompile(`^(?:\\.|[^\[\]\\])*\]:`)
+
 var bareCaretOpenerRE = regexp.MustCompile(`(^|[ \t])[ \t>]*\\?\[\^[^\[\]]*\]:[ \t]*$`)
 
 // inLinkRefDefZone reports whether the paragraph whose trimmed lines are
@@ -585,7 +598,7 @@ var bareCaretOpenerRE = regexp.MustCompile(`(^|[ \t])[ \t>]*\\?\[\^[^\[\]]*\]:[ 
 // "[0]:0\n\"0\"[00]:0\n\"\n\"[0]:0", seed a651ae68822c7c5c).
 func inLinkRefDefZone(source []byte, trimmed []string, contentStart int) bool {
 	for _, t := range trimmed {
-		if nonCaretDefShapeRE.MatchString(t) || bareCaretOpenerRE.MatchString(t) {
+		if nonCaretDefShapeRE.MatchString(t) || bareCaretOpenerRE.MatchString(t) || orphanDefCloserRE.MatchString(t) {
 			return true
 		}
 	}
