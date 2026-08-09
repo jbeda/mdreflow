@@ -1,7 +1,7 @@
 # mdreflow design
 
 *2026-08-07.
-Status: M0–M5 implemented — all modes, full skip-list, CLI, typography flags, and release packaging (goreleaser, pre-commit hooks).
+Status: M0–M5 implemented — all modes, full skip-list, CLI, and release packaging (goreleaser, pre-commit hooks); typography shipped in M5 and was later removed (see Typography).
 This is a living document: design changes land here first, then in code.*
 
 `mdreflow` is a Go library and CLI that reflows Markdown prose.
@@ -199,20 +199,14 @@ An accidental double-space hard break survives, but shows up loudly in the diff 
 For authors who habitually type two spaces after periods, the opt-in `StripSentenceTerminalBreaks` option treats a trailing double-space *immediately after sentence-terminal punctuation* as accidental and removes it (a documented, flag-reversible exception to render preservation).
 Hard breaks anywhere else are always respected.
 
-### Typography (opt-in, off by default)
+### Typography: removed (2026-08-09)
 
-Span-level substitutions in prose text only (never in code spans or skip ranges): smart quotes and ellipsis (`...` → `…`).
-Off by default — Markdown destined for prompts and tooling wants ASCII — and expressed as bit flags:
+mdreflow shipped opt-in smart-quote and ellipsis substitution through v0.1.4 and removed it, deliberately.
+Typography was the *only* transformation whose purpose was to change rendered output, which made it structurally at odds with everything else here: it forced the render oracle (and now the render backstop) to normalize substitutions back out of both sides — looseness real corruption could hide behind; it was the sole reason for the fuzz harness's one documented scope gate (the caret-zone/typography interaction); it required its own hand-mirrored context scanner to avoid substituting inside HTML attributes and link destinations (issue #3); and it was one of only two byte-rewriters in the pipeline.
+Removing it makes the invariant exact: **mdreflow never changes what a document renders to** (hard-break spelling normalization and the flag-reversible `StripSentenceTerminalBreaks` change source spelling, not rendering semantics, and remain the documented nuances).
 
-```go
-type Typography uint
-const (
-    SmartQuotes Typography = 1 << iota
-    Ellipses
-)
-```
-
-Typography is the documented exception to render preservation (changing quotes is its purpose).
+Substitution at render time is the better home for the feature — goldmark's Typographer, Hugo's smartypants, and Python-Markdown's smarty all do it without touching the source — and anyone who wants it baked into source bytes wants a full parse-and-re-emit formatter, which mdreflow is deliberately not.
+A leftover `typography:` config key is a loud config error (the YAML parse is strict), never a silent no-op.
 
 ### The link-reference-definition zone: skip bluntly, by shape
 
@@ -258,7 +252,8 @@ pile for the caret case:
 - Reflowed footnote-body continuation lines are emitted with a 4-space indent.
   Renderers disagree about whether an unindented lazy-continuation line belongs to the footnote (GitHub's documented convention is to indent); the indented spelling is the one they all keep inside the footnote, and to mdreflow's own parser it is an ordinary paragraph continuation (indented code cannot interrupt a paragraph), so render preservation is unaffected.
 
-Residual adversarial corners in the caret zone (typography verdicts flipping next to `[^label]:` shapes built out of quote soup) are owned by the convergence backstop and a documented harness gate, not by further guards — see Testing.
+Residual adversarial corners in the caret zone are owned by the emission escapes and the convergence backstop, not by further adjacency guards.
+(The worst such family — typography substitution verdicts flipping next to `[^label]:` shapes built out of quote soup — vanished with typography's removal, taking the fuzz harness's one documented scope gate with it.)
 
 ### Spanning-construct guards: skip only what can actually span
 
@@ -303,7 +298,7 @@ Markdown is text; reflowing bytes that have no character interpretation was neve
 1. **Idempotency.** `Format(Format(x)) == Format(x)` for every accepted input and option set.
    This is structural, not aspirational: `Format` runs to fixpoint and falls back to the original text for anything that will not converge (see [Convergence](#convergence-reflow-runs-to-fixpoint)).
 2. **Render preservation.** Reflow does not change the rendered document, verified by comparing goldmark HTML output before and after.
-   Documented exceptions: typography flags, hard-break style normalization (renders the same `<br>`, different source), and `StripSentenceTerminalBreaks`.
+   Documented exceptions: hard-break style normalization (renders the same `<br>`, different source) and `StripSentenceTerminalBreaks`.
 3. **Byte-identical pass-through.** Everything outside reflowed paragraph prose is emitted byte-for-byte.
 4. **Check mode.** `--check` and `--diff` report unformatted files without writing, with a stable exit-code contract for CI and agents.
 
@@ -325,7 +320,6 @@ const (
 type Options struct {
     Mode          Mode
     MaxWidth      int            // 0 = unbounded; on ModeSentence enables secondary clause breaks
-    Typography    Typography     // 0 = off
     HardBreaks    HardBreakStyle // default: HardBreakBr
     StripSentenceTerminalBreaks bool
     Abbreviations []string       // additions to the built-in list
@@ -346,7 +340,7 @@ func FormatReader(dst io.Writer, src io.Reader, opts Options) error
 func DefaultAbbreviations() []string
 ```
 
-Every zero value is the default (`Options{}` is valid and sensible): zero `Mode` is sentence mode, zero `MaxWidth` is unbounded, zero `Typography` is off, zero `HardBreakStyle` is `<br>`.
+Every zero value is the default (`Options{}` is valid and sensible): zero `Mode` is sentence mode, zero `MaxWidth` is unbounded, zero `HardBreakStyle` is `<br>`.
 No constructor needed.
 
 `[]byte` (not `string`, not streams) because goldmark's API and AST offsets are byte-based, `os.ReadFile` hands you bytes, and a string API would force copies both directions for no gain.
@@ -361,7 +355,7 @@ mdreflow [flags] [path ...]
   Formatting is **in-place** when paths are given — this is a batch tool for pre-commit hooks and agents, where in-place is what you mean.
 - **stdin/stdout**: no paths (or `-`) reads stdin and writes stdout.
   This is the pipe mode, and it gives any editor with a "filter through command" binding format-on-demand without an extension.
-- **Flags**: `--mode`, `--max-width`, `--check`, `--diff`, `--stdout`, `--force`, `--config`, `--no-gitignore`, plus flags mirroring the typography and hard-break options.
+- **Flags**: `--mode`, `--max-width`, `--check`, `--diff`, `--stdout`, `--force`, `--config`, `--no-gitignore`, plus flags mirroring the hard-break options.
   Stdlib `flag`; the surface is one command.
 - **Exit codes** (a contract, since agents branch on them): `0` success/clean; `1` would-reformat (`--check`/`--diff` only); `2` usage or config error; `3` refused input (not Markdown, or excluded without `--force`).
 - **`--help` is a first-class deliverable**: complete flag docs, the exit-code contract, and examples in the help text itself, so an unattended agent can self-serve without a README.
@@ -375,7 +369,6 @@ Precedence: flags > config file > built-in defaults.
 ```yaml
 mode: sentence        # sentence | para | wrap
 max-width: 0
-typography: []        # e.g. [smart-quotes, ellipses]
 hard-breaks: br       # br | spaces | backslash
 abbreviations:        # additions to the built-in list
   - "et al."
@@ -420,8 +413,8 @@ The wrapping logic is heuristic; a deep test corpus is the only durable defense 
 5. **Exclude parity**: our gitignore matching vs. `git check-ignore` output on a synthetic tree.
 6. **Fuzzing**: Go native fuzzing on `Format` with crash, idempotency, and render preservation as oracles.
    Invalid-UTF-8 inputs assert only the `ErrInvalidUTF8` refusal (that path must still never panic); the reflow oracles run on accepted inputs.
-   One documented scope gate: inputs mixing a footnote-shaped `[^label]:` opener with typography-substitutable quote characters assert idempotency of the *public* (backstop-included) `Format` rather than the single-pass core, and skip the render-preservation comparison — the caret zone is fully exempt from blockmap's definition-zone checks (verdict stability demands the exemption be uniform: a reflowing footnote body legitimately rewrites the lines a neighbor check would key on), so its residual adversarial corners are owned by the emission escapes and the backstop by design (see the link-reference-definition zone section).
-   A gate is honest where an eighth adjacency guard would not be.
+   The harness has no scope gates: every accepted input runs every oracle.
+   (The one historical gate — caret-def openers mixed with typography-substitutable quotes — existed only for typography and was deleted with it; see the Typography section.)
 
 ## Dependencies
 
