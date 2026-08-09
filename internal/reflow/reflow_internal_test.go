@@ -261,6 +261,12 @@ func TestDetectHardBreak(t *testing.T) {
 		{"single trailing backslash not last line", "foo\\", false, false, "<br>", "foo"},
 		{"single trailing backslash on last line not a break", "foo\\", true, false, "", "foo\\"},
 		{"three trailing backslashes not a break (M1 rule reversed)", `foo\\\`, false, false, "", `foo\\\`},
+		// Whitespace before the backslash goes with the marker, matching
+		// the other two syntaxes — otherwise pass 2, which sees the
+		// normalized "<br>" spelling, trims it and disagrees with pass 1
+		// (seed d4274cf2d1364325).
+		{"whitespace before the backslash consumed with the marker", "foo \\", false, false, "<br>", "foo"},
+		{"tab before the backslash likewise", "foo\t\\", false, false, "<br>", "foo"},
 		{"two trailing spaces not last line", "foo  ", false, false, "<br>", "foo"},
 		{"two trailing spaces on last line insignificant", "foo  ", true, false, "", "foo  "},
 		{"three trailing spaces still a break", "foo   ", false, false, "<br>", "foo"},

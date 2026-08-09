@@ -2372,7 +2372,21 @@ func detectHardBreak(content string, opts Options, isLastLine, insideSpan bool) 
 		// the rendered content, not just its style.
 		n := trailingBackslashCount(content)
 		if n == 1 {
-			return normalizedMarker(opts), content[:len(content)-1]
+			// Trailing whitespace *before* the backslash goes with the
+			// marker, not with the prose. The other two syntaxes already
+			// do this — the double-space branch below consumes its whole
+			// space run, and hardBreakBrRE's leading "[ \t\r]*" eats the
+			// whitespace ahead of the tag — so leaving it here made the
+			// backslash spelling the odd one out. Since every pass after
+			// the first sees the normalized "<br>" spelling, pass 1 and
+			// pass 2 then disagreed: "` \\" emitted "` <br>" on pass 1,
+			// which pass 2 re-read as marker-with-leading-whitespace and
+			// re-emitted as "`<br>" (seed d4274cf2d1364325). These bytes
+			// are insignificant whitespace before a line-ending break in
+			// every spelling, so this is a normalization, not a content
+			// change; a remaining odd backslash run is still handled by
+			// attachMarker's fusion guard.
+			return normalizedMarker(opts), strings.TrimRight(content[:len(content)-1], " \t\r")
 		}
 
 		// Trailing spaces: two or more.
