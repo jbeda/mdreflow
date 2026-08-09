@@ -9,9 +9,16 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+### Fixed
+
+- Paragraphs containing a link are no longer skipped just because a prose parenthetical spans a line break elsewhere in them (#16, reported with a proposed fix by Karl Isenberg): the guard now fires only on a `](`-opened paren left open at a line end — the one spelling that can open an inline link destination — instead of any unclosed paren in a paragraph that contains a `[` anywhere. On the reporter's 263-file docset this unblocks 137 files.
+
 ## v0.1.4 (2026-08-08)
 
-Hardening and simplification. A day-long fuzzing campaign fixed the whole family of edge cases where reflowed output could parse differently than the input — splits manufacturing accidental tables, definitions, or headings; escapes re-pairing code spans; typography flipping raw-HTML recognition. All were pathological shapes that never occur in normal prose; each is now pinned by a regression seed. Alongside the fixes, some deliberately over-clever handling was descoped in favor of simpler, safer rules.
+Hardening and simplification.
+A day-long fuzzing campaign fixed the whole family of edge cases where reflowed output could parse differently than the input — splits manufacturing accidental tables, definitions, or headings; escapes re-pairing code spans; typography flipping raw-HTML recognition.
+All were pathological shapes that never occur in normal prose; each is now pinned by a regression seed.
+Alongside the fixes, some deliberately over-clever handling was descoped in favor of simpler, safer rules.
 
 ### Fixed
 

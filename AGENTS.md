@@ -1,16 +1,11 @@
 # Agent instructions for mdreflow
 
-`docs/design.md` is canonical: read it before changing behavior, and land
-design changes there before code. `docs/m0-spike-findings.md` explains how
-dialect constructs map to goldmark's AST. `HANDOFF.md` (gitignored, may be
-absent) holds session-continuity notes.
+`docs/design.md` is canonical: read it before changing behavior, and land design changes there before code. `docs/m0-spike-findings.md` explains how dialect constructs map to goldmark's AST. `HANDOFF.md` (gitignored, may be absent) holds session-continuity notes.
 
 ## Navigate with gopls, not grep
 
-gopls is installed. For anything symbol-shaped, use it instead of grepping —
-it answers from the type-checked workspace (including dependencies and the
-stdlib), so it doesn't miss renames, embedding, or interface satisfaction the
-way text search does:
+gopls is installed.
+For anything symbol-shaped, use it instead of grepping — it answers from the type-checked workspace (including dependencies and the stdlib), so it doesn't miss renames, embedding, or interface satisfaction the way text search does:
 
 ```
 gopls workspace_symbol -matcher=fuzzy <name>   # find a symbol by (fuzzy) name

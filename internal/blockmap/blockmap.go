@@ -22,6 +22,7 @@ package blockmap
 import (
 	"bytes"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/yuin/goldmark/ast"
@@ -277,7 +278,7 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		return Paragraph{}, true
 	}
 	if hasUnbalancedBracket(trimmed) ||
-		(hasUnbalancedParen(trimmed) && hasAnyBracket(trimmed)) ||
+		hasUnclosedDestParen(trimmed) ||
 		hasUnclosedAngleDestOpener(trimmed) {
 		// Fuzz-found content-loss hazard family, more severe than (and
 		// broader than) reflow.isLinkRefDefOpener's per-output-line
@@ -727,9 +728,9 @@ func hasUnbalancedBracket(trimmedLines []string) bool {
 	return hasUnclosedDelimiterAcrossLine(trimmedLines, '[', ']')
 }
 
-// hasUnbalancedParen is hasUnbalancedBracket's counterpart for "(" / ")":
-// an inline link's *destination* — "[text](destination)" — can span a
-// soft line break exactly the way a link label can (see
+// hasUnclosedDestParen is hasUnbalancedBracket's counterpart for the
+// paren side of an inline link: the *destination* — "[text](destination)"
+// — can span a soft line break exactly the way a link label can (see
 // hasUnbalancedBracket's doc comment for the label case), so an open "("
 // left unclosed at the end of a line is the same class of hazard, found
 // by FuzzFormat on "[](  \n\")0": mdreflow's hard-break-style
@@ -738,8 +739,39 @@ func hasUnbalancedBracket(trimmedLines []string) bool {
 // the source's own line break became literal "<br>" marker text instead),
 // producing a broken (and, worse, different) link on reparse instead of
 // the original's link to a literal '"' character.
-func hasUnbalancedParen(trimmedLines []string) bool {
-	return hasUnclosedDelimiterAcrossLine(trimmedLines, '(', ')')
+//
+// Unlike the bracket arm, an arbitrary unclosed "(" is not the hazard
+// (issue #16: a plain prose parenthetical spanning a line break opens
+// nothing). CommonMark admits no whitespace at all between a link's "]"
+// and its "(" — "[text]\n(/dest)" and "[text] (/dest)" parse as zero
+// links, checked directly against goldmark — so only a "(" immediately
+// preceded by "]" can open a destination. Each open paren therefore
+// carries its own armed flag (was it "]("-opened?) on a stack, and only
+// an armed paren still open at the end of a non-final line triggers the
+// skip. The flag is per-paren, not only for the outermost: the original
+// hazard nested inside an ordinary prose parenthetical — "(x [](  \n\")0)"
+// — is the same spanning destination (confirmed against goldmark: it
+// parses as a link before reflow, and a depth-0-only check reflows it
+// into literal text plus a "<br>" marker, a render change reproduced by
+// seed issue16-dest-paren-nested).
+func hasUnclosedDestParen(trimmedLines []string) bool {
+	var open []bool // one entry per currently open "("; true if "]("-opened
+	for i, line := range trimmedLines {
+		for j := 0; j < len(line); j++ {
+			switch line[j] {
+			case '(':
+				open = append(open, j > 0 && line[j-1] == ']')
+			case ')':
+				if len(open) > 0 {
+					open = open[:len(open)-1]
+				}
+			}
+		}
+		if i < len(trimmedLines)-1 && slices.Contains(open, true) {
+			return true
+		}
+	}
+	return false
 }
 
 // hasUnclosedAngleDestOpener reports whether any of trimmedLines contains
@@ -768,26 +800,6 @@ func hasUnclosedAngleDestOpener(trimmedLines []string) bool {
 			if j < len(rest) && rest[j] == '<' && !strings.Contains(rest[j:], ">") {
 				return true
 			}
-		}
-	}
-	return false
-}
-
-// hasAnyBracket reports whether any of trimmedLines contains a "[" at
-// all. It gates hasUnbalancedParen at build's call site (issue #14): every
-// hazard the paren arm exists for — an inline link's "[text](destination"
-// or a definition's "[label]: /url (title" spanning a line break — needs a
-// "[" to get started, and reflow never creates one. Without this gate,
-// ordinary hard-wrapped prose with a parenthetical spanning a line break
-// ("A torus (a portal\nyou pass through) here.") was silently skipped:
-// measured by the reporter at 692 paragraphs (3,980 lines) over a real
-// 263-file docset, versus 17 skips for the bracket hazard the guard is
-// actually about. Any "[" anywhere in the paragraph keeps the
-// conservative skip (their measured 345 mixed cases stay skipped).
-func hasAnyBracket(trimmedLines []string) bool {
-	for _, line := range trimmedLines {
-		if strings.Contains(line, "[") {
-			return true
 		}
 	}
 	return false

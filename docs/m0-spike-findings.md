@@ -6,13 +6,9 @@ Answers the [design.md](design.md) skip-list question: where do MDX/Docusaurus/H
 
 ## Method
 
-Probe program: `goldmark v1.8.5` + `extension.GFM` + `extension.Footnote`,
-parsing 10 synthetic sample files and dumping every node's `Kind()`, byte
-range, and source text (script and fixtures not committed — scratch spike
-code per the milestone). A second probe added `goldmark-meta v1.1.0` to test
-whether an off-the-shelf extension fixes YAML front matter. Node dumps below
-are excerpted directly from probe output; byte ranges are into the sample
-file, not this doc.
+Probe program: `goldmark v1.8.5` + `extension.GFM` + `extension.Footnote`, parsing 10 synthetic sample files and dumping every node's `Kind()`, byte range, and source text (script and fixtures not committed — scratch spike code per the milestone).
+A second probe added `goldmark-meta v1.1.0` to test whether an off-the-shelf extension fixes YAML front matter.
+Node dumps below are excerpted directly from probe output; byte ranges are into the sample file, not this doc.
 
 ## Summary
 
@@ -66,10 +62,8 @@ No distinguishing marker; a naive sentence-per-line pass would treat `import Tab
 }
 ```
 
-goldmark's CommonMark HTML-block condition 7 (a line that is *only* a
-complete open/close tag) fires correctly here and at `</TabItem>`,
-`<TabItem value="js"...>`, `</TabItem>`, `</Tabs>` — all four become
-`HTMLBlock`. Interior prose paragraphs are correctly delimited.
+goldmark's CommonMark HTML-block condition 7 (a line that is *only* a complete open/close tag) fires correctly here and at `</TabItem>`, `<TabItem value="js"...>`, `</TabItem>`, `</Tabs>` — all four become `HTMLBlock`.
+Interior prose paragraphs are correctly delimited.
 
 ### MDX JSX with multi-line attributes — corrupts both content and structure
 
@@ -99,16 +93,9 @@ Prose inside the card component...
 #77 Paragraph { ... prose ... }
 ```
 
-Because the opening tag doesn't close (`>`) on its own line, HTML-block
-condition 7 never matches, so goldmark falls through to ordinary paragraph
-parsing: every attribute line becomes prose text ("onClick={() =>" / " {" as
-separate `Text` nodes — a reflow pass would rejoin and re-wrap these as if
-they were a sentence). Separately, the lone `>` that closes the tag is valid
-CommonMark for an empty blockquote, so it's consumed as `Blockquote`, splitting
-the JSX region across three unrelated nodes. This is the one case in the
-spike where AST post-processing can't recover the original intent — the
-information needed ("this `>` is JSX punctuation, not a quote marker") is
-already lost by the time goldmark hands back the tree.
+Because the opening tag doesn't close (`>`) on its own line, HTML-block condition 7 never matches, so goldmark falls through to ordinary paragraph parsing: every attribute line becomes prose text ("onClick={() =>" / " {" as separate `Text` nodes — a reflow pass would rejoin and re-wrap these as if they were a sentence).
+Separately, the lone `>` that closes the tag is valid CommonMark for an empty blockquote, so it's consumed as `Blockquote`, splitting the JSX region across three unrelated nodes.
+This is the one case in the spike where AST post-processing can't recover the original intent — the information needed ("this `>` is JSX punctuation, not a quote marker") is already lost by the time goldmark hands back the tree.
 
 ### Docusaurus `:::` — fence-body separation depends entirely on blank lines
 
@@ -122,8 +109,7 @@ With blank lines around the body (`:::note` / blank / prose / blank / `:::`):
 
 Three clean, separate `Paragraph` nodes — the fence lines are trivially detectable by content (`^:::`) and each is its own whole node.
 
-Without blank lines (`:::tip[Custom Title]` directly against body directly
-against closing `:::`):
+Without blank lines (`:::tip[Custom Title]` directly against body directly against closing `:::`):
 
 ```
 #98 Paragraph {
@@ -135,8 +121,7 @@ against closing `:::`):
 ```
 
 One `Paragraph` node, four `Lines()` segments, fence markers and prose fused.
-Worst case observed (`10-edge-cases.md`, fence immediately touching prose on
-*both* sides with zero blank lines):
+Worst case observed (`10-edge-cases.md`, fence immediately touching prose on *both* sides with zero blank lines):
 
 ```
 #261 Paragraph {
@@ -171,8 +156,7 @@ Meta: map[string]interface {}{"description":"...", "tags":[...], "title":"Sample
 
 The front matter block is fully removed from the AST and parsed separately — no corruption risk, confirmed by direct test.
 
-TOML (`+++`) — `goldmark-meta` does not trigger on it (its `Trigger()` is
-`-`, and the linked YAML unmarshal silently no-ops on TOML content):
+TOML (`+++`) — `goldmark-meta` does not trigger on it (its `Trigger()` is `-`, and the linked YAML unmarshal silently no-ops on TOML content):
 
 ```
 #146 Paragraph {
@@ -243,51 +227,19 @@ Footnote definition bodies are `Paragraph` — correctly so, since that prose *s
 
 ## Recommendation
 
-**A full raw-byte, pre-goldmark-parse pre-pass is not needed for the general
-case.** Every corruption case except one is fully recoverable by working with
-goldmark's AST — extending the "block map derivation" step (already in
-design.md's architecture) with **content-pattern rules**, not by scanning
-source text before goldmark ever sees it:
+**A full raw-byte, pre-goldmark-parse pre-pass is not needed for the general case.** Every corruption case except one is fully recoverable by working with goldmark's AST — extending the "block map derivation" step (already in design.md's architecture) with **content-pattern rules**, not by scanning source text before goldmark ever sees it:
 
-1. **Whole-node text-sniffing.** For `Paragraph` nodes whose entire joined
-   text matches a known marker regex (`^:::`, `^\{\{[<%]`, `^\{.*\}$`
-   block-level `{expr}`, a lone `^\+\+\+$`/`^---$` line), skip the whole
-   node. Covers: bare `:::` fence lines, bare Hugo block shortcodes, bare
-   MDX block `{expr}`, and — combined with rule 2 — TOML front matter.
-2. **Line-level boundaries inside a Paragraph.** `Paragraph.Lines()` already
-   exposes per-source-line segments. Where a fence/marker line has merged
-   into the same `Paragraph` node as real prose (`:::` with no blank line,
-   GitHub alert marker, Hugo paired shortcode, math block), treat any
-   `Lines()` entry matching the marker regex as an immovable boundary: never
-   join across it, emit it byte-for-byte, and reflow only the runs of lines
-   on either side that are genuine prose. This handles every "fence fused
-   with body" case found, including the worst case (`10-edge-cases.md`,
-   prose-fence-prose all one node).
-3. **TOML front matter specifically** needs its own recognizer — no existing
-   goldmark extension parses it (confirmed: `goldmark-meta` no-ops on it).
-   Simplest fix: adopt `goldmark-meta` (small, MIT, already does exactly this
-   for YAML) for YAML, and add an equivalent trigger-on-`+++` skip rule (via
-   rule 1, since the whole node's first line is always `+++` in the sample
-   set) or a small custom `parser.BlockParser` modeled on it if pure
-   text-sniffing proves fragile in practice.
+1. **Whole-node text-sniffing.** For `Paragraph` nodes whose entire joined text matches a known marker regex (`^:::`, `^\{\{[<%]`, `^\{.*\}$` block-level `{expr}`, a lone `^\+\+\+$`/`^---$` line), skip the whole node.
+   Covers: bare `:::` fence lines, bare Hugo block shortcodes, bare MDX block `{expr}`, and — combined with rule 2 — TOML front matter.
+2. **Line-level boundaries inside a Paragraph.** `Paragraph.Lines()` already exposes per-source-line segments.
+   Where a fence/marker line has merged into the same `Paragraph` node as real prose (`:::` with no blank line, GitHub alert marker, Hugo paired shortcode, math block), treat any `Lines()` entry matching the marker regex as an immovable boundary: never join across it, emit it byte-for-byte, and reflow only the runs of lines on either side that are genuine prose.
+   This handles every "fence fused with body" case found, including the worst case (`10-edge-cases.md`, prose-fence-prose all one node).
+3. **TOML front matter specifically** needs its own recognizer — no existing goldmark extension parses it (confirmed: `goldmark-meta` no-ops on it).
+   Simplest fix: adopt `goldmark-meta` (small, MIT, already does exactly this for YAML) for YAML, and add an equivalent trigger-on-`+++` skip rule (via rule 1, since the whole node's first line is always `+++` in the sample set) or a small custom `parser.BlockParser` modeled on it if pure text-sniffing proves fragile in practice.
 4. **Inline no-break spans are invisible to goldmark entirely** — `{expr}`, Hugo inline shortcodes, and inline math never get a marker node; they're plain `Text`.
    This isn't AST-derivable at all and was already anticipated in design.md's "no-break inline spans" section — confirms that component needs its own regex scan over inline `Text` content, independent of goldmark's classification.
-5. **The one case needing a true pre-parse workaround**: multi-line JSX
-   opening tags whose closing `>` lands alone on its own line. goldmark
-   misreads that `>` as blockquote syntax *before* mdreflow gets an AST, so
-   post-parse content rules can't reconstruct the original JSX region — the
-   information is already gone. Recommend either (a) a narrow raw-line
-   pre-check that recognizes `<Identifier` opening with no `>` before EOL,
-   followed later by a bare `>` line, and fences that region off before
-   goldmark parses, or (b) documenting this as a known M1 limitation and
-   revisiting only if it's observed in real MDX content (Docusaurus/MDX
-   authors generally close simple tags on one line; multi-line attribute
-   lists are less common than the blank-line-delimited JSX block form, which
-   parses cleanly).
+5. **The one case needing a true pre-parse workaround**: multi-line JSX opening tags whose closing `>` lands alone on its own line. goldmark misreads that `>` as blockquote syntax *before* mdreflow gets an AST, so post-parse content rules can't reconstruct the original JSX region — the information is already gone.
+   Recommend either (a) a narrow raw-line pre-check that recognizes `<Identifier` opening with no `>` before EOL, followed later by a bare `>` line, and fences that region off before goldmark parses, or (b) documenting this as a known M1 limitation and revisiting only if it's observed in real MDX content (Docusaurus/MDX authors generally close simple tags on one line; multi-line attribute lists are less common than the blank-line-delimited JSX block form, which parses cleanly).
 
-Net: design.md's fallback ("a line-scanning pre-pass that fences off
-JSX/shortcode regions before goldmark sees the text") is not needed as a
-general mechanism — an AST + content-regex layer, still built from goldmark's
-read-only parse, covers essentially everything. Reserve an actual raw pre-pass
-for the single structural-corruption edge case (multi-line unclosed JSX tags),
-and only if it turns out to matter in practice.
+Net: design.md's fallback ("a line-scanning pre-pass that fences off JSX/shortcode regions before goldmark sees the text") is not needed as a general mechanism — an AST + content-regex layer, still built from goldmark's read-only parse, covers essentially everything.
+Reserve an actual raw pre-pass for the single structural-corruption edge case (multi-line unclosed JSX tags), and only if it turns out to matter in practice.

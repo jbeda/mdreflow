@@ -13,21 +13,12 @@ It is a *reflow* tool, not a formatter: it changes where lines break inside para
 
 ## Motivation
 
-Sentence-per-line Markdown makes diffs reviewable (one sentence changed → one
-line changed) and gives agents and humans a stable convention for prose edits.
-Existing tools have gaps: [flowmark](https://github.com/jlevy/flowmark) misses
-sentence boundaries adjacent to inline formatting
-([#68](https://github.com/jlevy/flowmark/issues/68)) and bypasses excludes for
-explicitly named files ([#43](https://github.com/jlevy/flowmark/issues/43));
-[mdslw](https://github.com/razziel89/mdslw) and
-[rumdl](https://github.com/rvben/rumdl) are solid but Rust and CLI-only. None
-is embeddable as a Go library, which is what other Go tooling needs to format
-Markdown it generates or manages.
+Sentence-per-line Markdown makes diffs reviewable (one sentence changed → one line changed) and gives agents and humans a stable convention for prose edits.
+Existing tools have gaps: [flowmark](https://github.com/jlevy/flowmark) misses sentence boundaries adjacent to inline formatting ([#68](https://github.com/jlevy/flowmark/issues/68)) and bypasses excludes for explicitly named files ([#43](https://github.com/jlevy/flowmark/issues/43)); [mdslw](https://github.com/razziel89/mdslw) and [rumdl](https://github.com/rvben/rumdl) are solid but Rust and CLI-only.
+None is embeddable as a Go library, which is what other Go tooling needs to format Markdown it generates or manages.
 
-Agents are a primary driver: they generate and edit a lot of Markdown, they run
-the tool unattended, and they occasionally point it at the wrong file. The
-design favors loud, machine-legible behavior (exit codes, refusals, complete
-`--help`) over interactive polish.
+Agents are a primary driver: they generate and edit a lot of Markdown, they run the tool unattended, and they occasionally point it at the wrong file.
+The design favors loud, machine-legible behavior (exit codes, refusals, complete `--help`) over interactive polish.
 
 ## Goals and non-goals
 
@@ -42,11 +33,8 @@ Non-goals — these are hard principles, and changing them means amending this d
 
 - **No normalization.** mdreflow never rewrites block structure: no heading style changes, list marker unification, table alignment, reference-link consolidation, or escaping changes.
   Tools like rumdl do that tier well and compose cleanly with mdreflow because the two touch disjoint constructs.
-- **No Markdown renderer.** The Markdown parser is used read-only to locate
-  prose; output is produced by splicing reflowed prose into verbatim source
-  bytes. This is what keeps the correctness surface small; the multi-year bug
-  tails in normalizing formatters (Prettier's proseWrap, mdformat's escaping
-  engine) live on the other side of this line.
+- **No Markdown renderer.** The Markdown parser is used read-only to locate prose; output is produced by splicing reflowed prose into verbatim source bytes.
+  This is what keeps the correctness surface small; the multi-year bug tails in normalizing formatters (Prettier's proseWrap, mdformat's escaping engine) live on the other side of this line.
 
 Explicitly deferred or unlikely (see [Future directions](#future-directions)): formatting Markdown embedded in YAML/JSON values, per-file options in front matter, a `--dialect` selector, content-based file-type sniffing.
 
@@ -77,9 +65,8 @@ source bytes
    └─ everything else: emitted byte-for-byte
 ```
 
-[goldmark](https://github.com/yuin/goldmark) (with its GFM extensions enabled
-for recognition purposes) parses the document; its AST carries byte offsets
-into the source, which is all we need. From the AST we derive:
+[goldmark](https://github.com/yuin/goldmark) (with its GFM extensions enabled for recognition purposes) parses the document; its AST carries byte offsets into the source, which is all we need.
+From the AST we derive:
 
 - **Paragraph ranges**: the blocks eligible for reflow, with their container context (list item, blockquote) for continuation indentation.
 - **No-break inline spans** within paragraphs: inline code, links and link destinations, autolinks, images, inline math, footnote references, inline HTML/JSX.
@@ -88,53 +75,33 @@ into the source, which is all we need. From the AST we derive:
 
 ### Convergence: reflow runs to fixpoint
 
-A single pipeline pass plans breaks from the *pre*-reflow parse, but the
-guarantees are judged on the *post*-reflow reparse. Fuzzing showed a persistent
-family of corners where the two disagree: the emitted text parses slightly
-differently than the planner assumed (an escape changes code-span pairing, a
-consumed double space changes a sentence-boundary verdict, a join changes a
-link-reference-definition skip decision), so a second run lands differently
-than the first.
+A single pipeline pass plans breaks from the *pre*-reflow parse, but the guarantees are judged on the *post*-reflow reparse.
+Fuzzing showed a persistent family of corners where the two disagree: the emitted text parses slightly differently than the planner assumed (an escape changes code-span pairing, a consumed double space changes a sentence-boundary verdict, a join changes a link-reference-definition skip decision), so a second run lands differently than the first.
 
-The goal is single-pass convergence: the planner should predict its own
-output's reparse correctly the first time, and every known divergence gets a
-root-cause fix. But unknown shapes will keep existing, so `Format` also makes
-idempotency structural as a backstop: it runs the pipeline, then re-runs it on
-its own output until the output is stable, up to a small cap (4 passes; in
-practice the first re-run already matches). If the cap is hit without
-convergence — including a cycle where two outputs alternate — `Format` returns
-the **original document unchanged**. Document-level, not per-paragraph: the
-known divergence modes merge or re-split paragraphs across passes, so
-"the same paragraph, one pass later" is not a stable identity to fall back on.
+The goal is single-pass convergence: the planner should predict its own output's reparse correctly the first time, and every known divergence gets a root-cause fix.
+But unknown shapes will keep existing, so `Format` also makes idempotency structural as a backstop: it runs the pipeline, then re-runs it on its own output until the output is stable, up to a small cap (4 passes; in practice the first re-run already matches).
+If the cap is hit without convergence — including a cycle where two outputs alternate — `Format` returns the **original document unchanged**.
+Document-level, not per-paragraph: the known divergence modes merge or re-split paragraphs across passes, so "the same paragraph, one pass later" is not a stable identity to fall back on.
 "We could not safely flow this" is expressed as a no-op, never as churn.
 
-The backstop is for users; internally it is treated as a bug detector. The
-test and fuzz harnesses disable it (test-only switch) and drive the
-single-pass core, so any input that needs the backstop shows up as a failing
-idempotency oracle to be root-caused — never silently absorbed.
+The backstop is for users; internally it is treated as a bug detector.
+The test and fuzz harnesses disable it (test-only switch) and drive the single-pass core, so any input that needs the backstop shows up as a failing idempotency oracle to be root-caused — never silently absorbed.
 
 Two things iteration deliberately does *not* do:
 
-- It does not excuse planner bugs. Render-preservation hazards (a split landing
-  a table-delimiter-shaped line at line start, say) converge happily to wrong
-  output; those are planner obligations (line-start hazard filtering) and are
-  fixed at the root, with the fuzz render oracle as referee.
-- It is not a license for sloppy single-pass behavior. Each known
-  non-convergence shape gets a root-cause fix; the iteration is the backstop
-  that turns unknown shapes from correctness bugs into (at worst) unreflowed
-  paragraphs.
+- It does not excuse planner bugs.
+  Render-preservation hazards (a split landing a table-delimiter-shaped line at line start, say) converge happily to wrong output; those are planner obligations (line-start hazard filtering) and are fixed at the root, with the fuzz render oracle as referee.
+- It is not a license for sloppy single-pass behavior.
+  Each known non-convergence shape gets a root-cause fix; the iteration is the backstop that turns unknown shapes from correctness bugs into (at worst) unreflowed paragraphs.
 
-Cost: the common case is exactly two passes (one to reflow, one to confirm
-stability). Post the width-measurement fix a pass is milliseconds even on
-large documents; the benchmark suite pins this.
+Cost: the common case is exactly two passes (one to reflow, one to confirm stability).
+Post the width-measurement fix a pass is milliseconds even on large documents; the benchmark suite pins this.
 
 ### Dialect handling: the skip-list
 
-mdreflow targets one permissive superset of dialects ("do our best on
-everything"). Dialect awareness is a *skip-list* — constructs recognized only
-well enough to pass through untouched — not a set of dialect implementations.
-Each rule is tagged by origin so a future `--dialect` flag can subset the
-existing rules rather than require new machinery:
+mdreflow targets one permissive superset of dialects ("do our best on everything").
+Dialect awareness is a *skip-list* — constructs recognized only well enough to pass through untouched — not a set of dialect implementations.
+Each rule is tagged by origin so a future `--dialect` flag can subset the existing rules rather than require new machinery:
 
 | Construct | Dialects | Handling |
 |---|---|---|
@@ -151,36 +118,16 @@ existing rules rather than require new machinery:
 | Footnote definitions (`[^label]:`) | GFM | body reflows; continuations indented (below) |
 | Hard line breaks | CommonMark | immovable boundary (below) |
 
-**Spike M0 outcome** (details and evidence in
-[m0-spike-findings.md](m0-spike-findings.md)): goldmark does not parse MDX, and
-many dialect constructs do land as `Paragraph` nodes — but a general
-line-scanning pre-pass is *not* needed. The block-map derivation step grows
-content-pattern rules instead: (1) skip whole `Paragraph` nodes whose text
-matches a marker regex (`:::` fences, block shortcodes, block `{expr}`, `+++`
-TOML front matter); (2) within a `Paragraph`, treat any `Lines()` segment
-matching a marker regex as an immovable boundary — this handles fences fused
-with prose by lazy continuation (no-blank-line `:::`, `> [!NOTE]` markers,
-paired shortcodes, `$$` math); (3) recognize YAML front matter ourselves via a
-byte-range pre-scan (originally goldmark-meta, replaced — see Dependencies);
-(4) inline `{expr}`/shortcodes/math are invisible to the AST (plain
-`Text`) and need the already-planned regex scan for no-break spans. The one
-construct post-parse rules cannot recover is a multi-line JSX opening tag
-whose closing `>` sits alone on a line (goldmark consumes it as an empty
-blockquote) — documented as a known limitation, revisit with a narrow raw-line
-fence if it shows up in real content.
+**Spike M0 outcome** (details and evidence in [m0-spike-findings.md](m0-spike-findings.md)): goldmark does not parse MDX, and many dialect constructs do land as `Paragraph` nodes — but a general line-scanning pre-pass is *not* needed.
+The block-map derivation step grows content-pattern rules instead: (1) skip whole `Paragraph` nodes whose text matches a marker regex (`:::` fences, block shortcodes, block `{expr}`, `+++` TOML front matter); (2) within a `Paragraph`, treat any `Lines()` segment matching a marker regex as an immovable boundary — this handles fences fused with prose by lazy continuation (no-blank-line `:::`, `> [!NOTE]` markers, paired shortcodes, `$$` math); (3) recognize YAML front matter ourselves via a byte-range pre-scan (originally goldmark-meta, replaced — see Dependencies); (4) inline `{expr}`/shortcodes/math are invisible to the AST (plain `Text`) and need the already-planned regex scan for no-break spans.
+The one construct post-parse rules cannot recover is a multi-line JSX opening tag whose closing `>` sits alone on a line (goldmark consumes it as an empty blockquote) — documented as a known limitation, revisit with a narrow raw-line fence if it shows up in real content.
 
 ### Sentence segmentation
 
-Regex/punctuation splitting plus an abbreviation exception list — the approach
-every shipping tool uses (flowmark, mdslw, rumdl), and the approach whose known
-failure modes are documented in their issue trackers, which double as our test
-spec. The flowmark #68 lesson is baked in: sentence-terminal punctuation must
-be recognized through trailing inline markup (`` `code`. ``, `**bold**.`,
-quotes, parens).
+Regex/punctuation splitting plus an abbreviation exception list — the approach every shipping tool uses (flowmark, mdslw, rumdl), and the approach whose known failure modes are documented in their issue trackers, which double as our test spec.
+The flowmark #68 lesson is baked in: sentence-terminal punctuation must be recognized through trailing inline markup (`` `code`. ``, `**bold**.`, quotes, parens).
 
-Segmentation is behind a public interface so it is independently testable and
-swappable (an NLP segmenter, or something smarter, can be plugged in without
-touching the pipeline):
+Segmentation is behind a public interface so it is independently testable and swappable (an NLP segmenter, or something smarter, can be plugged in without touching the pipeline):
 
 ```go
 // Breaks returns the whitespace gaps separating sentences: for each
@@ -198,8 +145,7 @@ Wholesale replacement means providing your own `Segmenter`.
 The formatter, not the segmenter, owns whitespace at boundaries:
 
 - At a sentence break, the entire inter-sentence whitespace run is consumed and replaced by the newline. mdreflow never emits trailing whitespace — which matters because trailing double-space is Markdown's hard-break syntax.
-- On joins, inter-sentence whitespace normalizes to a single space (required
-  for idempotency; also makes two-spaces-after-period typing invisible).
+- On joins, inter-sentence whitespace normalizes to a single space (required for idempotency; also makes two-spaces-after-period typing invisible).
 - **Hard line breaks** (trailing double-space, trailing backslash, `<br>`) carry rendered meaning and are immovable: a hard-break line never joins.
   Joining is not "concatenate with spaces."
 
@@ -221,9 +167,8 @@ Hard breaks anywhere else are always respected.
 
 ### Typography (opt-in, off by default)
 
-Span-level substitutions in prose text only (never in code spans or skip
-ranges): smart quotes and ellipsis (`...` → `…`). Off by default — Markdown
-destined for prompts and tooling wants ASCII — and expressed as bit flags:
+Span-level substitutions in prose text only (never in code spans or skip ranges): smart quotes and ellipsis (`...` → `…`).
+Off by default — Markdown destined for prompts and tooling wants ASCII — and expressed as bit flags:
 
 ```go
 type Typography uint
@@ -233,8 +178,7 @@ const (
 )
 ```
 
-Typography is the documented exception to render preservation (changing quotes
-is its purpose).
+Typography is the documented exception to render preservation (changing quotes is its purpose).
 
 ### The link-reference-definition zone: skip bluntly, by shape
 
@@ -267,59 +211,62 @@ pile for the caret case:
   isolation by goldmark, not matched against a hand-mirrored grammar) or as a
   bare `[label]:` opener is backslash-escaped, so reflowed footnote prose can
   never be swallowed into an accidental definition.
-- Reflowed footnote-body continuation lines are emitted with a 4-space
-  indent. Renderers disagree about whether an unindented lazy-continuation
-  line belongs to the footnote (GitHub's documented convention is to indent);
-  the indented spelling is the one they all keep inside the footnote, and to
-  mdreflow's own parser it is an ordinary paragraph continuation (indented
-  code cannot interrupt a paragraph), so render preservation is unaffected.
+- Reflowed footnote-body continuation lines are emitted with a 4-space indent.
+  Renderers disagree about whether an unindented lazy-continuation line belongs to the footnote (GitHub's documented convention is to indent); the indented spelling is the one they all keep inside the footnote, and to mdreflow's own parser it is an ordinary paragraph continuation (indented code cannot interrupt a paragraph), so render preservation is unaffected.
 
-Residual adversarial corners in the caret zone (typography verdicts flipping
-next to `[^label]:` shapes built out of quote soup) are owned by the
-convergence backstop and a documented harness gate, not by further guards —
-see Testing.
+Residual adversarial corners in the caret zone (typography verdicts flipping next to `[^label]:` shapes built out of quote soup) are owned by the convergence backstop and a documented harness gate, not by further guards — see Testing.
+
+### Spanning-construct guards: skip only what can actually span
+
+A CommonMark inline link's label and destination can each span a soft line break, so reflow's line-joining and line-splitting can change what they parse to.
+Three whole-paragraph skip guards defend this, each scoped to the shape that can actually start the hazard:
+
+- **Bracket arm**: any `[` left structurally open at a line's end (even one
+  a later line closes — the span across the break is itself the hazard).
+  A bare `[` is enough to start a label or definition, so this arm stays
+  broad; measured cost on a real docset was 17 paragraphs.
+- **Destination-paren arm**: a `(` left open at a non-final line's end
+  skips the paragraph only if that specific paren was opened by `](` — the
+  only spelling that opens an inline destination, since CommonMark admits
+  no whitespace between a link's `]` and its `(`. Each open paren carries
+  its own armed flag (a stack, not a depth-0 check: the hazard nests
+  inside ordinary prose parens). An ordinary prose parenthetical spanning
+  a line break arms nothing and keeps reflowing regardless of what
+  brackets appear elsewhere in the paragraph (issues #14 and #16: the
+  earlier any-`[`-in-paragraph gate stalled sentence-per-line adoption on
+  every link-containing paragraph — 137 files on a 263-file docset).
+- **Angle-destination arm**: `](` then optional spaces then `<` with no
+  `>` on the same line — joining can complete it into a real
+  angle-bracket destination.
+
+Definition titles in parens (which may also span lines) are caught upstream by the link-reference-definition zone, not by these arms.
 
 ### Control-character paragraphs pass through
 
-A paragraph containing a C0 control byte other than tab (form feed, vertical
-tab, a bare carriage return outside a CRLF pair, ...) passes through
-byte-for-byte. No text editor produces these inside prose; they exist in
-fuzz inputs, where they sit in exactly the grammar corners (indentation
-width, whitespace-class membership) that differ between parser
-implementations. Reflowing around them buys nothing for real documents and
-costs a long tail of corner-case hardening. CRLF line endings are unaffected
-(the `\r` of a CRLF pair is line-ending machinery, not paragraph interior).
+A paragraph containing a C0 control byte other than tab (form feed, vertical tab, a bare carriage return outside a CRLF pair, ...) passes through byte-for-byte.
+No text editor produces these inside prose; they exist in fuzz inputs, where they sit in exactly the grammar corners (indentation width, whitespace-class membership) that differ between parser implementations.
+Reflowing around them buys nothing for real documents and costs a long tail of corner-case hardening.
+CRLF line endings are unaffected (the `\r` of a CRLF pair is line-ending machinery, not paragraph interior).
 
 ## Guarantees
 
 Stated as testable promises, enforced by the harness in [Testing](#testing).
 
-**Input domain: valid UTF-8.** `Format` rejects invalid UTF-8 with the typed
-error `ErrInvalidUTF8` and writes nothing; the guarantees below are stated
-over inputs it accepts. (The CLI already refused such files via its binary
-sniff, but the sniff only reads the first 8 KB — the library check is total.
-Markdown is text; reflowing bytes that have no character interpretation was
-never meaningful, and fuzzing spent most of its findings on inputs no user
-could produce with a text editor.)
+**Input domain: valid UTF-8.** `Format` rejects invalid UTF-8 with the typed error `ErrInvalidUTF8` and writes nothing; the guarantees below are stated over inputs it accepts.
+(The CLI already refused such files via its binary sniff, but the sniff only reads the first 8 KB — the library check is total.
+Markdown is text; reflowing bytes that have no character interpretation was never meaningful, and fuzzing spent most of its findings on inputs no user could produce with a text editor.)
 
-1. **Idempotency.** `Format(Format(x)) == Format(x)` for every accepted input
-   and option set. This is structural, not aspirational: `Format` runs to
-   fixpoint and falls back to the original text for anything that will not
-   converge (see [Convergence](#convergence-reflow-runs-to-fixpoint)).
-2. **Render preservation.** Reflow does not change the rendered document,
-   verified by comparing goldmark HTML output before and after. Documented
-   exceptions: typography flags, hard-break style normalization (renders the
-   same `<br>`, different source), and `StripSentenceTerminalBreaks`.
+1. **Idempotency.** `Format(Format(x)) == Format(x)` for every accepted input and option set.
+   This is structural, not aspirational: `Format` runs to fixpoint and falls back to the original text for anything that will not converge (see [Convergence](#convergence-reflow-runs-to-fixpoint)).
+2. **Render preservation.** Reflow does not change the rendered document, verified by comparing goldmark HTML output before and after.
+   Documented exceptions: typography flags, hard-break style normalization (renders the same `<br>`, different source), and `StripSentenceTerminalBreaks`.
 3. **Byte-identical pass-through.** Everything outside reflowed paragraph prose is emitted byte-for-byte.
 4. **Check mode.** `--check` and `--diff` report unformatted files without writing, with a stable exit-code contract for CI and agents.
 
 ## Library API
 
-Library-first: the root package is the product, `cmd/mdreflow` is a thin
-wrapper, internals live in `internal/`. The core is pure bytes-in/bytes-out;
-file discovery, config loading, excludes, and input detection are CLI-layer
-concerns (promoting them into the library later is non-breaking; the reverse
-is not).
+Library-first: the root package is the product, `cmd/mdreflow` is a thin wrapper, internals live in `internal/`.
+The core is pure bytes-in/bytes-out; file discovery, config loading, excludes, and input detection are CLI-layer concerns (promoting them into the library later is non-breaking; the reverse is not).
 
 ```go
 package mdreflow // import "github.com/jbeda/mdreflow"
@@ -401,14 +348,8 @@ exclude:              # gitignore syntax
 - **Excludes apply even to explicitly named files** — the flowmark #43 failure, designed out.
   A skipped explicit path prints `skipped (excluded by …)`; `--force` overrides.
 
-Candidate libraries (implementation-time decision; the behavior is the
-commitment, the library is a detail):
-[boyter/gocodewalker](https://github.com/boyter/gocodewalker) for tree walking
-that honors nested `.gitignore`, and
-[sabhiram/go-gitignore](https://github.com/sabhiram/go-gitignore) for matching
-config patterns. Caveat: no Go gitignore implementation is fully spec-compliant
-(see [go-git#108](https://github.com/go-git/go-git/issues/108)), so the test
-suite compares our matching against `git check-ignore` on a synthetic tree.
+Candidate libraries (implementation-time decision; the behavior is the commitment, the library is a detail): [boyter/gocodewalker](https://github.com/boyter/gocodewalker) for tree walking that honors nested `.gitignore`, and [sabhiram/go-gitignore](https://github.com/sabhiram/go-gitignore) for matching config patterns.
+Caveat: no Go gitignore implementation is fully spec-compliant (see [go-git#108](https://github.com/go-git/go-git/issues/108)), so the test suite compares our matching against `git check-ignore` on a synthetic tree.
 
 ### Non-Markdown input detection
 
@@ -418,14 +359,10 @@ V1 defense, deliberately cheap:
 - **Extension check** on explicitly named files: known-Markdown extensions pass; known-other extensions (`.yaml`, `.json`, `.go`, …) are refused.
 - **Binary sniff**: NUL bytes or invalid UTF-8 in the first 8&nbsp;KB → refused.
 
-Refusal is exit code `3` with a one-line explanation and no write; `--force`
-overrides. Refusing (vs. warning) is the point: a warning in scrolled-past
-output doesn't stop an unattended agent, a non-zero exit does. Directory walks
-are unaffected (they only pick up Markdown extensions). Content-based sniffing
-for unknown extensions ("parses as YAML/JSON with no Markdown block
-constructs") is deferred until mislabeled files are observed in practice — the
-heuristic's second half is fuzzy, and the extension check covers the failures
-actually seen.
+Refusal is exit code `3` with a one-line explanation and no write; `--force` overrides.
+Refusing (vs. warning) is the point: a warning in scrolled-past output doesn't stop an unattended agent, a non-zero exit does.
+Directory walks are unaffected (they only pick up Markdown extensions).
+Content-based sniffing for unknown extensions ("parses as YAML/JSON with no Markdown block constructs") is deferred until mislabeled files are observed in practice — the heuristic's second half is fuzzy, and the extension check covers the failures actually seen.
 
 ## Testing
 
@@ -435,37 +372,27 @@ The wrapping logic is heuristic; a deep test corpus is the only durable defense 
    Fixture content is synthetic (lorem-ipsum-style or purpose-written), reproducing *structures* observed in real repos without lifting content.
 2. **Property tests over the corpus**: idempotency and render preservation (goldmark HTML before == after, documented exceptions aside) run automatically over every fixture — adding a fixture adds the property checks for free.
 3. **Mined regression cases**: bugs from flowmark's, mdslw's, and rumdl's issue trackers re-authored (not copied) as fixtures — e.g. flowmark #68's `` `token`. `` boundary misses.
-4. **Segmenter suite**: the sentence splitter tested standalone against a
-   Golden-Rules-style case list (in the style of
-   [pragmatic_segmenter](https://github.com/diasks2/pragmatic_segmenter)'s
-   golden rules, cases our own).
+4. **Segmenter suite**: the sentence splitter tested standalone against a Golden-Rules-style case list (in the style of [pragmatic_segmenter](https://github.com/diasks2/pragmatic_segmenter)'s golden rules, cases our own).
 5. **Exclude parity**: our gitignore matching vs. `git check-ignore` output on a synthetic tree.
 6. **Fuzzing**: Go native fuzzing on `Format` with crash, idempotency, and render preservation as oracles.
    Invalid-UTF-8 inputs assert only the `ErrInvalidUTF8` refusal (that path must still never panic); the reflow oracles run on accepted inputs.
-   One documented scope gate: inputs mixing a footnote-shaped `[^label]:` opener with typography-substitutable quote characters assert idempotency of the *public* (backstop-included) `Format` rather than the single-pass core, and skip the render-preservation comparison — the caret zone is fully exempt from blockmap's definition-zone checks (verdict stability demands the exemption be uniform: a reflowing footnote body legitimately rewrites the lines a neighbor check would key on), so its residual adversarial corners are owned by the emission escapes and the backstop by design (see the link-reference-definition zone section). A gate is honest where an eighth adjacency guard would not be.
+   One documented scope gate: inputs mixing a footnote-shaped `[^label]:` opener with typography-substitutable quote characters assert idempotency of the *public* (backstop-included) `Format` rather than the single-pass core, and skip the render-preservation comparison — the caret zone is fully exempt from blockmap's definition-zone checks (verdict stability demands the exemption be uniform: a reflowing footnote body legitimately rewrites the lines a neighbor check would key on), so its residual adversarial corners are owned by the emission escapes and the backstop by design (see the link-reference-definition zone section).
+   A gate is honest where an eighth adjacency guard would not be.
 
 ## Dependencies
 
 Small on purpose; additions require amending this doc.
 
 - `github.com/yuin/goldmark` (+ GFM extension) — parsing, library core
-- `github.com/goccy/go-yaml` — config file, CLI layer only. (Amended
-  2026-08-07: originally `gopkg.in/yaml.v3`, which is no longer maintained;
-  goccy/go-yaml is actively maintained with better spec compliance.)
-- YAML front matter is recognized by our own byte-range pre-scan
-  (`internal/blockmap`), not a parser extension. (Amended 2026-08-07: this was
-  goldmark-meta at first, but mdreflow never consumes the parsed metadata —
-  it only needs the block excluded from reflow — and goldmark-meta's YAML
-  parsing dragged in unmaintained `yaml.v2` plus parser-hook artifacts the
-  fuzz harness had to defend against. Opener is exactly `---` at byte 0;
-  unterminated front matter is not front matter.)
-- `github.com/boyter/gocodewalker` — CLI layer only; used solely for its
-  vendored `go-gitignore` subpackage (nested-`.gitignore` semantics). The walk
-  itself is hand-rolled `filepath.WalkDir` (M4 decision; sabhiram/go-gitignore
-  was evaluated and dropped — no nested-file support).
+- `github.com/goccy/go-yaml` — config file, CLI layer only.
+  (Amended 2026-08-07: originally `gopkg.in/yaml.v3`, which is no longer maintained; goccy/go-yaml is actively maintained with better spec compliance.)
+- YAML front matter is recognized by our own byte-range pre-scan (`internal/blockmap`), not a parser extension.
+  (Amended 2026-08-07: this was goldmark-meta at first, but mdreflow never consumes the parsed metadata — it only needs the block excluded from reflow — and goldmark-meta's YAML parsing dragged in unmaintained `yaml.v2` plus parser-hook artifacts the fuzz harness had to defend against.
+  Opener is exactly `---` at byte 0; unterminated front matter is not front matter.)
+- `github.com/boyter/gocodewalker` — CLI layer only; used solely for its vendored `go-gitignore` subpackage (nested-`.gitignore` semantics).
+  The walk itself is hand-rolled `filepath.WalkDir` (M4 decision; sabhiram/go-gitignore was evaluated and dropped — no nested-file support).
 - `github.com/pmezard/go-difflib` — CLI layer only, unified diffs for `--diff` (M4 addition; hand-rolling Myers diff wasn't worth the risk).
-- Stdlib `flag` for the CLI (single command; cobra buys weight, not function;
-  the cost is shell completions, acceptable for now)
+- Stdlib `flag` for the CLI (single command; cobra buys weight, not function; the cost is shell completions, acceptable for now)
 
 ## Milestones
 
@@ -493,9 +420,7 @@ Recorded so the design doesn't preclude them; none are commitments.
 - **Markdown embedded in YAML/JSON values** — the original wishlist item, now judged a large scope expansion of uncertain value.
   The hard part is knowing *which* fields are Markdown; the shape would be caller-supplied yq/jq-style path selectors plus comment-preserving YAML node surgery, with mdreflow formatting the extracted strings.
   The bytes-in/bytes-out library API is the only accommodation made now: it keeps this buildable from outside.
-- **Per-file options in front matter** — a reserved key (e.g.
-  `mdreflow: {mode: para}`) slotting into the precedence chain as flags >
-  front matter > config > defaults.
+- **Per-file options in front matter** — a reserved key (e.g. `mdreflow: {mode: para}`) slotting into the precedence chain as flags > front matter > config > defaults.
 - **`--dialect` flag** — subsets of the tagged skip-list rules.
 - **Content sniffing for unknown extensions** — gated on observed need.
 - **GitHub Action, Homebrew tap, editor extensions** — distribution beyond goreleaser + pre-commit.

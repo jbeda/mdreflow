@@ -648,7 +648,7 @@ var unclosedTagAtLineEndRE = regexp.MustCompile(`<[A-Za-z][^<>]*$`)
 // — CommonMark's inline tag grammar allows whitespace (including a
 // newline) between the tag name and its closing ">", the same way a link
 // label or destination can (see hasMultilineLinkLabelRisk and
-// blockmap.hasUnbalancedParen) — so a hard-break marker that happens to
+// blockmap.hasUnclosedDestParen) — so a hard-break marker that happens to
 // fall *inside* such a tag gets detected and normalized by
 // reflow.detectHardBreak without any awareness that it is inside one (the
 // insideSpanAfter protection this package's own join logic has for
@@ -659,7 +659,7 @@ var unclosedTagAtLineEndRE = regexp.MustCompile(`<[A-Za-z][^<>]*$`)
 // but mdreflow's hard-break detection has no way to know that and
 // normalizes it to "<br>" regardless, corrupting the tag. This is not
 // caught by blockmap's own bracket-balance whole-paragraph-skip checks
-// (hasUnbalancedBracket, hasUnbalancedParen), which are deliberately
+// (hasUnbalancedBracket, hasUnclosedDestParen), which are deliberately
 // scoped to "[" and "(" only — "<" and ">" are far more common in
 // ordinary prose (e.g. as comparison operators, "x < 10"), so applying
 // the same blanket whole-paragraph skip to unbalanced angle brackets

@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("See [t](/a\nb) here. Second sentence.\n")

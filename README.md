@@ -4,13 +4,9 @@ Reflow Markdown prose.
 The default mode is sentence-per-line ([semantic line breaks](https://sembr.org/)); paragraph-per-line and classic hard wrap share the same pipeline.
 It is a Go library first, with a thin CLI on top.
 
-mdreflow changes where lines break inside paragraph prose and touches nothing
-else. It never rewrites block structure (headings, list markers, tables,
-escaping) and produces output by splicing reflowed prose into the original
-bytes, so everything outside a reflowed paragraph passes through
-byte-for-byte. If you also want lint-style normalization, pair it with a tool
-like [rumdl](https://github.com/rvben/rumdl); the two touch disjoint parts of
-the file.
+mdreflow changes where lines break inside paragraph prose and touches nothing else.
+It never rewrites block structure (headings, list markers, tables, escaping) and produces output by splicing reflowed prose into the original bytes, so everything outside a reflowed paragraph passes through byte-for-byte.
+If you also want lint-style normalization, pair it with a tool like [rumdl](https://github.com/rvben/rumdl); the two touch disjoint parts of the file.
 
 Why sentence-per-line?
 Diffs.

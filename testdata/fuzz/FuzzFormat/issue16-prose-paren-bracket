@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("Control plane (GMC rolls to\nrc.6, [self-hosted] ready). Second sentence here.\n")

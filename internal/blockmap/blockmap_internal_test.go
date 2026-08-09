@@ -283,17 +283,19 @@ func TestLooksLikeUnterminatedTag(t *testing.T) {
 	}
 }
 
-// TestHasUnbalancedBracketAndParen checks hasUnclosedDelimiterAcrossLine
-// (via its two callers): proper nested-depth tracking across lines, not a
+// TestHasUnbalancedBracketAndDestParen checks the bracket arm's
+// nested-depth tracking (proper structural tracking across lines, not a
 // per-line arithmetic sum — an unmatched close byte earlier in a line
 // must not appear to "cancel out" an unrelated open byte later on the
-// same line.
-func TestHasUnbalancedBracketAndParen(t *testing.T) {
+// same line) and the paren arm's "]("-armed narrowing (issue #16: only a
+// "(" immediately preceded by "]" can open an inline link destination, so
+// a plain prose parenthetical spanning a line break must not trigger it).
+func TestHasUnbalancedBracketAndDestParen(t *testing.T) {
 	cases := []struct {
-		name        string
-		lines       []string
-		wantBracket bool
-		wantParen   bool
+		name          string
+		lines         []string
+		wantBracket   bool
+		wantDestParen bool
 	}{
 		{"balanced on one line", []string{"[foo](bar)"}, false, false},
 		{"bracket left open at end of paragraph", []string{"[foo"}, true, false},
@@ -303,32 +305,71 @@ func TestHasUnbalancedBracketAndParen(t *testing.T) {
 			// non-final line is itself the hazard (a label/destination
 			// spanning the line break), independent of whether a later
 			// line happens to close it.
-			name:        "bracket left open at end of a non-final line still counts, even though later closed",
-			lines:       []string{"[foo", "bar]"},
-			wantBracket: true,
-			wantParen:   false,
+			name:          "bracket left open at end of a non-final line still counts, even though later closed",
+			lines:         []string{"[foo", "bar]"},
+			wantBracket:   true,
+			wantDestParen: false,
 		},
-		{"paren left open across lines", []string{"(foo", "bar"}, false, true},
+		{
+			// Issue #16: a prose paren open across lines is not a
+			// destination — nothing arms it.
+			name:          "prose paren left open across lines does not arm",
+			lines:         []string{"(foo", "bar"},
+			wantBracket:   false,
+			wantDestParen: false,
+		},
 		{
 			// Arithmetic sum would read this as balanced (one close, one
 			// open cancel out), but the close is stray/unmatched text
-			// before the open, which is structurally still open at the
-			// line's end — found by FuzzFormat on ")[](  \n)" (see
-			// hasUnbalancedParen's doc comment).
-			name:        "stray close then open on same line does not cancel arithmetically",
-			lines:       []string{")[](", ")"},
-			wantBracket: false,
-			wantParen:   true,
+			// before the open, which is structurally still open — and
+			// "]("-armed — at the line's end: found by FuzzFormat on
+			// ")[](  \n)" (see hasUnclosedDestParen's doc comment).
+			name:          "stray close then armed open on same line does not cancel arithmetically",
+			lines:         []string{")[](", ")"},
+			wantBracket:   false,
+			wantDestParen: true,
 		},
 		{"open bracket alone, never closed", []string{"[", "still open"}, true, false},
+		{
+			name:          "armed destination paren spanning a line",
+			lines:         []string{"[t](/a", "b)"},
+			wantBracket:   false,
+			wantDestParen: true,
+		},
+		{
+			// The armed flag is per-paren, not depth-0-only: the same
+			// spanning destination nested inside an ordinary prose
+			// parenthetical is the same hazard.
+			name:          "armed paren nested inside a prose paren still counts",
+			lines:         []string{"(x [](  ", "\")0)"},
+			wantBracket:   false,
+			wantDestParen: true,
+		},
+		{
+			// A prose paren whose interior merely *contains* a balanced
+			// link does not arm: the "]("-opened paren closed on its own
+			// line, and the one left open was never armed.
+			name:          "prose paren containing a balanced link does not arm",
+			lines:         []string{"(see [x](/y) and", "more)"},
+			wantBracket:   false,
+			wantDestParen: false,
+		},
+		{
+			// Armed paren open only at the end of the *final* line: no
+			// line break spans it, so nothing to guard.
+			name:          "armed paren open only at end of final line does not count",
+			lines:         []string{"prose", "then [t](/a"},
+			wantBracket:   false,
+			wantDestParen: false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := hasUnbalancedBracket(tc.lines); got != tc.wantBracket {
 				t.Errorf("hasUnbalancedBracket(%v) = %v, want %v", tc.lines, got, tc.wantBracket)
 			}
-			if got := hasUnbalancedParen(tc.lines); got != tc.wantParen {
-				t.Errorf("hasUnbalancedParen(%v) = %v, want %v", tc.lines, got, tc.wantParen)
+			if got := hasUnclosedDestParen(tc.lines); got != tc.wantDestParen {
+				t.Errorf("hasUnclosedDestParen(%v) = %v, want %v", tc.lines, got, tc.wantDestParen)
 			}
 		})
 	}
@@ -435,22 +476,27 @@ func TestMarkerLineStart(t *testing.T) {
 	}
 }
 
-// TestParenGuardRequiresBracket pins issue #14: the paren arm of build's
-// link-hazard guard only fires when a "[" exists somewhere in the
-// paragraph — every hazard it guards (inline link destination, definition
-// title) needs one, and reflow never creates one. Bracket-free prose with
-// a parenthetical spanning a line break must stay reflow-eligible.
-func TestParenGuardRequiresBracket(t *testing.T) {
+// TestParenGuardNarrowing pins issues #14 and #16: the paren arm of
+// build's link-hazard guard fires only on a "]("-opened paren left open
+// at a line end — the inline-destination hazard its doc comment names —
+// never on a plain prose parenthetical spanning a line break, no matter
+// what brackets appear elsewhere in the paragraph (#16: an unrelated "["
+// anywhere used to re-arm it, which in link-dense prose was nearly
+// always).
+func TestParenGuardNarrowing(t *testing.T) {
 	cases := []struct {
 		name     string
 		src      string
 		eligible bool // does Paragraphs return a reflow-eligible paragraph?
 	}{
 		{"paren only, spanning", "A torus (a portal\nyou pass through) here. Second sentence.\n", true},
+		{"paren spanning with unrelated bracket elsewhere (#16)", "Control plane (GMC rolls to\nrc.6, [self-hosted] ready). Second sentence here.\n", true},
 		{"bracket spanning", "A torus [a portal\nyou pass through] here. Second sentence.\n", false},
 		{"bare def opener", "[0]:\n0\n\"\"0\n", false},
 		{"def opener mid-paragraph", "[! [0]:0\n0\n", false},
 		{"def title spanning", "[label]: /url (title\ncontinues) here. Second sentence.\n", false},
+		{"inline destination spanning", "See [t](/a\nb) here. Second sentence.\n", false},
+		{"image destination spanning", "An image ![alt](\n/dest) here. Second sentence.\n", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
