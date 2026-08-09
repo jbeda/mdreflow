@@ -32,11 +32,11 @@ jobs:
           go-version-file: go.mod
       - name: Extract release notes from CHANGELOG.md
         run: scripts/release-notes.sh "$GITHUB_REF_NAME" > /tmp/release-notes.md
-      - uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           # Pinned, not floated: a goreleaser minor could change release
           # behavior underneath an unchanged config.
-          version: "v2.16.0"
+          version: "v2.17.1"
           args: release --clean --release-notes /tmp/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
