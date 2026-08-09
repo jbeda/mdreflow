@@ -344,9 +344,10 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// URL, which is close to nonexistent in real prose.
 		return Paragraph{}, true
 	}
-	if hasUnbalancedBracket(trimmed) ||
-		hasUnclosedDestParen(trimmed) ||
-		hasUnclosedAngleDestOpener(trimmed) {
+	masked := maskCodeSpans(trimmed)
+	if hasUnbalancedBracket(masked) ||
+		hasUnclosedDestParen(masked) ||
+		hasUnclosedAngleDestOpener(masked) {
 		// Fuzz-found content-loss hazard family, more severe than (and
 		// broader than) reflow.isLinkRefDefOpener's per-output-line
 		// defense: a CommonMark link reference definition's label,
@@ -991,4 +992,67 @@ func hasUnclosedDelimiterAcrossLine(trimmedLines []string, open, close byte) boo
 		}
 	}
 	return depth > 0
+}
+
+// maskCodeSpans returns trimmedLines with the interior of every inline
+// code span replaced by a filler byte, preserving line structure and byte
+// offsets so the delimiter scans above see identical geometry.
+//
+// A bracket inside a code span is literal: it cannot open a link label, a
+// reference definition, or a destination, so it is not the hazard the
+// spanning-delimiter guards exist for. It still arms them today, which
+// skips paragraphs that merely *document* Markdown or YAML syntax
+// ("`runs-on: [self-hosted,` / `<label>]`").
+//
+// Masking follows CommonMark's code-span rule rather than "text between
+// backticks": a backtick run of length N opens a span that only a run of
+// exactly N closes, newlines included. A run with no matching closer is
+// literal text and is deliberately left unmasked — that is what keeps an
+// unclosed "`unclosed [bracket" arming the guard, where the bracket is
+// ordinary prose and the paragraph really is hazardous.
+func maskCodeSpans(trimmedLines []string) []string {
+	joined := strings.Join(trimmedLines, "\n")
+	b := []byte(joined)
+	out := make([]byte, len(b))
+	copy(out, b)
+	for i := 0; i < len(b); {
+		if b[i] != '`' {
+			i++
+			continue
+		}
+		run := 0
+		for i+run < len(b) && b[i+run] == '`' {
+			run++
+		}
+		// Look for a closing run of exactly the same length.
+		j := i + run
+		closed := -1
+		for j < len(b) {
+			if b[j] != '`' {
+				j++
+				continue
+			}
+			r2 := 0
+			for j+r2 < len(b) && b[j+r2] == '`' {
+				r2++
+			}
+			if r2 == run {
+				closed = j
+				break
+			}
+			j += r2
+		}
+		if closed < 0 {
+			// No closer: the run is literal text, mask nothing.
+			i += run
+			continue
+		}
+		for k := i + run; k < closed; k++ {
+			if out[k] != '\n' {
+				out[k] = 'x'
+			}
+		}
+		i = closed + run
+	}
+	return strings.Split(string(out), "\n")
 }

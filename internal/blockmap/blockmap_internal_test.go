@@ -560,6 +560,39 @@ func TestMarkerLineStart(t *testing.T) {
 // what brackets appear elsewhere in the paragraph (#16: an unrelated "["
 // anywhere used to re-arm it, which in link-dense prose was nearly
 // always).
+// A bracket inside an inline code span is literal: it cannot open a link
+// label, a reference definition, or a destination, so it must not arm the
+// spanning-delimiter guards. An unmatched backtick run opens no code span
+// at all, so a bracket after one is ordinary prose and must still arm them.
+func TestCodeSpanBracketsDoNotArmGuards(t *testing.T) {
+	cases := []struct {
+		name     string
+		src      string
+		eligible bool
+	}{
+		{"code-span bracket spanning a break", "Queues N jobs\n(matrix on `runs-on: [self-hosted,\n<label>]`), analogous. Second.\n", true},
+		{"code span itself spans the break", "Text with `code [span\nacross` lines here. Second sentence.\n", true},
+		// An unmatched run opens no code span, so this bracket is outside one
+		// and keeps whatever behavior the guards already gave it.
+		{"unmatched backtick leaves the bracket outside any span", "Text with `unclosed [bracket\nand more. Second sentence.\n", false},
+		{"backtick run length must match to close", "A ``x `y` [z\nw`` here. Second sentence.\n", true},
+		{"real destination outside a code span still arms", "See [t](/a\nb) and `arr[0]` here. Second one.\n", false},
+		// inLinkRefDefZone runs ahead of the masking and is deliberately blunt
+		// about definition-shaped lines, so this stays skipped. Recorded so the
+		// interaction is not mistaken for the masking failing.
+		{"definition label inside a code span still hits the zone", "Text `[label]: /url\nmore` here. Second sentence.\n", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := []byte(tc.src)
+			doc := gm.New().Parser().Parse(text.NewReader(b))
+			if got := len(Paragraphs(doc, b)) > 0; got != tc.eligible {
+				t.Errorf("eligible = %v, want %v", got, tc.eligible)
+			}
+		})
+	}
+}
+
 func TestParenGuardNarrowing(t *testing.T) {
 	cases := []struct {
 		name     string
