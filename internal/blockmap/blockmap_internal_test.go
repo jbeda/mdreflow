@@ -632,6 +632,33 @@ func TestMkDocsAdmonitionBody(t *testing.T) {
 	}
 }
 
+// Only a bare URL that starts before a backtick can swallow it into the
+// linkified token. A backtick that opens first is a code-span delimiter
+// whose span happens to contain a URL, which is how documentation names a
+// registry or an endpoint.
+func TestBacktickInBareURLNeedsURLFirst(t *testing.T) {
+	cases := []struct {
+		name     string
+		src      string
+		eligible bool
+	}{
+		{"backtick inside a bare URL", "See https://example.com/a`b and more here.\nSecond line. Third sentence.\n", false},
+		{"www form", "See www.example.com/a`b here and more.\nSecond line. Third sentence.\n", false},
+		{"email form", "Mail a@b.com/x`y here and more text.\nSecond line. Third sentence.\n", false},
+		{"URL inside a code span", "Pushed to\n`oci://ghcr.io/org/chart`, with its version set. Second sentence.\n", true},
+		{"code span then a separate URL", "See `code` and https://example.com/x here.\nSecond line. Third sentence.\n", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := []byte(tc.src)
+			doc := gm.New().Parser().Parse(text.NewReader(b))
+			if got := len(Paragraphs(doc, b)) > 0; got != tc.eligible {
+				t.Errorf("eligible = %v, want %v", got, tc.eligible)
+			}
+		})
+	}
+}
+
 func TestParenGuardNarrowing(t *testing.T) {
 	cases := []struct {
 		name     string
