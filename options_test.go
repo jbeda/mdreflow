@@ -17,7 +17,13 @@ func TestFormatRejectsInvalidOptions(t *testing.T) {
 	}{
 		{"para mode with max width", mdreflow.Options{Mode: mdreflow.ModePara, MaxWidth: 80}},
 		{"unknown mode", mdreflow.Options{Mode: mdreflow.Mode(99)}},
+		{"max width below the floor", mdreflow.Options{MaxWidth: mdreflow.MinMaxWidth - 1}},
+		{"wrap mode max width below the floor", mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 1}},
 	}
+	// TestMain turns the width floor off for the harness; this test is
+	// about the production validation, so turn it back on.
+	mdreflow.SetWidthFloor(true)
+	defer mdreflow.SetWidthFloor(false)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := mdreflow.Format([]byte("Some text.\n"), tc.opts)
@@ -40,6 +46,7 @@ func TestFormatAcceptsEveryDocumentedOption(t *testing.T) {
 		{"wrap mode", mdreflow.Options{Mode: mdreflow.ModeWrap}},
 		{"wrap mode zero width", mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 0}},
 		{"sentence mode max width", mdreflow.Options{MaxWidth: 40}},
+		{"max width exactly at the floor", mdreflow.Options{MaxWidth: mdreflow.MinMaxWidth}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

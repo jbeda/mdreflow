@@ -74,6 +74,10 @@ type Segmenter interface {
 // the default and is always valid: sentence mode, unbounded width, <br>
 // hard-break style, the built-in segmenter with its default abbreviation
 // list.
+// MinMaxWidth is the smallest non-zero Options.MaxWidth Format accepts —
+// see Options.MaxWidth's doc comment for why tiny widths are refused.
+const MinMaxWidth = 20
+
 type Options struct {
 	// Mode selects the reflow strategy. Zero value is ModeSentence.
 	Mode Mode
@@ -86,6 +90,13 @@ type Options struct {
 	// here. In every mode, a no-break span (inline code, a link, ...) or
 	// a single word wider than the limit overflows rather than being
 	// split.
+	//
+	// A non-zero MaxWidth below MinMaxWidth (20) is an options error.
+	// Nearly every pathological width behavior the fuzz campaign found
+	// needed single-digit widths, where the geometry forces breaks
+	// inside constructs; no real document wants width 12. Refusing the
+	// range outright deletes that adversarial surface from the product
+	// (docs/design.md, "The width floor").
 	//
 	// MaxWidth's meaning is mode-dependent:
 	//

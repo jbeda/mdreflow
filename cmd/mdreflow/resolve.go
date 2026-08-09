@@ -170,6 +170,9 @@ func mergeOptions(f *flags, cfg *config.File, cfgDir string) (resolvedOptions, e
 	if opts.Mode == mdreflow.ModePara && opts.MaxWidth != 0 {
 		return r, fmt.Errorf("--max-width is not valid with --mode=para (para mode always joins to a single line)")
 	}
+	if opts.MaxWidth != 0 && opts.MaxWidth < mdreflow.MinMaxWidth {
+		return r, fmt.Errorf("--max-width must be 0 (unbounded) or at least %d, got %d (very narrow widths force breaks inside Markdown constructs)", mdreflow.MinMaxWidth, opts.MaxWidth)
+	}
 
 	r.opts = opts
 	return r, nil

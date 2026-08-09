@@ -86,7 +86,7 @@ Configuration (.mdreflow.yaml):
   silent no-op — a typo'd key should not be ignored.
 
     mode: sentence          # sentence | para | wrap
-    max-width: 0
+    max-width: 0            # 0 = unbounded/default; otherwise >= 20
     hard-breaks: br         # br | spaces | backslash
     abbreviations:          # additions to the built-in list
       - "et al."

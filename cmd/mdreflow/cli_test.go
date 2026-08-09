@@ -175,7 +175,7 @@ func TestRunUsageErrorMissingPath(t *testing.T) {
 
 func TestRunConfigDrivesFormattingWhenNoFlagsGiven(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".mdreflow.yaml"), "mode: wrap\nmax-width: 10\n")
+	writeFile(t, filepath.Join(dir, ".mdreflow.yaml"), "mode: wrap\nmax-width: 20\n")
 	p := filepath.Join(dir, "a.md")
 	writeFile(t, p, "one two three four five six seven eight nine ten\n")
 
@@ -185,27 +185,41 @@ func TestRunConfigDrivesFormattingWhenNoFlagsGiven(t *testing.T) {
 	}
 	got := readFile(t, p)
 	if !strings.Contains(got, "\n") || strings.Count(got, "\n") < 2 {
-		t.Errorf("expected config-driven wrap at width 10 to split into multiple lines, got %q", got)
+		t.Errorf("expected config-driven wrap at width 20 to split into multiple lines, got %q", got)
+	}
+}
+
+// Non-zero widths below mdreflow.MinMaxWidth are a usage error (exit 2):
+// very narrow widths force breaks inside Markdown constructs and were the
+// source of most fuzz-found width pathology (docs/design.md, "The width
+// floor").
+func TestRunMaxWidthBelowFloorIsUsageError(t *testing.T) {
+	_, errOut, code := runCLI(t, []string{"--mode=wrap", "--max-width=10"}, "Some text.\n")
+	if code != exitUsage {
+		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitUsage, errOut)
+	}
+	if !strings.Contains(errOut, "--max-width") || !strings.Contains(errOut, "20") {
+		t.Errorf("stderr = %q, want it to name --max-width and the floor", errOut)
 	}
 }
 
 func TestRunFlagBeatsConfigEvenAtZeroValue(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".mdreflow.yaml"), "mode: wrap\nmax-width: 10\n")
+	writeFile(t, filepath.Join(dir, ".mdreflow.yaml"), "mode: wrap\nmax-width: 20\n")
 	p := filepath.Join(dir, "a.md")
 	content := "one two three four five six seven eight nine ten\n"
 	writeFile(t, p, content)
 
 	// --max-width=0 is the flag's zero value (same as never passing it),
 	// but explicitly setting it must still override the config's
-	// max-width: 10 — wrap mode's 0 means "default to 80", which is wide
+	// max-width: 20 — wrap mode's 0 means "default to 80", which is wide
 	// enough that this line does not need to wrap at all.
 	_, errOut, code := runCLI(t, []string{"--max-width=0", p}, "")
 	if code != exitOK {
 		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitOK, errOut)
 	}
 	if got := readFile(t, p); got != content {
-		t.Errorf("explicit --max-width=0 should have overridden config's max-width: 10; got %q", got)
+		t.Errorf("explicit --max-width=0 should have overridden config's max-width: 20; got %q", got)
 	}
 }
 

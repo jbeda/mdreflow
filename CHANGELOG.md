@@ -9,6 +9,10 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+### Changed
+
+- `--max-width` (and the library's `Options.MaxWidth`) now rejects non-zero values below 20 with a loud error. Very narrow widths force line breaks inside Markdown constructs and were the source of nearly all fuzz-found width pathology; no real document wants them. 0 still means unbounded (sentence mode) or the default 80 (wrap mode).
+
 ### Removed
 
 - Typography substitution (`--smart-quotes`, `--ellipses`, the `typography:` config key, and the library's `Typography` options) is removed. It was the only feature whose purpose was to change rendered output, which put it at odds with mdreflow's core guarantee; substituting at render time is the better home (goldmark's Typographer, Hugo's smartypants, Python-Markdown's smarty), and anyone wanting it baked into source bytes wants a full parse-and-re-emit formatter, which mdreflow deliberately is not. A leftover `typography:` key in `.mdreflow.yaml` is now an unknown-key config error (exit 2); delete the line.

@@ -33,6 +33,14 @@ const maxFormatPasses = 4
 // needs the backstop is a bug to find, not behavior to mask.
 var convergenceBackstop = true
 
+// widthFloor gates the MinMaxWidth validation. Always true in production;
+// the test harness turns it off (via export_test.go) so the fuzzer and
+// the narrow-width fixtures keep driving the unrestricted core — a
+// tiny-width finding is still a bug signal to root-cause (some generalize
+// to legal widths with long tokens), it just cannot be a user-facing bug
+// on its own (docs/design.md, "The width floor").
+var widthFloor = true
+
 // Format reflows src according to opts and returns the result. Everything
 // outside reflowed paragraph prose — code blocks, front matter, headings,
 // lists, blockquotes, tables, and so on — is returned byte-for-byte (see
@@ -130,6 +138,9 @@ func validateOptions(opts Options) error {
 		// Rejecting loudly, rather than silently ignoring it, matches
 		// design.md's "loud, machine-legible behavior" principle.
 		return errors.New("mdreflow: MaxWidth must be 0 with ModePara (para mode always joins to a single line)")
+	}
+	if widthFloor && opts.MaxWidth != 0 && opts.MaxWidth < MinMaxWidth {
+		return fmt.Errorf("mdreflow: MaxWidth must be 0 (unbounded) or at least %d, got %d", MinMaxWidth, opts.MaxWidth)
 	}
 	return nil
 }

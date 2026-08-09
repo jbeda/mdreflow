@@ -61,7 +61,7 @@ The full API reference is on [pkg.go.dev](https://pkg.go.dev/github.com/jbeda/md
 
 ## Modes
 
-- `sentence` (default): one sentence per source line. `--max-width` optionally adds clause-level breaks inside sentences that run past the limit; the default of 0 means unbounded.
+- `sentence` (default): one sentence per source line. `--max-width` optionally adds clause-level breaks inside sentences that run past the limit; the default of 0 means unbounded. Non-zero widths below 20 are refused in every mode — very narrow wrapping forces breaks inside Markdown constructs.
 - `para`: each paragraph joined onto a single line. `--max-width` is an error here.
 - `wrap`: classic hard wrap at `--max-width` (default 80).
 

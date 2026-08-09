@@ -8,3 +8,11 @@ package mdreflow
 func SetConvergenceBackstop(enabled bool) {
 	convergenceBackstop = enabled
 }
+
+// SetWidthFloor enables or disables the MinMaxWidth validation for tests.
+// The harness turns it off so the fuzzer and the narrow-width fixtures
+// drive the unrestricted core (docs/design.md, "The width floor"). Not
+// safe to toggle from parallel tests.
+func SetWidthFloor(enabled bool) {
+	widthFloor = enabled
+}

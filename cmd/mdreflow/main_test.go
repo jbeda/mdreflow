@@ -69,11 +69,11 @@ func TestRunWrapMode(t *testing.T) {
 	in := strings.NewReader("One two three four five six seven eight nine ten.\n")
 	var out, errOut bytes.Buffer
 
-	code := run([]string{"--mode=wrap", "--max-width=10"}, in, &out, &errOut)
+	code := run([]string{"--mode=wrap", "--max-width=20"}, in, &out, &errOut)
 	if code != 0 {
 		t.Fatalf("run exited %d, stderr=%q", code, errOut.String())
 	}
-	want := "One two\nthree four\nfive six\nseven\neight nine\nten.\n"
+	want := "One two three four\nfive six seven eight\nnine ten.\n"
 	if out.String() != want {
 		t.Errorf("stdout = %q, want %q", out.String(), want)
 	}
