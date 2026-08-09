@@ -62,14 +62,19 @@ func Format(src []byte, opts Options) ([]byte, error) {
 		return nil, ErrInvalidUTF8
 	}
 
-	seg := opts.Segmenter
-	if seg == nil {
+	var seg reflow.Segmenter
+	if opts.Segmenter != nil {
+		seg = segmenterAdapter{opts.Segmenter}
+	} else {
 		seg = segment.New(opts.Abbreviations)
 	}
+	// Mode and HardBreakStyle are aliases of the shared internal
+	// definitions (package opts), so no conversion happens here — the
+	// former hand-mirrored enums and their unchecked casts are gone.
 	rOpts := reflow.Options{
-		Mode:                        reflow.Mode(opts.Mode),
+		Mode:                        opts.Mode,
 		MaxWidth:                    opts.MaxWidth,
-		HardBreaks:                  reflow.HardBreakStyle(opts.HardBreaks),
+		HardBreaks:                  opts.HardBreaks,
 		StripSentenceTerminalBreaks: opts.StripSentenceTerminalBreaks,
 	}
 
@@ -86,6 +91,21 @@ func Format(src []byte, opts Options) ([]byte, error) {
 		cur = next
 	}
 	return src, nil
+}
+
+// segmenterAdapter bridges a caller-supplied Segmenter (whose Breaks
+// returns the public, concrete []Span) to the internal pipeline's
+// interface. One small copy per paragraph cluster, in exchange for a
+// public Span type whose fields render in documentation.
+type segmenterAdapter struct{ s Segmenter }
+
+func (a segmenterAdapter) Breaks(text string) []segment.Span {
+	spans := a.s.Breaks(text)
+	out := make([]segment.Span, len(spans))
+	for i, sp := range spans {
+		out[i] = segment.Span{Start: sp.Start, End: sp.End}
+	}
+	return out
 }
 
 // formatOnce runs one parse+reflow pass — the single-pass core Format

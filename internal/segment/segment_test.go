@@ -17,12 +17,12 @@ func TestBreaks(t *testing.T) {
 		{
 			name: "simple two sentences",
 			text: "This is one. This is two.",
-			want: []Span{{12, 13}},
+			want: []Span{{Start: 12, End: 13}},
 		},
 		{
 			name: "three sentences",
 			text: "One. Two. Three.",
-			want: []Span{{4, 5}, {9, 10}},
+			want: []Span{{Start: 4, End: 5}, {Start: 9, End: 10}},
 		},
 		{
 			name: "no terminal punctuation",
@@ -32,7 +32,7 @@ func TestBreaks(t *testing.T) {
 		{
 			name: "exclamation and question marks",
 			text: "Wait! Really? Yes.",
-			want: []Span{{5, 6}, {13, 14}},
+			want: []Span{{Start: 5, End: 6}, {Start: 13, End: 14}},
 		},
 		{
 			name: "abbreviation Mr not a break",
@@ -42,7 +42,7 @@ func TestBreaks(t *testing.T) {
 		{
 			name: "abbreviation followed by more text",
 			text: "Dr. Jones and Mrs. Jones came. Then they left.",
-			want: []Span{{30, 31}},
+			want: []Span{{Start: 30, End: 31}},
 		},
 		{
 			name: "e.g. mid sentence",
@@ -67,17 +67,17 @@ func TestBreaks(t *testing.T) {
 		{
 			name: "ellipsis followed by uppercase does split",
 			text: "Hold on... Something changed.",
-			want: []Span{{10, 11}},
+			want: []Span{{Start: 10, End: 11}},
 		},
 		{
 			name: "closing double quote after period",
 			text: `She said "I am done." Then she left.`,
-			want: []Span{{21, 22}},
+			want: []Span{{Start: 21, End: 22}},
 		},
 		{
 			name: "closing paren after period",
 			text: "This is true (I checked it.) Moving on.",
-			want: []Span{{28, 29}},
+			want: []Span{{Start: 28, End: 29}},
 		},
 		{
 			name: "trailing punctuation with no following text",
@@ -92,12 +92,12 @@ func TestBreaks(t *testing.T) {
 		{
 			name: "next char digit starts a sentence",
 			text: "See section one. 2 is the next section.",
-			want: []Span{{16, 17}},
+			want: []Span{{Start: 16, End: 17}},
 		},
 		{
 			name: "next char opening quote starts a sentence",
 			text: `He finished. "Now what?" She asked.`,
-			want: []Span{{12, 13}, {24, 25}},
+			want: []Span{{Start: 12, End: 13}, {Start: 24, End: 25}},
 		},
 		{
 			name: "U.S. abbreviation with internal periods",
@@ -107,7 +107,7 @@ func TestBreaks(t *testing.T) {
 		{
 			name: "multiple spaces after period collapse into one gap",
 			text: "First sentence.   Second sentence.",
-			want: []Span{{15, 18}},
+			want: []Span{{Start: 15, End: 18}},
 		},
 		{
 			name: "abbreviation at very end of text",
@@ -125,7 +125,7 @@ func TestBreaks(t *testing.T) {
 			// end — pragmatic_segmenter's "parenthesis" golden rule.
 			name: "parenthetical aside with its own terminal punctuation",
 			text: "He said it plainly (there was no doubt about it). Nobody argued.",
-			want: []Span{{49, 50}},
+			want: []Span{{Start: 49, End: 50}},
 		},
 		{
 			// Mined regression class: a quotation containing terminal
@@ -133,7 +133,7 @@ func TestBreaks(t *testing.T) {
 			// quote — pragmatic_segmenter's "quotation" golden rule.
 			name: "quotation containing its own period",
 			text: `She asked, "Is this really it?" He nodded and left.`,
-			want: []Span{{31, 32}},
+			want: []Span{{Start: 31, End: 32}},
 		},
 		{
 			// Mined regression class: multi-part initials (a name written
@@ -141,7 +141,7 @@ func TestBreaks(t *testing.T) {
 			// treated as sentence ends.
 			name: "multi-part initials in a name",
 			text: "J. R. R. Tolkien wrote it. Everyone agreed.",
-			want: []Span{{26, 27}},
+			want: []Span{{Start: 26, End: 27}},
 		},
 		{
 			// Mined regression class: an ordinal/decimal-looking number
@@ -149,7 +149,7 @@ func TestBreaks(t *testing.T) {
 			// sentence end.
 			name: "decimal number mid sentence not a list marker",
 			text: "The part costs 3.5 dollars. That is the final price.",
-			want: []Span{{27, 28}},
+			want: []Span{{Start: 27, End: 28}},
 		},
 	}
 
@@ -175,7 +175,7 @@ func TestBreaksSingleInitial(t *testing.T) {
 	seg := New(nil)
 	text := "J. Beda wrote this. It is a test."
 	got := seg.Breaks(text)
-	want := []Span{{19, 20}}
+	want := []Span{{Start: 19, End: 20}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Breaks(%q) = %v, want %v", text, got, want)
 	}
@@ -254,7 +254,7 @@ func TestBreaksBareCarriageReturn(t *testing.T) {
 			// the sentence-start guard has to see.
 			name: "bare CR in the post-punctuation whitespace run is consumed",
 			text: "One.\rTwo.",
-			want: []Span{{4, 5}},
+			want: []Span{{Start: 4, End: 5}},
 		},
 	}
 	seg := New(nil)

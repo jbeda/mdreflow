@@ -9,17 +9,18 @@
 package segment
 
 import (
+	"github.com/jbeda/mdreflow/internal/opts"
 	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 )
 
-// Span is a half-open byte range [Start, End) into the text a Segmenter or
-// NoBreakSpans was called with.
-type Span struct {
-	Start, End int
-}
+// Span is a half-open byte range [Start, End) into the text a Segmenter
+// or NoBreakSpans was called with. It is the shared internal definition
+// (package opts); the public mdreflow.Span is a distinct concrete struct
+// adapted at the Segmenter boundary.
+type Span = opts.Span
 
 // terminalRun matches a run of sentence-terminal punctuation (., !, ?)
 // followed by any closing quote or bracket characters. Matching stops at

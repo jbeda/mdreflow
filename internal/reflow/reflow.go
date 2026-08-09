@@ -22,6 +22,7 @@ import (
 
 	"github.com/jbeda/mdreflow/internal/blockmap"
 	"github.com/jbeda/mdreflow/internal/gm"
+	"github.com/jbeda/mdreflow/internal/opts"
 	"github.com/jbeda/mdreflow/internal/segment"
 )
 
@@ -33,27 +34,25 @@ type Segmenter interface {
 }
 
 // HardBreakStyle mirrors mdreflow.HardBreakStyle (an internal package
-// cannot import the root package, which imports this one). format.go
-// converts between the two; the iota values are kept in lockstep.
-type HardBreakStyle int
+// package opts is the one definition of both enums (go-quality review
+// S4: the former hand-mirrored copies here were "kept in lockstep" by
+// comment alone); these aliases keep this package's call sites reading
+// naturally.
+type HardBreakStyle = opts.HardBreakStyle
 
-// HardBreak style constants, in the same order as mdreflow.HardBreakStyle.
 const (
-	HardBreakBr HardBreakStyle = iota
-	HardBreakSpaces
-	HardBreakBackslash
+	HardBreakBr        = opts.HardBreakBr
+	HardBreakSpaces    = opts.HardBreakSpaces
+	HardBreakBackslash = opts.HardBreakBackslash
 )
 
-// Mode mirrors mdreflow.Mode (an internal package cannot import the root
-// package, which imports this one). format.go converts between the two;
-// the iota values are kept in lockstep.
-type Mode int
+// Mode aliases the shared definition in package opts; see HardBreakStyle.
+type Mode = opts.Mode
 
-// Mode constants, in the same order as mdreflow.Mode.
 const (
-	ModeSentence Mode = iota
-	ModePara
-	ModeWrap
+	ModeSentence = opts.ModeSentence
+	ModePara     = opts.ModePara
+	ModeWrap     = opts.ModeWrap
 )
 
 // defaultWrapWidth is ModeWrap's effective width when Options.MaxWidth is

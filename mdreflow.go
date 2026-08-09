@@ -14,50 +14,62 @@
 // pluggable Segmenter are all implemented.
 package mdreflow
 
-import "github.com/jbeda/mdreflow/internal/segment"
+import (
+	"github.com/jbeda/mdreflow/internal/opts"
+	"github.com/jbeda/mdreflow/internal/segment"
+)
 
 // Mode selects the top-level reflow strategy.
-type Mode int
+//
+// (Mode, HardBreakStyle, and their constants are aliases of one shared
+// definition in an internal leaf package the pipeline uses directly, so
+// the public and internal values can never drift; this alias is the
+// documented, supported name.)
+type Mode = opts.Mode
 
 const (
 	// ModeSentence joins each paragraph's lines and splits at sentence
 	// boundaries, one sentence per line. The default mode.
-	ModeSentence Mode = iota
+	ModeSentence Mode = opts.ModeSentence
 	// ModePara joins each paragraph (each hard-break cluster — see
 	// HardBreakStyle) to a single line, with no further splitting.
 	// Options.MaxWidth must be 0 in this mode: para mode's whole point is
 	// one unconditional line, so a non-zero MaxWidth has nothing to apply
 	// to and Format returns an error rather than silently ignoring it —
 	// see Options.MaxWidth's doc comment.
-	ModePara
+	ModePara Mode = opts.ModePara
 	// ModeWrap hard-wraps at Options.MaxWidth, breaking at word
 	// boundaries only: a no-break span or a single word wider than the
 	// limit overflows rather than being split. Options.MaxWidth of 0
 	// defaults to 80 in this mode only — see Options.MaxWidth's doc
 	// comment.
-	ModeWrap
+	ModeWrap Mode = opts.ModeWrap
 )
 
 // HardBreakStyle selects how hard line breaks are normalized when
 // reflowed prose moves them to a new position in the source. Every
 // preserved hard break (however it was originally spelled) is rewritten to
 // this style.
-type HardBreakStyle int
+type HardBreakStyle = opts.HardBreakStyle
 
 const (
 	// HardBreakBr renders a hard break as a literal <br>. Default: an
 	// accidental double-space hard break survives formatting but becomes
 	// loudly visible in a diff.
-	HardBreakBr HardBreakStyle = iota
+	HardBreakBr HardBreakStyle = opts.HardBreakBr
 	// HardBreakSpaces renders a hard break as a trailing double space.
-	HardBreakSpaces
+	HardBreakSpaces HardBreakStyle = opts.HardBreakSpaces
 	// HardBreakBackslash renders a hard break as a trailing backslash.
-	HardBreakBackslash
+	HardBreakBackslash HardBreakStyle = opts.HardBreakBackslash
 )
 
 // Span is a half-open byte range [Start, End) into the text passed to a
-// Segmenter's Breaks method.
-type Span = segment.Span
+// Segmenter's Breaks method. It is a concrete struct (not an alias to an
+// internal type) so its fields are visible in rendered documentation;
+// Format adapts it at the Segmenter boundary.
+type Span struct {
+	Start, End int
+}
 
 // Segmenter finds sentence boundaries in prose text. It is independently
 // testable and swappable: provide Options.Segmenter to plug in something
@@ -70,14 +82,14 @@ type Segmenter interface {
 	Breaks(text string) []Span
 }
 
-// Options configures Format, Check, and FormatReader. The zero value is
-// the default and is always valid: sentence mode, unbounded width, <br>
-// hard-break style, the built-in segmenter with its default abbreviation
-// list.
 // MinMaxWidth is the smallest non-zero Options.MaxWidth Format accepts —
 // see Options.MaxWidth's doc comment for why tiny widths are refused.
 const MinMaxWidth = 20
 
+// Options configures Format, Check, and FormatReader. The zero value is
+// the default and is always valid: sentence mode, unbounded width, <br>
+// hard-break style, the built-in segmenter with its default abbreviation
+// list.
 type Options struct {
 	// Mode selects the reflow strategy. Zero value is ModeSentence.
 	Mode Mode

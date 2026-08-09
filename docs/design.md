@@ -174,7 +174,14 @@ Segmentation is behind a public interface so it is independently testable and sw
 type Segmenter interface {
     Breaks(text string) []Span
 }
+
+// Span is a concrete public struct — deliberately not an alias to the
+// internal type — so its fields render on pkg.go.dev; Format adapts it
+// at the Segmenter boundary (one copy per cluster, custom Segmenters only).
+type Span struct{ Start, End int }
 ```
+
+Option enums (`Mode`, `HardBreakStyle`, and future `Dialect`) have exactly one definition, in the internal leaf package `internal/opts`, which both the root package and the pipeline packages import; the root's exported names are aliases, so the former hand-mirrored copies bridged by unchecked casts (go-quality review S4) cannot exist.
 
 The built-in segmenter ships with a solid default abbreviation list; `Options.Abbreviations` (and the config file) *add* to it.
 Wholesale replacement means providing your own `Segmenter`.
