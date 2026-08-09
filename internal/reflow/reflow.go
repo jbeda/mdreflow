@@ -183,6 +183,29 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 		}
 		text := joinClusterLines(curLines, marker != "")
 		curLines = nil
+		if marker == "" {
+			// The join itself can manufacture a hard-break spelling no
+			// source line carried: a multi-line inline tag like
+			// "<Br\n/>" joins to "<Br />", which IS the self-closing
+			// br-marker form the next pass's per-line detection will
+			// recognize and normalize — an idempotency flip (found by
+			// FuzzFormat on "0<Br\n/>", seed 731b45747c153106, thirty
+			// minutes into a soak; sibling of the "<Br >" find, but this
+			// spelling is legitimate and cannot be dropped from
+			// hardBreakBrRE). Run the same detection pass 2 will run on
+			// this joined line, so pass 1 already speaks with pass 2's
+			// voice. isLastLine=false: the cluster boundary this flush
+			// creates means a following line exists in the emitted
+			// paragraph whenever the manufactured marker could matter,
+			// and pass 2's twice-output on the fuzz find shows goldmark's
+			// per-line pass normalizes even a paragraph-final one.
+			// insideSpan=false matches the per-line call for a line whose
+			// span context the join has already resolved.
+			if m, rest := detectHardBreak(text, opts, false, false); m != "" {
+				marker = m
+				text = rest
+			}
+		}
 		// Typography substitution happens here — on the whole joined
 		// cluster, *before* computeLines segments or wraps it — not on
 		// the per-line output afterwards. Two reasons:
