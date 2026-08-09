@@ -37,7 +37,7 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ### Fixed
 
-- A paragraph is no longer skipped just because a code span contains a URL (`` `oci://ghcr.io/org/chart` ``), which is how documentation names a registry or endpoint (#20, contributed by Karl Isenberg).
+- A paragraph is no longer skipped just because a code span contains a URL (`` `oci://ghcr.io/org/chart` ``), which is how documentation names a registry or endpoint (#29, contributed by Karl Isenberg).
   The backtick-in-bare-URL guard now requires the URL to start *before* the backtick, which is the only order in which linkify can swallow one.
 - A paragraph whose link text or destination spans a line break is no longer skipped unless the paragraph could actually form a link reference definition (#18, contributed by Karl Isenberg).
   The bracket guard now also requires a `]:` somewhere in the paragraph, the only shape a definition can be built from.
