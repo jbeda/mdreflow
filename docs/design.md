@@ -87,21 +87,55 @@ Document-level, not per-paragraph: the known divergence modes merge or re-split 
 The backstop is for users; internally it is treated as a bug detector.
 The test and fuzz harnesses disable it (test-only switch) and drive the single-pass core, so any input that needs the backstop shows up as a failing idempotency oracle to be root-caused — never silently absorbed.
 
-Two things iteration deliberately does *not* do:
+### Render preservation is also structural: the render backstop
 
-- It does not excuse planner bugs.
-  Render-preservation hazards (a split landing a table-delimiter-shaped line at line start, say) converge happily to wrong output; those are planner obligations (line-start hazard filtering) and are fixed at the root, with the fuzz render oracle as referee.
-- It is not a license for sloppy single-pass behavior.
-  Each known non-convergence shape gets a root-cause fix; the iteration is the backstop that turns unknown shapes from correctness bugs into (at worst) unreflowed paragraphs.
+Idempotency's twin guarantee gets the same treatment.
+(Amendment 2026-08-09; supersedes the earlier stance that render hazards were planner obligations *only*, with the fuzz oracle as sole referee.)
+After the fixpoint loop settles, `Format` renders the input and the candidate output through the same goldmark configuration the parse used (see Dialects) and compares normalized HTML — the same normalization the fuzz render oracle applies, promoted from test code to an internal package.
+On any difference, `Format` returns the **original document unchanged** — document-level, for the same reasons as the idempotency fallback, and expressed the same way: "we could not safely flow this" is a no-op, never corruption.
 
-Cost: the common case is exactly two passes (one to reflow, one to confirm stability).
-Post the width-measurement fix a pass is milliseconds even on large documents; the benchmark suite pins this.
+This inverts the safety architecture.
+The blockmap guards (spanning-delimiter checks, line-start hazard filtering, definition zones) stop being the mechanism that makes render preservation true and become a coverage mechanism: their job is maximizing how much prose reflows without tripping the backstop, and an incomplete guard now costs a missed reflow instead of corrupted content.
+Guard narrowing becomes correspondingly lower-stakes.
 
-### Dialect handling: the skip-list
+What the backstop measures is self-consistency under goldmark's semantics: input and output pass through the same parser, so goldmark's own bugs largely cancel — the comparison still detects whether reflow changed anything *under those semantics*.
+What it cannot measure is goldmark-vs-target-renderer divergence (Python-Markdown above all; cmark-gfm marginally; Hugo not at all, Hugo *is* goldmark).
+That exposure predates the backstop — the planner has always used goldmark's AST as its parse authority — and is bounded by conservative per-dialect recognition and external verification (site-build diffs), not by this check.
 
-mdreflow targets one permissive superset of dialects ("do our best on everything").
-Dialect awareness is a *skip-list* — constructs recognized only well enough to pass through untouched — not a set of dialect implementations.
-Each rule is tagged by origin so a future `--dialect` flag can subset the existing rules rather than require new machinery:
+Same discipline as the idempotency backstop: it is for users, internally a bug detector.
+The harnesses disable it and assert render preservation as a failing oracle instead, so every shape that would trip it gets root-caused.
+A *false* trip — the backstop suppressing a legitimate reflow of ordinary prose, most plausibly through an over-strict normalization — is itself a bug class, watched by running the corpus with the backstop enabled and asserting zero fallbacks.
+
+Two things the backstops deliberately do *not* do:
+
+- They do not excuse planner bugs.
+  Every hazard remains a planner obligation fixed at the root, with the fuzz oracles as referee; the backstops only bound the blast radius of the shapes nobody has found yet.
+- They are not a license for sloppy single-pass behavior.
+  Each known divergence shape gets a root-cause fix; the backstops turn unknown shapes from correctness bugs into (at worst) unreflowed documents.
+
+Cost: the common case is exactly two pipeline passes (one to reflow, one to confirm stability) plus two parse-and-renders for the comparison.
+Post the width-measurement fix a pass is milliseconds even on large documents; the benchmark suite pins this and grows a render-backstop benchmark alongside.
+
+### Dialects: renderer profiles, and the skip-list
+
+(Amendment 2026-08-09, with PR #19 as the first consumer.)
+`Options.Dialect` — a single-select enum mirroring `Mode`'s shape, with `--dialect` and a `dialect:` config key parsed loudly like `mode` — names the renderer profile a tree targets.
+A dialect is a bundle, not a feature flag.
+It selects:
+
+1. **The goldmark configuration** used for parsing *and* for the render backstop's comparison, so "render-preserving" always means "under the target's semantics."
+2. **Which flavour-specific block recognitions are on.** Internally each recognition is a plain feature bit (`reflow.Options.MkDocs` is the first); dialects bundle bits at the `Format` boundary, and the bits themselves are never user-visible.
+   If finer-grained selection is ever needed, the bits are already there — dialects would become named bundles over them — but single-select is the bet that we won't need it.
+3. Eventually, which of the skip-list rules below even apply — a construct the profile's parser cannot produce stops being a hazard *automatically* under the render backstop: with tables off, a manufactured delimiter-shaped line is prose on both sides of the comparison.
+   Over-cautious guards therefore cost coverage, never correctness, and can be narrowed per-dialect lazily or not at all.
+
+The zero value, `DialectGFM` (`--dialect gfm`), is exactly the permissive GFM-plus-footnotes configuration the parser has always hardcoded — existing behavior, renamed rather than changed.
+`commonmark` is deliberately *reserved* for a future strict CommonMark profile (GFM extensions off) rather than aliased to the default: aliasing it now would make the name unavailable for the one profile it accurately describes.
+`mkdocs` layers admonition-body recognition on the GFM base; its true target renderer (Python-Markdown) is not CommonMark and cannot be modeled by our oracle, so its recognitions must stay narrow and are verified externally (full `mkdocs build` diffs), per the render-backstop section's divergence caveat.
+
+For everything else mdreflow still targets one permissive superset of dialects ("do our best on everything").
+Dialect awareness beyond the profile is a *skip-list* — constructs recognized only well enough to pass through untouched — not a set of dialect implementations.
+Each rule is tagged by origin so dialect profiles can subset the existing rules rather than require new machinery:
 
 | Construct | Dialects | Handling |
 |---|---|---|
