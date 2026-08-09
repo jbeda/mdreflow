@@ -611,7 +611,14 @@ func inLinkRefDefZone(source []byte, trimmed []string, contentStart int) bool {
 	}
 	prevStart := lineStart(source, ls-1)
 	prevLine := bytes.TrimRight(source[prevStart:ls], "\r\n")
-	if defLineOpenerRE.Match(prevLine) || bareCaretOpenerRE.Match(prevLine) {
+	if defLineOpenerRE.Match(prevLine) || bareCaretOpenerRE.Match(prevLine) || orphanDefCloserRE.Match(prevLine) {
+		// orphanDefCloserRE on the neighbor too, not just this
+		// paragraph's own lines: when a multi-line label's "]:" tail is
+		// the line directly ABOVE, this paragraph's own first line is
+		// the definition's absorbed destination, and joining it with
+		// what follows invalidates the whole definition — found by
+		// FuzzFormat on "[\]\n]:\n0\n\"\"0" (seed 0767a5cc905fe38b),
+		// the mirror of seed 0df31d8ad2438ba6's contains-side case.
 		return true
 	}
 	if len(trimmed) > 0 {
