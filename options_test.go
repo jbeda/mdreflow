@@ -70,23 +70,23 @@ func TestFormatZeroOptions(t *testing.T) {
 	}
 }
 
-func TestCheck(t *testing.T) {
+func TestNeedsFormat(t *testing.T) {
 	unformatted := []byte("One. Two.\n")
-	changed, err := mdreflow.Check(unformatted, mdreflow.Options{})
+	changed, err := mdreflow.NeedsFormat(unformatted, mdreflow.Options{})
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
 	if !changed {
-		t.Error("Check(unformatted) = false, want true")
+		t.Error("NeedsFormat(unformatted) = false, want true")
 	}
 
 	formatted := []byte("One.\nTwo.\n")
-	changed, err = mdreflow.Check(formatted, mdreflow.Options{})
+	changed, err = mdreflow.NeedsFormat(formatted, mdreflow.Options{})
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
 	if changed {
-		t.Error("Check(formatted) = true, want false")
+		t.Error("NeedsFormat(formatted) = true, want false")
 	}
 }
 

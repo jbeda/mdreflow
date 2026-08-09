@@ -109,7 +109,7 @@ const (
 	DialectMkDocs Dialect = opts.DialectMkDocs
 )
 
-// Options configures Format, Check, and FormatReader. The zero value is
+// Options configures Format, NeedsFormat, and FormatReader. The zero value is
 // the default and is always valid: sentence mode, unbounded width, <br>
 // hard-break style, the GFM dialect, the built-in segmenter with its
 // default abbreviation list.

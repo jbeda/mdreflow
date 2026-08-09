@@ -114,12 +114,12 @@ func runStdin(ff *flags, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	cc := newConfigCache(configDiscoveryBoundary(gitRepoRoot))
-	cfg, cfgDir, err := cc.resolve(cwd, ff.configPath)
+	cfg, _, err := cc.resolve(cwd, ff.configPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "mdreflow: %v\n", err)
 		return exitUsage
 	}
-	ro, err := mergeOptions(ff, cfg, cfgDir)
+	ro, err := mergeOptions(ff, cfg)
 	if err != nil {
 		fmt.Fprintf(stderr, "mdreflow: %v\n", err)
 		return exitUsage
@@ -201,12 +201,12 @@ func runPaths(ff *flags, paths []string, stdout, stderr io.Writer) int {
 	sawReformat := false
 	for _, t := range targets {
 		dir := filepath.Dir(t.path)
-		cfg, cfgDir, err := cc.resolve(dir, ff.configPath)
+		cfg, _, err := cc.resolve(dir, ff.configPath)
 		if err != nil {
 			fmt.Fprintf(stderr, "mdreflow: %v\n", err)
 			return exitUsage
 		}
-		ro, err := mergeOptions(ff, cfg, cfgDir)
+		ro, err := mergeOptions(ff, cfg)
 		if err != nil {
 			fmt.Fprintf(stderr, "mdreflow: %s: %v\n", t.path, err)
 			return exitUsage

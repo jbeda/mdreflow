@@ -46,3 +46,55 @@ const (
 type Span struct {
 	Start, End int
 }
+
+// String returns the CLI-facing name ("sentence", "gfm", "br", ...), so
+// errors, logs, and flag values speak one vocabulary. Out-of-range values
+// print as their integer. Hand-written rather than generated: three enums
+// with eight values total is below the threshold where stringer/enumer
+// earn their build step — revisit if Dialect grows past ~5 profiles or a
+// fourth enum appears.
+func (m Mode) String() string {
+	switch m {
+	case ModeSentence:
+		return "sentence"
+	case ModePara:
+		return "para"
+	case ModeWrap:
+		return "wrap"
+	}
+	return itoa(int(m))
+}
+
+func (h HardBreakStyle) String() string {
+	switch h {
+	case HardBreakBr:
+		return "br"
+	case HardBreakSpaces:
+		return "spaces"
+	case HardBreakBackslash:
+		return "backslash"
+	}
+	return itoa(int(h))
+}
+
+func (d Dialect) String() string {
+	switch d {
+	case DialectGFM:
+		return "gfm"
+	case DialectMkDocs:
+		return "mkdocs"
+	}
+	return itoa(int(d))
+}
+
+// itoa avoids importing strconv (and fmt, whose %d on a Stringer-bearing
+// type would recurse) for the out-of-range case.
+func itoa(n int) string {
+	if n < 0 {
+		return "-" + itoa(-n)
+	}
+	if n < 10 {
+		return string(rune('0' + n))
+	}
+	return itoa(n/10) + string(rune('0'+n%10))
+}

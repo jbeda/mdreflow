@@ -161,9 +161,11 @@ func formatOnce(src []byte, seg reflow.Segmenter, rOpts reflow.Options) []byte {
 	return reflow.Format(src, doc, seg, rOpts)
 }
 
-// Check reports whether Format would change src, without writing
-// anything.
-func Check(src []byte, opts Options) (bool, error) {
+// NeedsFormat reports whether Format would change src, without writing
+// anything: true means src is not in formatted form. (Renamed from Check
+// pre-v1: "ok, err := Check(...)" — the shape a reader expects from that
+// name — read exactly backwards.)
+func NeedsFormat(src []byte, opts Options) (bool, error) {
 	out, err := Format(src, opts)
 	if err != nil {
 		return false, err
@@ -196,7 +198,7 @@ func validateOptions(opts Options) error {
 	switch opts.Mode {
 	case ModeSentence, ModePara, ModeWrap:
 	default:
-		return fmt.Errorf("mdreflow: unknown Mode value %d", opts.Mode)
+		return fmt.Errorf("mdreflow: unknown Mode value %v", opts.Mode)
 	}
 	if opts.Mode == ModePara && opts.MaxWidth != 0 {
 		// ModePara joins a paragraph to a single line unconditionally
@@ -211,7 +213,7 @@ func validateOptions(opts Options) error {
 	switch opts.Dialect {
 	case DialectGFM, DialectMkDocs:
 	default:
-		return fmt.Errorf("mdreflow: unknown Dialect value %d", opts.Dialect)
+		return fmt.Errorf("mdreflow: unknown Dialect value %v", opts.Dialect)
 	}
 	return nil
 }

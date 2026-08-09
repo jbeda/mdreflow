@@ -17,7 +17,7 @@ func TestInvalidUTF8Refused(t *testing.T) {
 	if out, err := mdreflow.Format(bad, mdreflow.Options{}); !errors.Is(err, mdreflow.ErrInvalidUTF8) {
 		t.Errorf("Format: got (%q, %v), want ErrInvalidUTF8", out, err)
 	}
-	if _, err := mdreflow.Check(bad, mdreflow.Options{}); !errors.Is(err, mdreflow.ErrInvalidUTF8) {
+	if _, err := mdreflow.NeedsFormat(bad, mdreflow.Options{}); !errors.Is(err, mdreflow.ErrInvalidUTF8) {
 		t.Errorf("Check: got %v, want ErrInvalidUTF8", err)
 	}
 	var buf bytes.Buffer

@@ -339,7 +339,7 @@ type Options struct {
 }
 
 func Format(src []byte, opts Options) ([]byte, error)
-func Check(src []byte, opts Options) (bool, error)
+func NeedsFormat(src []byte, opts Options) (bool, error)
 
 // Invalid UTF-8 input; returned (wrapped) by Format/Check/FormatReader.
 // Callers branch with errors.Is.

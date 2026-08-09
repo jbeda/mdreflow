@@ -120,16 +120,18 @@ func (c *configCache) resolve(dir, explicitPath string) (*config.File, string, e
 
 // resolvedOptions is the outcome of merging built-in defaults, a
 // discovered config file, and explicit CLI flags for one target.
+// (It once also carried excludePatterns/excludeBase, computed and never
+// read — the excluder does its own config lookup. Deleted per the
+// go-quality review's N6: two paths to the same answer, one unused, is
+// silent drift waiting to happen.)
 type resolvedOptions struct {
-	opts            mdreflow.Options
-	excludePatterns []string
-	excludeBase     string // directory the exclude patterns are rooted at
+	opts mdreflow.Options
 }
 
 // mergeOptions applies docs/design.md's precedence: flags > config file
 // > built-in defaults (mdreflow.Options{} zero value). cfg may be nil
 // (no config file found or applicable, e.g. stdin with none discovered).
-func mergeOptions(f *flags, cfg *config.File, cfgDir string) (resolvedOptions, error) {
+func mergeOptions(f *flags, cfg *config.File) (resolvedOptions, error) {
 	var r resolvedOptions
 	opts := mdreflow.Options{}
 
@@ -157,8 +159,6 @@ func mergeOptions(f *flags, cfg *config.File, cfgDir string) (resolvedOptions, e
 			opts.Dialect = d
 		}
 		opts.Abbreviations = append(opts.Abbreviations, cfg.Abbreviations...)
-		r.excludePatterns = cfg.Exclude
-		r.excludeBase = cfgDir
 	}
 
 	if f.isSet("dialect") {
