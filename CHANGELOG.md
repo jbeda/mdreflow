@@ -9,6 +9,19 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+## v0.1.5 (2026-08-09)
+
+Narrower promises, structurally enforced.
+The core guarantee — reflow never changes what a document renders to — is now checked at runtime, not just in tests: `Format` compares renders before and after and returns your document untouched rather than ever shipping a difference.
+Around that, the tool's surface got deliberately smaller and sharper: typography substitution is gone (your renderer does it better), very narrow `--max-width` values are refused, and the Markdown flavor is now an explicit `--dialect` with `gfm` as the default and an opt-in `mkdocs` that reflows admonition bodies.
+Running unattended on untrusted trees is hardened end to end, and four guard fixes contributed by Karl Isenberg stop link- and URL-adjacent paragraphs from being silently skipped — on his 263-file docset, sentence-per-line coverage went from 96% to over 99%.
+
+Act on these when upgrading:
+
+- The library function `Check` is now `NeedsFormat` (same behavior; the old name read backwards). The `--check` flag is unchanged.
+- A `typography:` key in `.mdreflow.yaml` is now an error — delete the line and configure typography in your renderer instead.
+- `--max-width` below 20 is now an error; the library requires Go 1.25+.
+
 ### Added
 
 - Render preservation is now structurally guaranteed, not just tested for: after reflowing, `Format` renders the input and the output through the same parser and compares them (modulo soft-break whitespace and `<br>` spelling — the two documented cosmetic differences). On any other difference the document is returned unchanged, so an unknown formatter bug can now cost you a reflow, never your content. The opt-in `--strip-sentence-terminal-breaks` remains the one documented exception, since removing an accidental hard break is a render change by design.
