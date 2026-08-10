@@ -143,6 +143,21 @@ func TestFuzzFamilyRegressions(t *testing.T) {
 			opts: mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 47},
 		},
 		{
+			// #32's seam, one container deeper: a width split lands "**" as
+			// the first output line of a bullet item nested in an ordered
+			// item, and the joint spelling a reparse judges is "* **" (inner
+			// bullet + content — a thematic break destroying the list), but
+			// the escape's joint check judged "0) * **" and saw no hazard.
+			// Fixed by stripping non-run-char list markers ("0) ", "+ ")
+			// from firstLinePrefix the way blockquote markers already were,
+			// and judging the line alone as well as jointly.
+			name: "issue32-ordered-marker-joint-thematic-break",
+			src:  "0) * ** 770188787\n\t \t** *",
+			opts: mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 7, HardBreaks: mdreflow.HardBreakBr},
+
+			checkRender: true,
+		},
+		{
 			// A processing instruction spanning a soft break is one no-break
 			// span to the ask-goldmark walk, so the join emits it on a
 			// single line, where its now-line-leading "<?" must be

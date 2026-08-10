@@ -166,10 +166,31 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 	// where the item's "**"/"**" prose reflowed to "** **" and, tab-indented,
 	// reparsed as a thematic break — silently ending the list and dropping
 	// the ::: paragraph out of it.
+	//
+	// Then, iteratively, any list marker whose bytes can never join a
+	// thematic-break run — an ordered marker ("0) ", "1. ") or a "+"
+	// bullet — is stripped along with its following whitespace, because a
+	// reparse's list parser consumes it before the block scan judges the
+	// rest, exactly like the blockquote markers above: found by FuzzFormat
+	// on "0) * ** 770188787\n\t \t** *" (seed
+	// issue32_ordered_marker_joint_break), where a width split landed "**"
+	// as the item's first output line and the joint spelling CommonMark
+	// actually judges is "* **" (the inner bullet plus content — a
+	// thematic break that destroys the list), while the check judged
+	// "0) * **" and saw no hazard. "*"/"-" bullets survive the strip:
+	// their marker char IS a candidate run member, which is the joint
+	// check's whole point.
 	firstLinePrefix := strings.TrimLeft(
 		blockquoteMarkersRE.ReplaceAllString(
 			string(source[blockmap.LineStart(source, p.Start):p.Start]), ""),
 		" \t")
+	for {
+		m := nonRunListMarkerRE.FindString(firstLinePrefix)
+		if m == "" {
+			break
+		}
+		firstLinePrefix = strings.TrimLeft(firstLinePrefix[len(m):], " \t")
+	}
 
 	// rawContents[i] is line i's content (line ending stripped, hard-break
 	// marker bytes not yet stripped). insideSpanAfter[i] reports whether
@@ -1618,6 +1639,13 @@ var orderedListRE = regexp.MustCompile(`^\d{1,9}([.)])(\s|$)`)
 // firstLinePrefix.
 var blockquoteMarkersRE = regexp.MustCompile(`^([ \t]{0,3}>[ \t]?)+`)
 
+// nonRunListMarkerRE matches one leading list marker whose bytes can
+// never join a thematic-break run — an ordered marker (up to 9 digits
+// plus '.' or ')', CommonMark's limit) or a "+" bullet — including its
+// required following space/tab; see writeParagraph's firstLinePrefix for
+// why these are stripped while "*"/"-" bullets are kept.
+var nonRunListMarkerRE = regexp.MustCompile(`^(\d{1,9}[.)]|\+)[ \t]`)
+
 // firstLinePrefix is the raw source bytes writeParagraph's caller (package
 // reflow's own Format) already copied byte-for-byte immediately before a
 // nested paragraph's first line — with leading blockquote markers and then
@@ -1738,7 +1766,15 @@ func escapeBlockInterrupt(line string, isFirstLine bool, firstLinePrefix string,
 		// '~'), so they stay backslash-escaped.
 		return escapeFenceOpenerRun(line)
 	}
-	if isThematicBreak(firstLinePrefix+line) || isSetextUnderline(line) || blockInterruptTriggers.MatchString(line) || isCompleteLinkRefDefLine(line) || bareLinkRefDefOpenerLineRE.MatchString(line) || (prevLineNonBlank && isTableDelimiterRowShaped(line)) {
+	// isThematicBreak runs twice for a first line under a container: once
+	// jointly (the kept "*"/"-" marker char may complete the run) and once
+	// on the line alone — a marker whose char does NOT match the line's
+	// run char is still consumed by a reparse's list parser before the
+	// block scan inside the item judges the rest, so "- " + "** *" is a
+	// list item whose interior scan sees a complete thematic break even
+	// though the joint spelling "- ** *" is no break at all. For every
+	// other caller firstLinePrefix is "" and the two checks coincide.
+	if isThematicBreak(firstLinePrefix+line) || isThematicBreak(line) || isSetextUnderline(line) || blockInterruptTriggers.MatchString(line) || isCompleteLinkRefDefLine(line) || bareLinkRefDefOpenerLineRE.MatchString(line) || (prevLineNonBlank && isTableDelimiterRowShaped(line)) {
 		return escapeAfterIndent(line)
 	}
 	if isFirstLine && htmlBlockAnyOpenerRE.MatchString(line) {
