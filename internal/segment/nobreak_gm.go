@@ -138,11 +138,22 @@ func complement(allowed []Span, textLen int) []Span {
 //
 // A CodeSpan's children are the Text segments of its interior content (one
 // per source line it spans); the node itself carries no source extent for
-// its delimiters, so the opening run is found by scanning left from the
-// first child's Segment.Start over contiguous backticks, and the closing
-// run by scanning right from the last child's Segment.Stop. A CodeSpan
-// with no children (an empty backtick-pair-with-nothing span) is skipped: an
-// empty interior contains no join boundary and no maskable bytes, so
+// its delimiters. The opening run is found by scanning left from the first
+// child's Segment.Start and the closing run by scanning right from the last
+// child's Segment.Stop — in each case skipping CommonMark's stripped
+// padding first, then walking over the backtick run. The content segment
+// is NOT adjacent to the delimiter run: a code span whose interior begins
+// and ends with a space has one space stripped from each side (a
+// backtick-space-backslash-space-backtick span renders just the backslash,
+// whose content segment starts at the backslash, past the stripped space),
+// and a span crossing a line has its
+// line ending between the content and the closing run; both are whitespace,
+// and only whitespace ever separates content from delimiter. Missing that
+// padding sizes the span down to the bare interior and stops it protecting
+// the content — an idempotency break found by FuzzFormat on "` \\\n`",
+// whose interior backslash was then mistaken for a hard break. A CodeSpan
+// with no children (an empty backtick-pair-with-nothing span) is skipped:
+// an empty interior contains no join boundary and no maskable bytes, so
 // omitting it is behaviorally inert for both consumers.
 func codeSpansFromParse(text string, para ast.Node) []Span {
 	var out []Span
@@ -154,8 +165,8 @@ func codeSpansFromParse(text string, para ast.Node) []Span {
 					ft, ok1 := first.(*ast.Text)
 					lt, ok2 := last.(*ast.Text)
 					if ok1 && ok2 {
-						start := extendBacktickRunLeft(text, ft.Segment.Start)
-						end := extendBacktickRunRight(text, lt.Segment.Stop)
+						start := delimRunStart(text, ft.Segment.Start)
+						end := delimRunEnd(text, lt.Segment.Stop)
 						out = append(out, Span{Start: start, End: end})
 					}
 				}
@@ -167,22 +178,41 @@ func codeSpansFromParse(text string, para ast.Node) []Span {
 	return out
 }
 
-// extendBacktickRunLeft returns the start of the contiguous run of '`'
-// bytes immediately preceding pos.
-func extendBacktickRunLeft(text string, pos int) int {
-	for pos > 0 && text[pos-1] == '`' {
-		pos--
+// delimRunStart returns the start of the code-span opening backtick run
+// whose interior content begins at contentStart, skipping any stripped
+// whitespace padding between the run and the content before walking back
+// over the backticks. See codeSpansFromParse on why only whitespace ever
+// separates the two.
+func delimRunStart(text string, contentStart int) int {
+	i := contentStart
+	for i > 0 && isCodeSpanPad(text[i-1]) {
+		i--
 	}
-	return pos
+	for i > 0 && text[i-1] == '`' {
+		i--
+	}
+	return i
 }
 
-// extendBacktickRunRight returns the end of the contiguous run of '`'
-// bytes starting at pos.
-func extendBacktickRunRight(text string, pos int) int {
-	for pos < len(text) && text[pos] == '`' {
-		pos++
+// delimRunEnd returns the end of the code-span closing backtick run whose
+// interior content ends at contentStop, the mirror of delimRunStart.
+func delimRunEnd(text string, contentStop int) int {
+	i := contentStop
+	for i < len(text) && isCodeSpanPad(text[i]) {
+		i++
 	}
-	return pos
+	for i < len(text) && text[i] == '`' {
+		i++
+	}
+	return i
+}
+
+// isCodeSpanPad reports whether c is whitespace that can sit between a code
+// span's backtick delimiter and its interior content: CommonMark's single
+// stripped space, or a line ending the span crosses (the "\n" joiners
+// CodeSpans's callers pass, and the CRs a raw source line may carry).
+func isCodeSpanPad(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'
 }
 
 // keptRegexSpans finds the inline constructs invisible to gm.NewInline()'s

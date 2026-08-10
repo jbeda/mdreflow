@@ -135,6 +135,23 @@ func TestCodeSpansMultiLine(t *testing.T) {
 	}
 }
 
+// TestCodeSpansStrippedPadding pins that the delimiter run is found across
+// CommonMark's stripped padding, not assumed adjacent to the content
+// segment. "` \\\n`" (backtick, space, backslash, newline, backtick)
+// renders as one code span holding the backslash; the leading space is
+// stripped and the newline sits between the content and the closing
+// backtick, so the content segment ([2,3)) touches neither delimiter. The
+// span must still be the full [0,5), or the interior backslash is left
+// unprotected and mistaken for a hard break (FuzzFormat idempotency break
+// on this exact input).
+func TestCodeSpansStrippedPadding(t *testing.T) {
+	text := "` \\\n`"
+	spans := CodeSpans(text)
+	if len(spans) != 1 || spans[0].Start != 0 || spans[0].End != len(text) {
+		t.Fatalf("CodeSpans(%q) = %v, want one span [0,%d)", text, spans, len(text))
+	}
+}
+
 // TestNoBreakSpansEmptyInput checks the empty-string edge case: no
 // parse, no spans, no panic.
 func TestNoBreakSpansEmptyInput(t *testing.T) {
