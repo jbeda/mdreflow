@@ -7,6 +7,7 @@ This is a living document: design changes land here first, then in code.*
 `mdreflow` is a Go library and CLI that reflows Markdown prose.
 Its home mode is sentence-per-line ([semantic line breaks](https://sembr.org/)), with paragraph-per-line and hard-wrap modes sharing the same pipeline.
 It is a *reflow* tool, not a formatter: it changes where lines break inside paragraph prose and touches nothing else.
+[why-this-is-hard.md](why-this-is-hard.md) is the companion rationale: the block/span/cluster model, the reparse ambiguities that force the freeze-based design here, and what authors can do about a frozen paragraph.
 
 - Repo/module/package/binary: `github.com/jbeda/mdreflow` / `mdreflow`
 - License: Apache-2.0

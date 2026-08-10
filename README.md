@@ -131,6 +131,7 @@ The `mdreflow-check` hook writes nothing and fails if anything would change, whi
 - [pkg.go.dev/github.com/jbeda/mdreflow](https://pkg.go.dev/github.com/jbeda/mdreflow) is the library API reference, rendered from the doc comments.
 - [docs/design.md](docs/design.md) is the canonical design: goals, modes, architecture, dialect handling (GFM, MDX/Docusaurus, Hugo), guarantees, API, CLI, and milestones.
   Design changes land there before code.
+- [docs/why-this-is-hard.md](docs/why-this-is-hard.md) explains why reflowing Markdown safely is hard — the block/span/cluster model, the ambiguities that force the freeze-based design, and what authors can do when a paragraph will not reflow.
 - [docs/m0-spike-findings.md](docs/m0-spike-findings.md) maps how dialect constructs land in goldmark's AST and why the skip-list works the way it does.
 
 ## License

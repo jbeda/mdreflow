@@ -9,6 +9,8 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+- New doc: [docs/why-this-is-hard.md](docs/why-this-is-hard.md) explains why safe Markdown reflow is hard and what to do when a paragraph will not reflow.
+
 ## v0.1.6 (2026-08-10)
 
 More of your prose reflows, because the tool stopped guessing.
