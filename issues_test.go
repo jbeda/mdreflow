@@ -142,6 +142,21 @@ func TestFuzzFamilyRegressions(t *testing.T) {
 			src:  "[0]:0\n\"\n\"[0]:0\n[^0]:0\n[^0]:0\n0",
 			opts: mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 47},
 		},
+		{
+			// A processing instruction spanning a soft break is one no-break
+			// span to the ask-goldmark walk, so the join emits it on a
+			// single line, where its now-line-leading "<?" must be
+			// backslash-escaped (types 2-5 interrupt a paragraph from any
+			// line) — and the escaped spelling stops parsing as raw HTML,
+			// flipping the next pass's spans. Fixed by blockmap's
+			// hasRawHTMLDeclOpener skip; mid-line "<?"/"<!" variants are the
+			// same family.
+			name: "pi-nobreak-span-escape-discontinuity",
+			src:  "\r<?0\n000000000000000000000000?>",
+			opts: mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 29, HardBreaks: mdreflow.HardBreakBr},
+
+			checkRender: true,
+		},
 	}
 
 	// These are single-pass regressions: the convergence backstop would

@@ -300,6 +300,11 @@ Three decisions make it work:
    Deliberate: the label is the only part of a reference link that lives in the paragraph (its destination lives in the definition, already a skipped zone), and a break inside a label is harmless — label matching collapses internal whitespace, and a soft break inside link text is the same whitespace move reflow makes in any prose.
    Pre-loading the document's definitions into every cluster parse (`parser.Context`, spike-confirmed workable) was considered and rejected: machinery for a case that needs none.
 
+One raw-HTML family is excluded from reflow entirely rather than protected as spans: a paragraph containing a `<?` (processing instruction) or `<!` (comment/CDATA/declaration) opener outside code spans passes through byte-for-byte (`blockmap.hasRawHTMLDeclOpener`).
+These constructs span soft breaks in goldmark's inline grammar, so the walk protects them whole — but a join can land the opener at an output line's start, where HTML blocks of types 2–5 interrupt a paragraph from any line position, forcing emission to backslash-escape it, and the escaped spelling no longer parses as raw HTML: the next pass computes different spans, a parse discontinuity across reflow's own escape (fuzz-found).
+Inline tags (`<` + letter) need no such exclusion — their stabilizer (`segment.htmlTagOpenerSpans`) is a raw-text regex whose verdict is identical for escaped and unescaped spellings.
+The masking means an opener inside inline code — the common way prose mentions one — costs nothing.
+
 **Degenerate parses fall back to no reflow of the cluster.**
 If the parse yields anything but a single `Paragraph` covering the text (the paragraph parser declines an all-indented line, producing an empty document), the whole cluster is one no-break span and passes through unbroken — coverage lost on a shape that is rare and ambiguous, never correctness.
 

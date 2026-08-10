@@ -347,6 +347,31 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		return Paragraph{}, true
 	}
 	masked := maskCodeSpans(trimmed)
+	if hasRawHTMLDeclOpener(masked) {
+		// A "<?" (processing instruction) or "<!" (comment, CDATA,
+		// declaration) raw-HTML opener anywhere in the paragraph, outside
+		// code spans, makes reflow structurally unstable — found by
+		// FuzzFormat on "\r<?0\n000000000000000000000000?>" (seed
+		// unterminated_pi_first_line), with the mid-line variants confirmed
+		// by hand. Two facts collide. goldmark's inline grammar lets these
+		// constructs span soft line breaks, and segment's ask-goldmark walk
+		// faithfully protects the whole construct as one no-break span — so
+		// a join can put the opener at an output line's start. There, HTML
+		// blocks of types 2-5 interrupt an open paragraph from any line
+		// position (reflow.blockInterruptTriggers), so emission MUST
+		// backslash-escape the opener — and the escaped spelling no longer
+		// parses as raw HTML at all, so the next pass computes different
+		// no-break spans and different breaks: a parse discontinuity across
+		// reflow's own escape, oscillating instead of converging. Inline
+		// tags ("<" + letter) don't need this: their guard
+		// (segment.htmlTagOpenerSpans) is a raw-text regex that matches the
+		// escaped and unescaped spellings alike, so its verdict is
+		// escape-stable. The blunt, safe answer is the zone playbook's:
+		// pass the whole paragraph through byte-for-byte. Prose that
+		// carries a bare PI/declaration opener outside a code span is
+		// vanishingly rare, so the coverage cost is negligible.
+		return Paragraph{}, true
+	}
 	if (hasUnbalancedBracket(masked) && couldFormLinkRefDef(masked)) ||
 		hasUnclosedDestParen(masked) ||
 		hasUnclosedAngleDestOpener(masked) {
@@ -865,6 +890,20 @@ var unterminatedTagStartRE = regexp.MustCompile(`^<[A-Za-z]`)
 // why this triggers a whole-paragraph skip.
 func looksLikeUnterminatedTag(firstLineTrimmed string) bool {
 	return unterminatedTagStartRE.MatchString(firstLineTrimmed) && !strings.ContainsRune(firstLineTrimmed, '>')
+}
+
+// hasRawHTMLDeclOpener reports whether any masked line contains a "<?"
+// or "<!" raw-HTML opener — see its call site in build for why either
+// triggers a whole-paragraph skip. It runs on code-span-masked lines so
+// an opener inside inline code (`<?php ...`, the common legitimate way
+// prose mentions one) never costs the paragraph its reflow.
+func hasRawHTMLDeclOpener(maskedLines []string) bool {
+	for _, l := range maskedLines {
+		if strings.Contains(l, "<?") || strings.Contains(l, "<!") {
+			return true
+		}
+	}
+	return false
 }
 
 // hasUnbalancedBracket reports whether trimmedLines, taken together (a

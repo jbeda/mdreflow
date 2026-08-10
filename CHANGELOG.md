@@ -16,6 +16,7 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ### Fixed
 
+- A paragraph containing a raw `<?…?>` processing instruction or `<!…>` comment/declaration outside inline code now passes through untouched instead of reflowing unstably; the same constructs inside backticks keep reflowing normally.
 - A run of repeated same-label footnote-style definitions (`[^0]: …` twice, then prose) no longer keeps re-joining on every pass; such paragraphs now pass through untouched (#35).
 - A MkDocs admonition written without a blank line after its marker is no longer flattened into one paragraph, which stopped it rendering as a callout (#31, contributed by Karl Isenberg).
   That spelling is a single paragraph to CommonMark, since the indented body is a lazy continuation rather than the code block the blank-line spelling produces.
