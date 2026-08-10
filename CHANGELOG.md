@@ -15,6 +15,10 @@ At release time the section is retitled to the version and the prose lead is wri
   That spelling is a single paragraph to CommonMark, since the indented body is a lazy continuation rather than the code block the blank-line spelling produces.
   The marker line is now immovable and the body carries the 4-space indent the extension requires, the same treatment a footnote definition already gets.
 
+- Reflowing a tab-indented list-item body no longer risks turning it into a thematic break (#32, found by Karl Isenberg).
+  Two emphasis-only lines like `**` and `**` join to `** **` — four asterisks, which CommonMark reads as a thematic break — and the tab indent hid that from the escape that would otherwise neutralize it, so the join silently ended the list and changed what the document rendered to.
+  The body is now escaped and reflows normally.
+
 ## v0.1.5 (2026-08-09)
 
 Narrower promises, structurally enforced.

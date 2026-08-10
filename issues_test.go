@@ -116,6 +116,20 @@ func TestFuzzFamilyRegressions(t *testing.T) {
 
 			checkRender: true,
 		},
+		{
+			// A tab-indented list-item body of "**"/"**" reflows to the
+			// single line "** **" — four asterisks, a thematic break — and
+			// the tab in its firstLinePrefix hid that from the joint
+			// thematic-break escape (which counted only spaces as indent).
+			// The break silently ended the list and dropped the following
+			// ::: paragraph out of it, a render change; sentence mode splits
+			// the body into its own cluster on the ::: boundary.
+			name: "issue32-tab-indented-join-thematic-break",
+			src:  "*\n\t**\n**\n:::\n0",
+			opts: mdreflow.Options{Mode: mdreflow.ModeSentence},
+
+			checkRender: true,
+		},
 	}
 
 	// These are single-pass regressions: the convergence backstop would

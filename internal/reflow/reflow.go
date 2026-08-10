@@ -153,8 +153,23 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 	// width-3 split landed "**" as the item's first output line and the
 	// next parse read "* **" as a thematic break instead of a list item —
 	// a structure change pass 2 then compounded.
-	firstLinePrefix := blockquoteMarkersRE.ReplaceAllString(
-		string(source[blockmap.LineStart(source, p.Start):p.Start]), "")
+	//
+	// Then any leading indentation whitespace is stripped for the same
+	// reason: a list item whose marker line has an empty body carries its
+	// prose on a later, indented physical line, so this prefix is that
+	// line's own leading spaces/tabs — pure container indentation the block
+	// scan consumes before judging the rest, contributing no marker byte to
+	// the joint spelling (unlike "* " or "- ", whose leading marker char
+	// IS part of the thematic-break run and so survives the strip). A tab
+	// left in place disqualified the whole line from isThematicBreak, which
+	// counts only spaces as separators: found on "*\n\t**\n**\n:::\n0" (#32),
+	// where the item's "**"/"**" prose reflowed to "** **" and, tab-indented,
+	// reparsed as a thematic break — silently ending the list and dropping
+	// the ::: paragraph out of it.
+	firstLinePrefix := strings.TrimLeft(
+		blockquoteMarkersRE.ReplaceAllString(
+			string(source[blockmap.LineStart(source, p.Start):p.Start]), ""),
+		" \t")
 
 	// rawContents[i] is line i's content (line ending stripped, hard-break
 	// marker bytes not yet stripped). insideSpanAfter[i] reports whether
@@ -1605,10 +1620,12 @@ var blockquoteMarkersRE = regexp.MustCompile(`^([ \t]{0,3}>[ \t]?)+`)
 
 // firstLinePrefix is the raw source bytes writeParagraph's caller (package
 // reflow's own Format) already copied byte-for-byte immediately before a
-// nested paragraph's first line — with leading blockquote markers already
-// stripped (see writeParagraph's firstLinePrefix and blockquoteMarkersRE:
-// a reparse's blockquote parser consumes them before the block scan this
-// check simulates ever runs, so ">* " contributes "* "). It is empty for
+// nested paragraph's first line — with leading blockquote markers and then
+// leading indentation whitespace already stripped (see writeParagraph's
+// firstLinePrefix, blockquoteMarkersRE, and the TrimLeft beside them: a
+// reparse's blockquote parser and its container-indentation scan both
+// consume those before the block scan this check simulates ever runs, so
+// ">* " contributes "* " and a bare "\t" indent contributes ""). It is empty for
 // every other call (continuation lines, and any paragraph not nested in a
 // container at all). It matters only to isThematicBreak, and only for the paragraph's
 // first output line (every other caller passes ""): a thematic break's
