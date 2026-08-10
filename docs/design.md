@@ -267,7 +267,13 @@ the *neighbor's* bytes. Reachability is judged from line-shape facts alone —
 the preceding line itself opens def-shaped at its start, or some line above
 it in the same contiguous run does (the same precomputed per-line bit the
 transitive rule uses) — never from inline parsing, so the verdict is
-identical on escaped and unescaped spellings. The narrowing applies only to
+identical on escaped and unescaped spellings. "Opens def-shaped" tolerates
+list-marker prefixes: `- [a]: /url` opens a definition chain inside its
+item exactly as a bare `[a]: /url` line does at top level, so
+marker-prefixed openers arm both the direct neighbor check and the
+transitive run bit, and the plausible-prefix test that classifies a
+mid-line shape accepts marker glyphs, digits, and padding while rejecting
+prose. The narrowing applies only to
 the neighbor-side checks. The contains check keeps its full anywhere-shape
 breadth, which preserves both halves of the stability argument: the contains
 check stays at least as broad as any neighbor check, and the shape-bearing
