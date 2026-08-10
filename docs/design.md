@@ -253,6 +253,37 @@ adjacency analysis, one predicate plus one precomputed per-line bit. In the
 common real-world layout (definitions in their own blank-line-separated
 block) nothing changes: those were already skipped.
 
+**One measured narrowing (issue #37): a mid-line shape on a neighbor line
+counts only when a definition chain can reach it.** The blunt rule freezes a
+paragraph that merely sits under a line whose `[label]:` shape is mid-line —
+e.g. a bullet whose sibling above quotes `` `runnerGroups[0]: …` `` in a code
+span (issue #37 measured most of its affected lines in exactly this
+bracketless-neighbor position). A mid-line shape can only be a live
+definition when a chain reaches it: definitions are extracted starting at a
+paragraph's first content and continue back-to-back (a title can close
+mid-line with the next definition opening immediately after), so a mid-line
+shape that no chain can reach parses as prose under every rearrangement of
+the *neighbor's* bytes. Reachability is judged from line-shape facts alone —
+the preceding line itself opens def-shaped at its start, or some line above
+it in the same contiguous run does (the same precomputed per-line bit the
+transitive rule uses) — never from inline parsing, so the verdict is
+identical on escaped and unescaped spellings. The narrowing applies only to
+the neighbor-side checks. The contains check keeps its full anywhere-shape
+breadth, which preserves both halves of the stability argument: the contains
+check stays at least as broad as any neighbor check, and the shape-bearing
+paragraph itself stays frozen, so the line a neighbor's verdict keys on can
+never move between passes. Boundary-spanning shapes (a label opening on the
+preceding line and closing on the paragraph's own first line), orphaned `]:`
+closers, and bare caret openers are position-dependent hazards and keep
+their unnarrowed arms.
+
+Implementation shape: the zone's inputs are computed once per contiguous
+run as a small per-line facts table (line-start def opener, orphan closer,
+bare caret opener, mid-line-only shape) instead of ad-hoc scans at each call
+site, and verdicts are rules over those facts. Same facts, one computation,
+and each verdict can name the fact that fired — the natural basis for the
+per-skip reasons proposed in issue #38.
+
 **Footnote definitions are exempt and keep reflowing.** The caret is a
 near-perfect discriminator (`[^label]:` vs `[label]:` — "near": a caret
 label that is empty or starts with a space is not a footnote to goldmark
