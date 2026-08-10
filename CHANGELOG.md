@@ -9,6 +9,17 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+## v0.1.6 (2026-08-10)
+
+More of your prose reflows, because the tool stopped guessing.
+
+The rules deciding where a line may not break — inside inline code, a link, a bare URL — used to be hand-written approximations of Markdown's inline grammar, and the hardest one, GitHub's bare-URL autolinking, was never approximated at all: paragraphs near a URL were skipped outright rather than risk getting it wrong.
+Those rules now come from the same parser that renders the document, so the answer agrees with the renderer by construction.
+The practical effect is coverage. A code span that ends on a URL — `` `curl https://example.com/install.sh` ``, how documentation writes a command — no longer stops its paragraph from reflowing; on a 263-file docset that shape alone accounted for 91 of the 117 lines that still would not reflow.
+
+Nothing you must act on: no flags, config keys, or API changes.
+Output for a paragraph that already reflowed is unchanged except where a fix below applies.
+
 ### Changed
 
 - More prose now reflows near bare URLs: a paragraph that contains both a URL and a stray backtick is no longer skipped wholesale (#30).
@@ -22,7 +33,6 @@ At release time the section is retitled to the version and the prose lead is wri
 - A MkDocs admonition written without a blank line after its marker is no longer flattened into one paragraph, which stopped it rendering as a callout (#31, contributed by Karl Isenberg).
   That spelling is a single paragraph to CommonMark, since the indented body is a lazy continuation rather than the code block the blank-line spelling produces.
   The marker line is now immovable and the body carries the 4-space indent the extension requires, the same treatment a footnote definition already gets.
-
 - Reflowing a tab-indented list-item body no longer risks turning it into a thematic break (#32, found by Karl Isenberg).
   Two emphasis-only lines like `**` and `**` join to `** **` — four asterisks, which CommonMark reads as a thematic break — and the tab indent hid that from the escape that would otherwise neutralize it, so the join silently ended the list and changed what the document rendered to.
   The body is now escaped and reflows normally.
