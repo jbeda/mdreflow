@@ -11,6 +11,7 @@ At release time the section is retitled to the version and the prose lead is wri
 
 - New doc: [docs/why-this-is-hard.md](docs/why-this-is-hard.md) explains why safe Markdown reflow is hard and what to do when a paragraph will not reflow.
 - A paragraph sitting directly under a line whose only `[label]:` shape is mid-prose (typically a quoted error message in inline code) now reflows; a definition opening after a list marker (`- [a]: /url`) now freezes its whole run, the same as a top-level definition.
+- Trailing double-space and trailing-backslash line endings are now treated as hard breaks only when the Markdown parser agrees they render as one (#39). Previously a task-list line whose prose is just the checkbox (`* [X]` followed by two trailing spaces) had those spaces read as a hard break even though it renders as a soft one, so the paragraph was left unformatted; it now reflows.
 
 ## v0.1.6 (2026-08-10)
 

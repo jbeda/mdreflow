@@ -213,8 +213,9 @@ func TestCanonicalizeForWidth(t *testing.T) {
 
 // TestDetectHardBreak tables detectHardBreak's doc comment: the three
 // hard-break syntaxes (trailing backslash, trailing double-space,
-// trailing <br>), each gated by isLastLine and insideSpan, plus the
-// backslash-escape awareness for <br>.
+// trailing <br>), each gated by isLastLine and insideSpan, the astHard
+// AST-confirmation gate on the backslash and double-space spellings, plus
+// the backslash-escape awareness for <br>.
 func TestDetectHardBreak(t *testing.T) {
 	opts := Options{HardBreaks: HardBreakBr}
 
@@ -223,43 +224,51 @@ func TestDetectHardBreak(t *testing.T) {
 		content    string
 		isLastLine bool
 		insideSpan bool
+		astHard    bool
 		wantMarker string
 		wantRest   string
 	}{
-		{"inside code span never a break", "foo\\", false, true, "", "foo\\"},
-		{"single trailing backslash not last line", "foo\\", false, false, "<br>", "foo"},
-		{"single trailing backslash on last line not a break", "foo\\", true, false, "", "foo\\"},
-		{"three trailing backslashes not a break (M1 rule reversed)", `foo\\\`, false, false, "", `foo\\\`},
+		{"inside code span never a break", "foo\\", false, true, true, "", "foo\\"},
+		{"single trailing backslash not last line", "foo\\", false, false, true, "<br>", "foo"},
+		{"single trailing backslash on last line not a break", "foo\\", true, false, false, "", "foo\\"},
+		{"three trailing backslashes not a break (M1 rule reversed)", `foo\\\`, false, false, false, "", `foo\\\`},
 		// Whitespace before the backslash goes with the marker, matching
 		// the other two syntaxes — otherwise pass 2, which sees the
 		// normalized "<br>" spelling, trims it and disagrees with pass 1
 		// (seed d4274cf2d1364325).
-		{"whitespace before the backslash consumed with the marker", "foo \\", false, false, "<br>", "foo"},
-		{"tab before the backslash likewise", "foo\t\\", false, false, "<br>", "foo"},
-		{"two trailing spaces not last line", "foo  ", false, false, "<br>", "foo"},
-		{"two trailing spaces on last line insignificant", "foo  ", true, false, "", "foo  "},
-		{"three trailing spaces still a break", "foo   ", false, false, "<br>", "foo"},
-		{"one trailing space not enough", "foo ", false, false, "", "foo "},
-		{"br tag always recognized even on last line", "foo<br>", true, false, "<br>", "foo"},
-		{"br tag with whitespace before it consumed", "foo <br>", false, false, "<br>", "foo"},
-		{"br tag case insensitive and self closing", "foo<BR/>", false, false, "<br>", "foo"},
-		{"escaped br tag not a break", `foo\<br>`, false, false, "", `foo\<br>`},
-		{"br tag with separating space before backslash still a break, space consumed with the marker", `foo\ <br>`, false, false, "<br>", `foo\`},
-		{"no hard break syntax at all", "plain text", false, false, "", "plain text"},
+		{"whitespace before the backslash consumed with the marker", "foo \\", false, false, true, "<br>", "foo"},
+		{"tab before the backslash likewise", "foo\t\\", false, false, true, "<br>", "foo"},
+		{"two trailing spaces not last line", "foo  ", false, false, true, "<br>", "foo"},
+		{"two trailing spaces on last line insignificant", "foo  ", true, false, false, "", "foo  "},
+		{"three trailing spaces still a break", "foo   ", false, false, true, "<br>", "foo"},
+		{"one trailing space not enough", "foo ", false, false, false, "", "foo "},
+		// The AST veto (#39): raw trailing bytes spell a break, but
+		// goldmark judged the line ending soft — an inline extension
+		// consumed the line's prose and left no carrier for the flag
+		// ("* [X]  \n0"). The raw spelling must not be trusted.
+		{"double space vetoed when AST says soft break", "[X]  ", false, false, false, "", "[X]  "},
+		{"trailing backslash vetoed when AST says soft break", "foo\\", false, false, false, "", "foo\\"},
+		{"br tag always recognized even on last line", "foo<br>", true, false, false, "<br>", "foo"},
+		{"br tag recognized without AST confirmation (raw HTML carries no flag)", "foo<br>", false, false, false, "<br>", "foo"},
+		{"br tag with whitespace before it consumed", "foo <br>", false, false, false, "<br>", "foo"},
+		{"br tag case insensitive and self closing", "foo<BR/>", false, false, false, "<br>", "foo"},
+		{"escaped br tag not a break", `foo\<br>`, false, false, false, "", `foo\<br>`},
+		{"br tag with separating space before backslash still a break, space consumed with the marker", `foo\ <br>`, false, false, false, "<br>", `foo\`},
+		{"no hard break syntax at all", "plain text", false, false, false, "", "plain text"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			marker, rest := detectHardBreak(tc.content, opts, tc.isLastLine, tc.insideSpan)
+			marker, rest := detectHardBreak(tc.content, opts, tc.isLastLine, tc.insideSpan, tc.astHard)
 			if marker != tc.wantMarker || rest != tc.wantRest {
-				t.Errorf("detectHardBreak(%q, isLastLine=%v, insideSpan=%v) = (%q, %q), want (%q, %q)",
-					tc.content, tc.isLastLine, tc.insideSpan, marker, rest, tc.wantMarker, tc.wantRest)
+				t.Errorf("detectHardBreak(%q, isLastLine=%v, insideSpan=%v, astHard=%v) = (%q, %q), want (%q, %q)",
+					tc.content, tc.isLastLine, tc.insideSpan, tc.astHard, marker, rest, tc.wantMarker, tc.wantRest)
 			}
 		})
 	}
 
 	t.Run("StripSentenceTerminalBreaks removes accidental break after terminal punctuation", func(t *testing.T) {
 		o := Options{HardBreaks: HardBreakBr, StripSentenceTerminalBreaks: true}
-		marker, rest := detectHardBreak("Done.  ", o, false, false)
+		marker, rest := detectHardBreak("Done.  ", o, false, false, true)
 		if marker != "" || rest != "Done." {
 			t.Errorf("detectHardBreak with StripSentenceTerminalBreaks = (%q, %q), want (\"\", \"Done.\")", marker, rest)
 		}
@@ -267,7 +276,7 @@ func TestDetectHardBreak(t *testing.T) {
 
 	t.Run("StripSentenceTerminalBreaks leaves non-terminal double-space alone", func(t *testing.T) {
 		o := Options{HardBreaks: HardBreakBr, StripSentenceTerminalBreaks: true}
-		marker, rest := detectHardBreak("mid word  ", o, false, false)
+		marker, rest := detectHardBreak("mid word  ", o, false, false, true)
 		if marker != "<br>" || rest != "mid word" {
 			t.Errorf("detectHardBreak with StripSentenceTerminalBreaks on non-terminal text = (%q, %q), want (\"<br>\", \"mid word\")", marker, rest)
 		}

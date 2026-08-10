@@ -218,6 +218,7 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 		}
 	}
 	insideSpanAfter := insideCodeSpanAfterLine(rawContents)
+	astHardAfter := astHardBreakAfterLine(p.Node, lines)
 
 	var outLines []outLine
 	var curLines []lineFrag
@@ -239,6 +240,7 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 		// double space as a break wrote a literal "<br>" into the
 		// rendered code content.
 		insideSpan := curLines[len(curLines)-1].trailingProtected
+		astHard := curLines[len(curLines)-1].astHardAfter
 		text := joinClusterLines(curLines, marker != "")
 		curLines = nil
 		if marker == "" {
@@ -264,7 +266,11 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 			// would; insideSpan carries the final line's span context,
 			// which the join resolves for spans within the cluster but
 			// cannot resolve for one reaching past it (see above).
-			if m, rest := detectHardBreak(text, opts, lastCluster, insideSpan); m != "" {
+			// astHard likewise carries the final line's own AST break
+			// verdict: the joined text's trailing backslash/space bytes
+			// are always that line's trailing bytes (the join preserves
+			// them), so its per-line flag is the right one to consult.
+			if m, rest := detectHardBreak(text, opts, lastCluster, insideSpan, astHard); m != "" {
 				marker = m
 				text = rest
 			}
@@ -336,7 +342,7 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 			continue
 		}
 
-		marker, rest := detectHardBreak(content, opts, i == n-1, insideSpanAfter[i])
+		marker, rest := detectHardBreak(content, opts, i == n-1, insideSpanAfter[i], astHardAfter[i])
 		if i == 0 && i < n-1 && trimLineSpace(rest) == "" && marker == "<br>" {
 			// Fuzz-found hazard: a paragraph's first output line, with no
 			// prose preceding a HardBreakBr marker, would consist solely
@@ -376,6 +382,7 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 			text:              rest,
 			leadingProtected:  i > 0 && insideSpanAfter[i-1],
 			trailingProtected: insideSpanAfter[i],
+			astHardAfter:      astHardAfter[i],
 		})
 		if marker != "" || i == n-1 {
 			flush(marker, i == n-1)
@@ -2016,10 +2023,53 @@ func isASCIIPunct(b byte) bool {
 // prose text (hard-break marker bytes, if any, already stripped) plus
 // whether its leading/trailing edge sits inside a genuine inline code span
 // that crosses this line boundary (see insideCodeSpanAfterLine) and so
-// must not be trimmed.
+// must not be trimmed, plus whether goldmark judged the line ending after
+// it a hard break (see astHardBreakAfterLine), which flush-time hard-break
+// detection on the joined cluster consults.
 type lineFrag struct {
 	text                                string
 	leadingProtected, trailingProtected bool
+	astHardAfter                        bool
+}
+
+// astHardBreakAfterLine returns, per node.Lines() index, whether goldmark's
+// own inline parse judged the line ending after line i to be a hard break —
+// the parser's verdict on the backslash and double-space spellings, which
+// detectHardBreak consults instead of trusting raw trailing bytes (see its
+// astHard parameter doc comment for the extension-consumes-the-prose case
+// that makes raw bytes unreliable, #39).
+//
+// The verdict is read from the inline tree the document parse already
+// built: goldmark flags the text node that ends each source line
+// (ast.Text.HardLineBreak), with the marker bytes and line ending excluded
+// from the node's segment — so a flagged node is located to its line by
+// where its segment stops. The node can be empty (a line whose entire prose
+// is the backslash marker flags an empty segment at the line's start; a
+// line ending right after an emphasis close flags an empty segment after
+// it), so the mapping must accept seg.Stop == line start. A line ending
+// with no flagged node — inside a multi-line code span or raw-HTML run,
+// or swallowed entirely by an inline extension — is a soft break, which
+// defaulting to false gets right.
+func astHardBreakAfterLine(node ast.Node, lines *text.Segments) []bool {
+	out := make([]bool, lines.Len())
+	_ = ast.Walk(node, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		t, ok := n.(*ast.Text)
+		if !ok || !t.HardLineBreak() {
+			return ast.WalkContinue, nil
+		}
+		for i := 0; i < lines.Len(); i++ {
+			seg := lines.At(i)
+			if t.Segment.Stop >= seg.Start && t.Segment.Stop < seg.Stop {
+				out[i] = true
+				break
+			}
+		}
+		return ast.WalkContinue, nil
+	})
+	return out
 }
 
 // joinClusterLines joins a hard-break cluster's per-line prose fragments
@@ -2296,11 +2346,29 @@ var sentenceTerminalEndRE = regexp.MustCompile(`[.!?…]["'”’)\]]*$`)
 // code span opened on line 1 ("`" then a literal, non-escaping backslash)
 // and closed on line 2; treating that trailing backslash as a hard break
 // turned literal content into an actual line break on reparse.
-func detectHardBreak(content string, opts Options, isLastLine, insideSpan bool) (marker, rest string) {
+//
+// astHard must be true when goldmark's own inline parse of the document
+// judged the line ending after content to be a hard break (see
+// writeParagraph's astHardBreakAfterLine table). The backslash and
+// double-space spellings are only breaks when the parser agrees: raw
+// trailing bytes alone cannot tell, because an inline extension can consume
+// the line's entire prose and leave no text node to carry the break flag —
+// the task-list extension does exactly this for a checkbox-only line
+// ("* [X]  \n0" renders with a soft break; its taskListRegexp's trailing
+// "\s*" swallows the spaces and the line ending itself), so trusting the
+// raw double-space there minted a <br> the renderer never had (#39). The
+// raw scans below still decide WHICH bytes are the marker; astHard decides
+// whether they are a marker at all. The <br> branch deliberately ignores
+// astHard: a literal <br> tag is inline HTML — a break in every context
+// where it parses as a tag at all — and it is also reflow's own normalized
+// marker spelling, which a flush-time join can manufacture from bytes no
+// single source line carried ("<Br\n/>" joining to "<Br />"), where no
+// per-line AST flag exists to consult.
+func detectHardBreak(content string, opts Options, isLastLine, insideSpan, astHard bool) (marker, rest string) {
 	if insideSpan {
 		return "", content
 	}
-	if !isLastLine {
+	if !isLastLine && astHard {
 		// Backslash: exactly one trailing backslash is a hard break — not
 		// "an odd run of trailing backslashes", which was M1's rule and is
 		// wrong for 3+ (verified empirically, since this is a case where

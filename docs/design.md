@@ -199,6 +199,10 @@ The formatter, not the segmenter, owns whitespace at boundaries:
 - On joins, inter-sentence whitespace normalizes to a single space (required for idempotency; also makes two-spaces-after-period typing invisible).
 - **Hard line breaks** (trailing double-space, trailing backslash, `<br>`) carry rendered meaning and are immovable: a hard-break line never joins.
   Joining is not "concatenate with spaces."
+- The double-space and backslash spellings count as breaks only when goldmark's own inline parse of the document flagged that line ending hard (`ast.Text.HardLineBreak`, read per line from the paragraph's inline tree).
+  Raw trailing bytes alone cannot tell: an inline extension can consume a line's entire prose and its line ending with it, leaving no text node to carry the flag — the task-list extension does exactly this for a checkbox-only line (`"* [X]  \n0"` renders with a *soft* break; trusting the raw double-space minted a `<br>` the renderer never had, #39).
+  This is the "ask goldmark, not a hand grammar" doctrine applied to break detection.
+  A literal `<br>` is exempt: it is a break wherever it parses as a tag, and it is also reflow's own normalized marker spelling, which a cluster join can manufacture from bytes no single source line carried — there is no per-line flag to consult for it.
 
 Hard breaks are preserved but *normalized* to a configurable style:
 
