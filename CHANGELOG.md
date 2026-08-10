@@ -9,6 +9,12 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+### Fixed
+
+- A MkDocs admonition written without a blank line after its marker is no longer flattened into one paragraph, which stopped it rendering as a callout (#31, contributed by Karl Isenberg).
+  That spelling is a single paragraph to CommonMark, since the indented body is a lazy continuation rather than the code block the blank-line spelling produces.
+  The marker line is now immovable and the body carries the 4-space indent the extension requires, the same treatment a footnote definition already gets.
+
 ## v0.1.5 (2026-08-09)
 
 Narrower promises, structurally enforced.

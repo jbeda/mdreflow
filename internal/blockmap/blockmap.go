@@ -477,6 +477,18 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// nesting), not a replacement for it.
 		contPrefix += "    "
 	}
+	if admonitionMarkerRE.MatchString(trimmed[0]) {
+		// A MkDocs admonition written without a blank line after its
+		// marker is one paragraph here: the indented body is a lazy
+		// continuation, not the code block the blank-line spelling
+		// produces. Joining the marker into the body destroys the
+		// callout, and so does dropping the body's indent, so the marker
+		// line is immovable and the body carries the 4-space indent the
+		// extension requires. Same treatment as the footnote definition
+		// above, for the same reason.
+		boundary[0] = true
+		contPrefix += "    "
+	}
 
 	return Paragraph{
 		Node:       p,
