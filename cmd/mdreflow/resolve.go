@@ -24,6 +24,7 @@ type flags struct {
 	noGitignore                 bool
 	hardBreaks                  string
 	stripSentenceTerminalBreaks bool
+	explain                     bool
 	version                     bool
 
 	set map[string]bool // flag name -> explicitly set on the command line

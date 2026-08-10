@@ -63,6 +63,64 @@ type Paragraph struct {
 	Boundary []bool
 }
 
+// SkipReason says which guard froze a paragraph — which distinct branch
+// in build (or collect's depth cap) decided the paragraph passes through
+// byte-for-byte instead of reflowing. SkipNone means the paragraph is
+// reflow-eligible. Each reason's meaning is documented at the branch that
+// returns it; user-facing wording lives in the root package's Explain.
+type SkipReason uint8
+
+const (
+	SkipNone SkipReason = iota
+	// SkipDeepNesting: nested beyond maxContainerDepth container levels.
+	SkipDeepNesting
+	// SkipDegenerateBlank: the paragraph (or one of its lines) trims to
+	// nothing — a control-character parser artifact, never real prose.
+	SkipDegenerateBlank
+	// SkipDialectBlock: a dialect whole-node rule matched (front-matter
+	// fence, math block, MDX construct, shortcode) — not prose at all.
+	SkipDialectBlock
+	// SkipFrontMatter: the paragraph sits inside the document's front
+	// matter block.
+	SkipFrontMatter
+	// SkipHiddenLineGap: another node's bytes hide between this
+	// paragraph's line segments.
+	SkipHiddenLineGap
+	// SkipDoubleOwnedLine: a sibling link-reference-definition node owns
+	// bytes inside this paragraph's range (duplicate-label extraction).
+	SkipDoubleOwnedLine
+	// SkipControlBytes: a C0 control byte other than tab/LF/CR in the
+	// paragraph's raw range.
+	SkipControlBytes
+	// SkipLinkRefDefShape: the paragraph itself contains a
+	// definition-shaped line (the zone's contains check).
+	SkipLinkRefDefShape
+	// SkipLinkRefDefNeighbor: definition machinery directly above puts
+	// the paragraph inside a definition's reach (the zone's neighbor and
+	// defAbove checks).
+	SkipLinkRefDefNeighbor
+	// SkipRawHTMLDeclOpener: a raw "<?" or "<!" opener outside code spans.
+	SkipRawHTMLDeclOpener
+	// SkipPossibleLinkRefDef: an unbalanced "[" (with a def-plausible
+	// shape) or an unclosed destination that a reflow join could complete
+	// into a link reference definition.
+	SkipPossibleLinkRefDef
+	// SkipUnterminatedTag: the first line looks like an HTML/JSX tag
+	// whose closing ">" is on a later line.
+	SkipUnterminatedTag
+	// SkipTableAdjacency: the paragraph sits directly under a GFM table
+	// with no blank line between them.
+	SkipTableAdjacency
+)
+
+// Skip records one frozen paragraph: the byte range its raw source lines
+// span (same convention as Paragraph.Start/End) and the guard that froze
+// it.
+type Skip struct {
+	Start, End int
+	Reason     SkipReason
+}
+
 // Paragraphs walks doc (at any depth) and returns every reflow-eligible
 // Paragraph node, in source order, skipping any paragraph a dialect
 // whole-node rule matches.
@@ -80,8 +138,21 @@ func Paragraphs(doc ast.Node, source []byte) []Paragraph {
 func ParagraphsForDialect(doc ast.Node, source []byte, mkdocs bool) []Paragraph {
 	var out []Paragraph
 	fmEnd := frontMatterEnd(source)
-	collect(doc, source, false, 0, fmEnd, scanLineFacts(source), &out, mkdocs)
+	collect(doc, source, false, 0, fmEnd, scanLineFacts(source), &out, nil, mkdocs)
 	return out
+}
+
+// SkipsForDialect walks doc exactly as ParagraphsForDialect does and
+// returns, in source order, every paragraph the walk froze and why —
+// the diagnostic mirror of the eligible set (--explain). Skips with no
+// reportable source range (an empty paragraph node) and front-matter
+// interiors (metadata by construction, not frozen prose) are omitted.
+func SkipsForDialect(doc ast.Node, source []byte, mkdocs bool) []Skip {
+	var out []Paragraph
+	var skips []Skip
+	fmEnd := frontMatterEnd(source)
+	collect(doc, source, false, 0, fmEnd, scanLineFacts(source), &out, &skips, mkdocs)
+	return skips
 }
 
 // lineFacts holds the per-physical-line verdicts inLinkRefDefZone needs,
@@ -170,7 +241,26 @@ const maxContainerDepth = 2
 // through untouched — no reflow is always render-preserving by
 // construction. Found by FuzzFormat on "000000000000000000\n>* >! 0"
 // (blockquote > list > blockquote, three levels).
-func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int, facts map[int]lineFacts, out *[]Paragraph, mkdocs bool) {
+func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int, facts map[int]lineFacts, out *[]Paragraph, skips *[]Skip, mkdocs bool) {
+	// recordSkip reports c's line range under reason to the skips
+	// collector (nil when the caller only wants the eligible set). An
+	// empty node has no source range to report; front-matter interiors
+	// are metadata by construction, not frozen prose — neither is a
+	// diagnostic anyone can act on.
+	recordSkip := func(c ast.Node, reason SkipReason) {
+		if skips == nil || reason == SkipFrontMatter {
+			return
+		}
+		lines := c.Lines()
+		if lines.Len() == 0 {
+			return
+		}
+		*skips = append(*skips, Skip{
+			Start:  lines.At(0).Start,
+			End:    lines.At(lines.Len() - 1).Stop,
+			Reason: reason,
+		})
+	}
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
 		if cb, ok := c.(*ast.CodeBlock); ok {
 			*out = append(*out, admonitionBodies(cb, source, mkdocs)...)
@@ -179,7 +269,9 @@ func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int,
 		switch c.(type) {
 		case *ast.Paragraph, *ast.TextBlock:
 			if depth > maxContainerDepth {
-				continue // pass through byte-for-byte; see collect's doc comment
+				// Pass through byte-for-byte; see collect's doc comment.
+				recordSkip(c, SkipDeepNesting)
+				continue
 			}
 			// Only when directly adjacent (no blank line): a table
 			// properly terminated by a blank line before the next
@@ -199,8 +291,10 @@ func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int,
 			// shape, from build's own raw-byte scan (see
 			// inLinkRefDefZone) — design.md's "The link-reference-
 			// definition zone: skip bluntly, by shape".
-			if pp, skip := build(c, source, inBlockquote, fmEnd, precededByTable, facts); !skip {
+			if pp, reason := build(c, source, inBlockquote, fmEnd, precededByTable, facts); reason == SkipNone {
 				*out = append(*out, pp)
+			} else {
+				recordSkip(c, reason)
 			}
 			continue
 		}
@@ -213,21 +307,25 @@ func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int,
 		case *ast.List:
 			childDepth++
 		}
-		collect(c, source, childInBQ, childDepth, fmEnd, facts, out, mkdocs)
+		collect(c, source, childInBQ, childDepth, fmEnd, facts, out, skips, mkdocs)
 	}
 }
 
 // build derives a Paragraph from p (an *ast.Paragraph or *ast.TextBlock),
-// or reports skip == true if a whole-node dialect rule matches p's text.
-// fmEnd is the document's front-matter end offset (frontMatterEnd(source),
-// or -1 if source has no front matter) — see its use below. precededByTable
-// is true when p's immediately preceding sibling in the AST is a GFM
-// *ast.Table — see its use below for why.
-func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTable bool, facts map[int]lineFacts) (pp Paragraph, skip bool) {
+// or reports the reason p must instead pass through byte-for-byte
+// (SkipNone means eligible). fmEnd is the document's front-matter end
+// offset (frontMatterEnd(source), or -1 if source has no front matter) —
+// see its use below. precededByTable is true when p's immediately
+// preceding sibling in the AST is a GFM *ast.Table — see its use below
+// for why.
+func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTable bool, facts map[int]lineFacts) (pp Paragraph, reason SkipReason) {
 	lines := p.Lines()
 	n := lines.Len()
 	if n == 0 {
-		return Paragraph{}, true // empty paragraph; nothing to emit specially
+		// Empty paragraph; nothing to emit specially. Reported under
+		// SkipDegenerateBlank, though recordSkip drops it anyway (no
+		// source range to point at).
+		return Paragraph{}, SkipDegenerateBlank
 	}
 
 	trimmed := make([]string, n)
@@ -251,7 +349,7 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// reparse. Passing it through byte-for-byte — as if no dialect
 		// rule matched, since none of them is really about this — is the
 		// only content-preserving choice.
-		return Paragraph{}, true
+		return Paragraph{}, SkipDegenerateBlank
 	}
 	if !allBlank && hasEmptyLine(trimmed) {
 		// Fuzz-found idempotency hazard, related to (but distinct from)
@@ -266,10 +364,10 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// guarantee byte-for-byte reproduction on a second pass for every
 		// shape a parser artifact can take. Skipping the whole paragraph
 		// is the safe, general answer once again.
-		return Paragraph{}, true
+		return Paragraph{}, SkipDegenerateBlank
 	}
 	if wholeNodeSkip(trimmed) {
-		return Paragraph{}, true
+		return Paragraph{}, SkipDialectBlock
 	}
 	if fmEnd >= 0 && lines.At(0).Start < fmEnd {
 		// Front matter's interior lines: excluded from reflow by a pure
@@ -281,7 +379,7 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// closing delimiter line, so this paragraph's own first line
 		// starting before fmEnd is sufficient to know it is entirely
 		// contained in the front-matter block.
-		return Paragraph{}, true
+		return Paragraph{}, SkipFrontMatter
 	}
 	start0 := lines.At(0).Start
 	end := lines.At(n - 1).Stop
@@ -310,7 +408,7 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// span, and reflowing (or even just splicing straight through) is
 		// unsafe. The safe general answer, same as every other check in
 		// this function: skip the whole paragraph, byte-for-byte.
-		return Paragraph{}, true
+		return Paragraph{}, SkipHiddenLineGap
 	}
 	if overlapsSiblingDef(p, start0, end) {
 		// hasHiddenLineGap's sibling case, found by FuzzFormat on
@@ -327,7 +425,7 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// definition node's raw lines overlap this paragraph's own byte
 		// range, the parse has double-owned bytes and no reflow of them can
 		// be stable; skip the whole paragraph, byte-for-byte.
-		return Paragraph{}, true
+		return Paragraph{}, SkipDoubleOwnedLine
 	}
 	if hasControlByte(source[start0:end]) {
 		// design.md, "Control-character paragraphs pass through": a C0
@@ -340,9 +438,9 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// stays allowed (CRLF line endings and bare-CR paragraphs keep
 		// reflowing, since the '\r' of a CRLF pair is line-ending
 		// machinery, not paragraph interior).
-		return Paragraph{}, true
+		return Paragraph{}, SkipControlBytes
 	}
-	if inLinkRefDefZone(source, trimmed, start0, facts) {
+	if zone := inLinkRefDefZone(source, trimmed, start0, facts); zone != SkipNone {
 		// design.md, "The link-reference-definition zone: skip bluntly, by
 		// shape": a link reference definition renders nothing (it is URL
 		// metadata) and its grammar is the least reflow-compatible
@@ -361,7 +459,7 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// rare, ambiguity-laden, and worthless to reflow next to invisible
 		// metadata. inLinkRefDefZone replaces all of that with one blunt,
 		// shape-based predicate — see its own doc comment.
-		return Paragraph{}, true
+		return Paragraph{}, zone
 	}
 	masked := maskCodeSpans(trimmed)
 	if hasRawHTMLDeclOpener(masked) {
@@ -387,7 +485,7 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// pass the whole paragraph through byte-for-byte. Prose that
 		// carries a bare PI/declaration opener outside a code span is
 		// vanishingly rare, so the coverage cost is negligible.
-		return Paragraph{}, true
+		return Paragraph{}, SkipRawHTMLDeclOpener
 	}
 	if (hasUnbalancedBracket(masked) && couldFormLinkRefDef(masked)) ||
 		hasUnclosedDestParen(masked) ||
@@ -435,7 +533,7 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// not actually a definition attempt at all), which is an
 		// acceptable trade for correctness on a construct this
 		// fine-grained to get right per-line.
-		return Paragraph{}, true
+		return Paragraph{}, SkipPossibleLinkRefDef
 	}
 	if looksLikeUnterminatedTag(trimmed[0]) {
 		// The one construct m0-spike-findings.md documents as unrecoverable
@@ -457,7 +555,7 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// AST-only (not a raw source pre-pass) mitigation: no reflow can
 		// never corrupt anything, at the cost of not reflowing prose that
 		// happens to open with what looks like an unterminated tag.
-		return Paragraph{}, true
+		return Paragraph{}, SkipUnterminatedTag
 	}
 	if precededByTable {
 		// Fuzz-found idempotency hazard: whether a GFM table forms at all
@@ -488,7 +586,7 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// same one used throughout this file: skip reflowing any
 		// paragraph directly after a real table, so its own shape never
 		// changes at all.
-		return Paragraph{}, true
+		return Paragraph{}, SkipTableAdjacency
 	}
 
 	boundary := make([]bool, n)
@@ -529,7 +627,7 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		End:        end,
 		ContPrefix: contPrefix,
 		Boundary:   boundary,
-	}, false
+	}, SkipNone
 }
 
 // hasControlByte reports whether b contains a C0 control byte other than
@@ -818,25 +916,25 @@ var bareCaretOpenerRE = regexp.MustCompile(`\\?\[` + caretLabelBody + `\]:[ \t\r
 // quoting an inline-code error message like "runnerGroups[0]: ..." — can
 // never be reached by a chain and no longer freezes its neighbor (issue
 // #37).
-func inLinkRefDefZone(source []byte, trimmed []string, contentStart int, facts map[int]lineFacts) bool {
+func inLinkRefDefZone(source []byte, trimmed []string, contentStart int, facts map[int]lineFacts) SkipReason {
 	for _, t := range trimmed {
 		if nonCaretDefShapeRE.MatchString(t) || bareCaretOpenerRE.MatchString(t) || orphanDefCloserRE.MatchString(t) {
-			return true
+			return SkipLinkRefDefShape
 		}
 	}
 	if len(trimmed) > 0 && footnoteDefFirstLineRE.MatchString(trimmed[0]) {
-		return false
+		return SkipNone
 	}
 	ls := lineStart(source, contentStart)
 	if ls == 0 {
-		return false
+		return SkipNone
 	}
 	if facts[ls].defAbove {
 		// A def-shaped line anywhere above, in this line's contiguous
 		// non-blank run — not just on the immediately preceding line: a
 		// definition's title scan can reach the paragraph across any
 		// number of intervening machinery lines. See scanLineFacts.
-		return true
+		return SkipLinkRefDefNeighbor
 	}
 	prevStart := lineStart(source, ls-1)
 	prevLine := bytes.TrimRight(source[prevStart:ls], "\r\n")
@@ -849,7 +947,7 @@ func inLinkRefDefZone(source []byte, trimmed []string, contentStart int, facts m
 		// what follows invalidates the whole definition — found by
 		// FuzzFormat on "[\]\n]:\n0\n\"\"0" (seed 0767a5cc905fe38b),
 		// the mirror of seed 0df31d8ad2438ba6's contains-side case.
-		return true
+		return SkipLinkRefDefNeighbor
 	}
 	if len(trimmed) > 0 {
 		window := string(prevLine) + "\n" + trimmed[0]
@@ -860,7 +958,7 @@ func inLinkRefDefZone(source []byte, trimmed []string, contentStart int, facts m
 				// inside trimmed[0] is already caught by the contains
 				// check (a) above — same pattern applied to the same
 				// line — so firing here too is harmless parity.)
-				return true
+				return SkipLinkRefDefNeighbor
 			}
 			// Wholly inside prevLine: a definition chain can only reach
 			// this shape if it could have started at prevLine's own
@@ -871,11 +969,11 @@ func inLinkRefDefZone(source []byte, trimmed []string, contentStart int, facts m
 			// already covered by the defAbove check earlier in this
 			// function.
 			if plausibleDefPrefix(prevLine[:m[0]]) {
-				return true
+				return SkipLinkRefDefNeighbor
 			}
 		}
 	}
-	return false
+	return SkipNone
 }
 
 // plausibleDefPrefix reports whether prefix — the bytes of a line to the

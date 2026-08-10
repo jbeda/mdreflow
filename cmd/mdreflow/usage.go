@@ -112,11 +112,30 @@ Configuration (.mdreflow.yaml):
   name is being kept for a possible future strict profile, so passing it
   is an error that says exactly that.
 
-  These are the only config keys; --strip-sentence-terminal-breaks is
-  flag-only. (Earlier releases had a typography: key and matching flags;
+  These are the only config keys; --strip-sentence-terminal-breaks and
+  --explain are flag-only. (Earlier releases had a typography: key and matching flags;
   the feature was removed, so a leftover key is an unknown-key error —
   substitute quotes and ellipses at render time instead, e.g. goldmark
   Typographer or smartypants.)
+
+Explain (--explain):
+
+  Some paragraphs are deliberately left unformatted: constructs like
+  link-reference-definition shapes make reflow unsafe, so mdreflow
+  preserves those paragraphs byte-for-byte (see docs/why-this-is-hard.md
+  in the repository). --explain reports each one to stderr — stdout
+  stays clean for formatted output and diffs — as one record per frozen
+  paragraph:
+
+    docs/webhook.md:14-15: skipped: paragraph contains a "[label]:"
+    shape (link-reference-definition zone) [link-ref-def-shape]
+      Move the literal into a fenced code block, or format the
+      paragraph by hand -- mdreflow preserves it byte-for-byte.
+
+  The bracketed reason code is stable and machine-legible; the
+  indented line is the remediation hint. --explain combines with every
+  mode (in-place, --check, --diff, --stdout, stdin) and never changes
+  output bytes or exit codes. No records means nothing was frozen.
 
 Excludes:
 

@@ -125,8 +125,7 @@ Post the width-measurement fix a pass is milliseconds even on large documents; t
 
 ### Dialects: renderer profiles, and the skip-list
 
-(Amendment 2026-08-09, with PR #19 as the first consumer.)
-`Options.Dialect` — a single-select enum mirroring `Mode`'s shape, with `--dialect` and a `dialect:` config key parsed loudly like `mode` — names the renderer profile a tree targets.
+(Amendment 2026-08-09, with PR #19 as the first consumer.) `Options.Dialect` — a single-select enum mirroring `Mode`'s shape, with `--dialect` and a `dialect:` config key parsed loudly like `mode` — names the renderer profile a tree targets.
 A dialect is a bundle, not a feature flag.
 It selects:
 
@@ -136,9 +135,7 @@ It selects:
 3. Eventually, which of the skip-list rules below even apply — a construct the profile's parser cannot produce stops being a hazard *automatically* under the render backstop: with tables off, a manufactured delimiter-shaped line is prose on both sides of the comparison.
    Over-cautious guards therefore cost coverage, never correctness, and can be narrowed per-dialect lazily or not at all.
 
-The zero value, `DialectGFM` (`--dialect gfm`), is exactly the permissive GFM-plus-footnotes configuration the parser has always hardcoded — existing behavior, renamed rather than changed.
-`commonmark` is deliberately *reserved* for a future strict CommonMark profile (GFM extensions off) rather than aliased to the default: aliasing it now would make the name unavailable for the one profile it accurately describes.
-`mkdocs` layers admonition-body recognition on the GFM base and drops the linkify extension from its goldmark configuration: Python-Markdown has no GFM autolinking, so a bare URL is plain prose to the target — and because the span computation and the render backstop both use the profile's configuration (see "No-break spans: ask goldmark"), bare URLs automatically stop being protected or compared as links under this dialect, with no per-dialect guard logic anywhere.
+The zero value, `DialectGFM` (`--dialect gfm`), is exactly the permissive GFM-plus-footnotes configuration the parser has always hardcoded — existing behavior, renamed rather than changed. `commonmark` is deliberately *reserved* for a future strict CommonMark profile (GFM extensions off) rather than aliased to the default: aliasing it now would make the name unavailable for the one profile it accurately describes. `mkdocs` layers admonition-body recognition on the GFM base and drops the linkify extension from its goldmark configuration: Python-Markdown has no GFM autolinking, so a bare URL is plain prose to the target — and because the span computation and the render backstop both use the profile's configuration (see "No-break spans: ask goldmark"), bare URLs automatically stop being protected or compared as links under this dialect, with no per-dialect guard logic anywhere.
 Dropping linkify cannot let reflow split a URL in any mode: every break candidate is a whitespace run, and a bare URL contains none, so reflow only ever moves the whitespace *around* the token — which autolinks (or doesn't) identically at line start, mid-line, or line end.
 The only behavior linkify actually governs in span computation is code-span pairing around a backtick inside a bare URL, a shape near-nonexistent in real prose.
 Its true target renderer (Python-Markdown) is not CommonMark and cannot be modeled by our oracle, so its recognitions must stay narrow and are verified externally (full `mkdocs build` diffs), per the render-backstop section's divergence caveat.
@@ -287,12 +284,8 @@ preceding line and closing on the paragraph's own first line), orphaned `]:`
 closers, and bare caret openers are position-dependent hazards and keep
 their unnarrowed arms.
 
-Implementation shape: the zone's inputs are computed once per contiguous
-run as a small per-line facts table (line-start def opener, orphan closer,
-bare caret opener, mid-line-only shape) instead of ad-hoc scans at each call
-site, and verdicts are rules over those facts. Same facts, one computation,
-and each verdict can name the fact that fired — the natural basis for the
-per-skip reasons proposed in issue #38.
+Implementation shape: the zone's inputs are computed once per contiguous run as a small per-line facts table (line-start def opener, orphan closer, bare caret opener, mid-line-only shape) instead of ad-hoc scans at each call site, and verdicts are rules over those facts.
+Same facts, one computation, and each verdict can name the fact that fired — the natural basis for the per-skip reasons proposed in issue #38.
 
 **Footnote definitions are exempt and keep reflowing.** The caret is a
 near-perfect discriminator (`[^label]:` vs `[label]:` — "near": a caret
@@ -310,8 +303,7 @@ pile for the caret case:
 - Reflowed footnote-body continuation lines are emitted with a 4-space indent.
   Renderers disagree about whether an unindented lazy-continuation line belongs to the footnote (GitHub's documented convention is to indent); the indented spelling is the one they all keep inside the footnote, and to mdreflow's own parser it is an ordinary paragraph continuation (indented code cannot interrupt a paragraph), so render preservation is unaffected.
 
-One structural exception outranks the exemption: **a paragraph whose bytes are double-owned by a sibling definition node passes through.**
-goldmark's duplicate-label handling can extract a repeated definition line as a `LinkReferenceDefinition` node while also leaving the same bytes as the trailing paragraph's first line (fuzz-found, issue #35: two same-label `[^0]:` lines then prose).
+One structural exception outranks the exemption: **a paragraph whose bytes are double-owned by a sibling definition node passes through.** goldmark's duplicate-label handling can extract a repeated definition line as a `LinkReferenceDefinition` node while also leaving the same bytes as the trailing paragraph's first line (fuzz-found, issue #35: two same-label `[^0]:` lines then prose).
 Such a line is live definition machinery whatever its label shape, and reflowing it destroys the neighbor's def shape so the def/paragraph boundary migrates one line per pass — a treadmill no emission escape can stop.
 The check is AST-only, the same move as the table-adjacency and hidden-line-gap skips: if any sibling definition node's raw lines overlap the paragraph's own byte range, the paragraph is skipped byte-for-byte.
 
@@ -333,12 +325,10 @@ Three decisions make it work:
    `internal/gm` builds a second parser configuration sharing the document profile's inline set (including linkify, per dialect) but whose *block* layer is only goldmark's paragraph parser, with no paragraph transformers.
    Standalone-parse divergence — joined text starting with `- ` or `#` parsing as a list or heading, a `[label]: dest` line vanishing into a definition — cannot happen: every cluster text parses as one `Paragraph`, which is what it is in the document (spike-confirmed for list/heading/blockquote/fence/definition/thematic-break shapes).
    Both configurations are constructed from one shared site in `internal/gm`, so an extension added to the document profile cannot silently miss the span profile.
-2. **Spans by complement, not per-construct extents.**
-   goldmark's inline `Link`/`Image` nodes carry no source extent for their `](dest "title")` syntax, so computing each construct's byte range from the AST is a losing game.
+2. **Spans by complement, not per-construct extents.** goldmark's inline `Link`/`Image` nodes carry no source extent for their `](dest "title")` syntax, so computing each construct's byte range from the AST is a losing game.
    Inverted, the problem disappears: the *breakable* regions are the segments of plain `Text` nodes whose ancestry is only `Paragraph`/`Emphasis`/`Strikethrough`; every other byte of the cluster text — link syntax, code-span interiors and delimiters, autolink URLs, raw HTML — is no-break, computed as the complement.
    This is conservative by construction: adjacent constructs merge into one protected gap (harmless), and any node kind the walk doesn't recognize defaults to protected.
-3. **Reference links need no resolution.**
-   The span parse registers no reference definitions, so `[text][ref]` parses as literal prose rather than the link it may form in the document.
+3. **Reference links need no resolution.** The span parse registers no reference definitions, so `[text][ref]` parses as literal prose rather than the link it may form in the document.
    Deliberate: the label is the only part of a reference link that lives in the paragraph (its destination lives in the definition, already a skipped zone), and a break inside a label is harmless — label matching collapses internal whitespace, and a soft break inside link text is the same whitespace move reflow makes in any prose.
    Pre-loading the document's definitions into every cluster parse (`parser.Context`, spike-confirmed workable) was considered and rejected: machinery for a case that needs none.
 
@@ -347,14 +337,11 @@ These constructs span soft breaks in goldmark's inline grammar, so the walk prot
 Inline tags (`<` + letter) need no such exclusion — their stabilizer (`segment.htmlTagOpenerSpans`) is a raw-text regex whose verdict is identical for escaped and unescaped spellings.
 The masking means an opener inside inline code — the common way prose mentions one — costs nothing.
 
-**Degenerate parses fall back to no reflow of the cluster.**
-If the parse yields anything but a single `Paragraph` covering the text (the paragraph parser declines an all-indented line, producing an empty document), the whole cluster is one no-break span and passes through unbroken — coverage lost on a shape that is rare and ambiguous, never correctness.
+**Degenerate parses fall back to no reflow of the cluster.** If the parse yields anything but a single `Paragraph` covering the text (the paragraph parser declines an all-indented line, producing an empty document), the whole cluster is one no-break span and passes through unbroken — coverage lost on a shape that is rare and ambiguous, never correctness.
 
-**What stays regex.**
-Constructs invisible to goldmark keep their existing scanners, layered on top as today: inline math (`$…$`), Hugo shortcodes, MDX `{expr}`, footnote references (the profile does not enable the footnote extension), and the near-tag opener guard (`htmlTagOpenerSpans`), which deliberately protects regions goldmark *declines* to call tags — an idempotency stabilizer the AST by definition cannot provide.
+**What stays regex.** Constructs invisible to goldmark keep their existing scanners, layered on top as today: inline math (`$…$`), Hugo shortcodes, MDX `{expr}`, footnote references (the profile does not enable the footnote extension), and the near-tag opener guard (`htmlTagOpenerSpans`), which deliberately protects regions goldmark *declines* to call tags — an idempotency stabilizer the AST by definition cannot provide.
 
-**Code-span queries move to the same parse.**
-`segment.CodeSpans` — used to decide whether a hard-break boundary or cluster join lands inside a genuine code span, and by blockmap's guard-arm masking — shares the linkify blind spot (a backtick inside a bare URL is destination content, not a delimiter, so hand-pairing runs one delimiter out of step).
+**Code-span queries move to the same parse.** `segment.CodeSpans` — used to decide whether a hard-break boundary or cluster join lands inside a genuine code span, and by blockmap's guard-arm masking — shares the linkify blind spot (a backtick inside a bare URL is destination content, not a delimiter, so hand-pairing runs one delimiter out of step).
 Its answers now come from `CodeSpan` nodes of the same goldmark configuration (over the paragraph's `"\n"`-joined lines, matching how goldmark's inline parser sees a paragraph).
 This, not the no-break rewrite alone, is what retires the linkify guards: with every code-span consumer linkify-aware, `hasBacktickInBareURL` and the #28 ordering invariant have no blind spot left to cover.
 
@@ -369,7 +356,9 @@ A CommonMark inline link's label and destination can each span a soft line break
 A preparation step and three whole-paragraph skip arms defend this, each scoped to the shape that can actually start the hazard.
 (These arms guard a *block-level* hazard — reflow's line rearrangement letting a link reference definition consume prose — which no per-cluster span computation addresses; they are untouched by the ask-goldmark rewrite above, except that their masking step now shares its parse.)
 
-**Code-span masking.** The three arms scan a copy of the paragraph with every closed inline code span's interior replaced by filler bytes (same byte geometry, spans read from the ask-goldmark parse above). A bracket or paren inside a code span is literal and can open nothing, so it arms no guard — paragraphs that merely *document* Markdown or YAML syntax (`` `runs-on: [self-hosted,` `` wrapping across a line) reflow. An unmatched backtick run opens no span and masks nothing, so a bracket after one still arms normally.
+**Code-span masking.** The three arms scan a copy of the paragraph with every closed inline code span's interior replaced by filler bytes (same byte geometry, spans read from the ask-goldmark parse above).
+A bracket or paren inside a code span is literal and can open nothing, so it arms no guard — paragraphs that merely *document* Markdown or YAML syntax (`` `runs-on: [self-hosted,` `` wrapping across a line) reflow.
+An unmatched backtick run opens no span and masks nothing, so a bracket after one still arms normally.
 
 - **Bracket arm**: a `[` left structurally open at a line's end (even one
   a later line closes — the span across the break is itself the hazard),
@@ -475,8 +464,11 @@ mdreflow [flags] [path ...]
   Formatting is **in-place** when paths are given — this is a batch tool for pre-commit hooks and agents, where in-place is what you mean.
 - **stdin/stdout**: no paths (or `-`) reads stdin and writes stdout.
   This is the pipe mode, and it gives any editor with a "filter through command" binding format-on-demand without an extension.
-- **Flags**: `--mode`, `--max-width`, `--check`, `--diff`, `--stdout`, `--force`, `--config`, `--no-gitignore`, plus flags mirroring the hard-break options.
+- **Flags**: `--mode`, `--max-width`, `--check`, `--diff`, `--stdout`, `--force`, `--config`, `--no-gitignore`, `--explain`, plus flags mirroring the hard-break options.
   Stdlib `flag`; the surface is one command.
+- **`--explain`** (#38): every skip site in `blockmap.build` (and `collect`'s depth cap) reports a distinct reason; the flag prints, per frozen paragraph, its line range, a stable machine-legible reason code, and a remediation hint drawn from why-this-is-hard.md's "What authors can do" section (never backslash-escaping — the zone is escape-tolerant on purpose).
+  Output goes to stderr so stdout stays clean in pipe and `--diff` modes; diagnostics only, output bytes and exit codes unchanged.
+  The same report is the library's `Explain`; the reason a paragraph froze is diagnosable by agents without hand-classifying diffs.
 - **Exit codes** (a contract, since agents branch on them): `0` success/clean; `1` would-reformat (`--check`/`--diff` only); `2` usage or config error; `3` refused input (not Markdown, or excluded without `--force`).
 - **`--help` is a first-class deliverable**: complete flag docs, the exit-code contract, and examples in the help text itself, so an unattended agent can self-serve without a README.
 

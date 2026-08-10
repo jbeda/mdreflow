@@ -220,8 +220,8 @@ func TestInLinkRefDefZone(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := inLinkRefDefZone([]byte(tc.source), tc.trimmed, tc.contentStart, scanLineFacts([]byte(tc.source))); got != tc.want {
-				t.Errorf("inLinkRefDefZone(%q, %v, %d) = %v, want %v", tc.source, tc.trimmed, tc.contentStart, got, tc.want)
+			if got := inLinkRefDefZone([]byte(tc.source), tc.trimmed, tc.contentStart, scanLineFacts([]byte(tc.source))); (got != SkipNone) != tc.want {
+				t.Errorf("inLinkRefDefZone(%q, %v, %d) = %v, want in-zone=%v", tc.source, tc.trimmed, tc.contentStart, got, tc.want)
 			}
 		})
 	}
@@ -314,7 +314,7 @@ func TestNeighborDefShapeReachability(t *testing.T) {
 		source := "- [1]:0\n\"20\n0\n00\nbar"
 		trimmed := []string{"bar"}
 		contentStart := 17
-		if got := inLinkRefDefZone([]byte(source), trimmed, contentStart, scanLineFacts([]byte(source))); !got {
+		if got := inLinkRefDefZone([]byte(source), trimmed, contentStart, scanLineFacts([]byte(source))); got == SkipNone {
 			t.Errorf("inLinkRefDefZone(%q, %v, %d) = %v, want true", source, trimmed, contentStart, got)
 		}
 	})
@@ -323,7 +323,7 @@ func TestNeighborDefShapeReachability(t *testing.T) {
 		source := "[ab\ncd]: x"
 		trimmed := []string{"cd]: x"}
 		contentStart := 4
-		if got := inLinkRefDefZone([]byte(source), trimmed, contentStart, scanLineFacts([]byte(source))); !got {
+		if got := inLinkRefDefZone([]byte(source), trimmed, contentStart, scanLineFacts([]byte(source))); got == SkipNone {
 			t.Errorf("inLinkRefDefZone(%q, %v, %d) = %v, want true", source, trimmed, contentStart, got)
 		}
 	})
@@ -332,7 +332,7 @@ func TestNeighborDefShapeReachability(t *testing.T) {
 		source := "3.5) [a]: x\nplain paragraph line here"
 		trimmed := []string{"plain paragraph line here"}
 		contentStart := 12
-		if got := inLinkRefDefZone([]byte(source), trimmed, contentStart, scanLineFacts([]byte(source))); !got {
+		if got := inLinkRefDefZone([]byte(source), trimmed, contentStart, scanLineFacts([]byte(source))); got == SkipNone {
 			t.Errorf("inLinkRefDefZone(%q, %v, %d) = %v, want true", source, trimmed, contentStart, got)
 		}
 	})

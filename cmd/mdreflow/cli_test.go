@@ -807,3 +807,45 @@ func TestRunDialectUnknownIsUsageError(t *testing.T) {
 		t.Errorf("stderr = %q, want it to name the bad value", errOut)
 	}
 }
+
+// --- --explain ---
+
+func TestRunExplainReportsFrozenParagraphsToStderr(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a.md")
+	// One reflowable paragraph plus one frozen by the def zone: the
+	// reflow still happens, the frozen paragraph is reported on stderr
+	// with its location, stable reason code, and a remediation line, and
+	// stdout stays empty (in-place mode).
+	writeFile(t, p, unformatted+"\n[label]: /url\nfrozen neighbor prose\n")
+
+	out, errOut, code := runCLI(t, []string{"--explain", p}, "")
+	if code != exitOK {
+		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitOK, errOut)
+	}
+	if out != "" {
+		t.Errorf("stdout = %q, want empty (explain output belongs on stderr)", out)
+	}
+	if !strings.Contains(errOut, p+":4: skipped:") {
+		t.Errorf("stderr = %q, want a %q record", errOut, p+":4: skipped:")
+	}
+	if !strings.Contains(errOut, "[link-ref-def-neighbor]") {
+		t.Errorf("stderr = %q, want the stable reason code in brackets", errOut)
+	}
+	if !strings.Contains(errOut, "\n  ") {
+		t.Errorf("stderr = %q, want an indented remediation line", errOut)
+	}
+	if !strings.Contains(readFile(t, p), formatted) {
+		t.Errorf("file was not reformatted alongside --explain")
+	}
+}
+
+func TestRunExplainCleanFileReportsNothing(t *testing.T) {
+	_, errOut, code := runCLI(t, []string{"--explain"}, "Hi there.\n")
+	if code != exitOK {
+		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitOK, errOut)
+	}
+	if errOut != "" {
+		t.Errorf("stderr = %q, want empty for a document with nothing frozen", errOut)
+	}
+}

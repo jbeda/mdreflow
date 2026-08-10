@@ -11,7 +11,11 @@ At release time the section is retitled to the version and the prose lead is wri
 
 - New doc: [docs/why-this-is-hard.md](docs/why-this-is-hard.md) explains why safe Markdown reflow is hard and what to do when a paragraph will not reflow.
 - A paragraph sitting directly under a line whose only `[label]:` shape is mid-prose (typically a quoted error message in inline code) now reflows; a definition opening after a list marker (`- [a]: /url`) now freezes its whole run, the same as a top-level definition.
-- Trailing double-space and trailing-backslash line endings are now treated as hard breaks only when the Markdown parser agrees they render as one (#39). Previously a task-list line whose prose is just the checkbox (`* [X]` followed by two trailing spaces) had those spaces read as a hard break even though it renders as a soft one, so the paragraph was left unformatted; it now reflows.
+- New `--explain` flag (#38): reports every paragraph mdreflow leaves unformatted to stderr — location, a stable machine-legible reason code, and a remediation hint.
+  Combines with every mode and never changes output or exit codes.
+  Also available as a library call, `mdreflow.Explain`.
+- Trailing double-space and trailing-backslash line endings are now treated as hard breaks only when the Markdown parser agrees they render as one (#39).
+  Previously a task-list line whose prose is just the checkbox (`* [X]` followed by two trailing spaces) had those spaces read as a hard break even though it renders as a soft one, so the paragraph was left unformatted; it now reflows.
 
 ## v0.1.6 (2026-08-10)
 
@@ -19,7 +23,8 @@ More of your prose reflows, because the tool stopped guessing.
 
 The rules deciding where a line may not break — inside inline code, a link, a bare URL — used to be hand-written approximations of Markdown's inline grammar, and the hardest one, GitHub's bare-URL autolinking, was never approximated at all: paragraphs near a URL were skipped outright rather than risk getting it wrong.
 Those rules now come from the same parser that renders the document, so the answer agrees with the renderer by construction.
-The practical effect is coverage. A code span that ends on a URL — `` `curl https://example.com/install.sh` ``, how documentation writes a command — no longer stops its paragraph from reflowing; on a 263-file docset that shape alone accounted for 91 of the 117 lines that still would not reflow.
+The practical effect is coverage.
+A code span that ends on a URL — `` `curl https://example.com/install.sh` ``, how documentation writes a command — no longer stops its paragraph from reflowing; on a 263-file docset that shape alone accounted for 91 of the 117 lines that still would not reflow.
 
 Nothing you must act on: no flags, config keys, or API changes.
 Output for a paragraph that already reflowed is unchanged except where a fix below applies.
@@ -50,13 +55,16 @@ Running unattended on untrusted trees is hardened end to end, and four guard fix
 
 Act on these when upgrading:
 
-- The library function `Check` is now `NeedsFormat` (same behavior; the old name read backwards). The `--check` flag is unchanged.
+- The library function `Check` is now `NeedsFormat` (same behavior; the old name read backwards).
+  The `--check` flag is unchanged.
 - A `typography:` key in `.mdreflow.yaml` is now an error — delete the line and configure typography in your renderer instead.
 - `--max-width` below 20 is now an error; the library requires Go 1.25+.
 
 ### Added
 
-- Render preservation is now structurally guaranteed, not just tested for: after reflowing, `Format` renders the input and the output through the same parser and compares them (modulo soft-break whitespace and `<br>` spelling — the two documented cosmetic differences). On any other difference the document is returned unchanged, so an unknown formatter bug can now cost you a reflow, never your content. The opt-in `--strip-sentence-terminal-breaks` remains the one documented exception, since removing an accidental hard break is a render change by design.
+- Render preservation is now structurally guaranteed, not just tested for: after reflowing, `Format` renders the input and the output through the same parser and compares them (modulo soft-break whitespace and `<br>` spelling — the two documented cosmetic differences).
+  On any other difference the document is returned unchanged, so an unknown formatter bug can now cost you a reflow, never your content.
+  The opt-in `--strip-sentence-terminal-breaks` remains the one documented exception, since removing an accidental hard break is a render change by design.
 
 - `--dialect mkdocs` (and a `dialect:` config key) additionally reflows MkDocs and Python-Markdown admonition bodies (#19, contributed by Karl Isenberg).
   A callout's 4-space-indented body is prose, but every CommonMark parser reads it as an indented code block, so it was silently excluded from reflow.
@@ -68,21 +76,29 @@ Act on these when upgrading:
 
 - Running unattended on an untrusted tree is now hardened end to end: symlinks, FIFOs, and device nodes are refused (exit 3) instead of read or written through — a directory walk skips symlinks silently, `--force` remains the escape hatch; in-place writes go through a same-directory temp file and atomic rename, so a crash or full disk mid-write can no longer truncate a file; a discovered `.mdreflow.yaml` is capped at 1 MB and screened against YAML alias/nesting bombs before parsing; and config discovery stops at the enclosing git repository root (or your home directory outside one), so a config planted in a shared ancestor directory like `/tmp` no longer applies.
 - `--no-gitignore` outside a git repository no longer misfires the built-in `vendor`/`node_modules`/`.git` excludes on directories *above* the path you named: the check is scoped to components below the walked directory (or an explicit file's own directory), not the full absolute path.
-- `--max-width` (and the library's `Options.MaxWidth`) now rejects non-zero values below 20 with a loud error. Very narrow widths force line breaks inside Markdown constructs and were the source of nearly all fuzz-found width pathology; no real document wants them. 0 still means unbounded (sentence mode) or the default 80 (wrap mode).
+- `--max-width` (and the library's `Options.MaxWidth`) now rejects non-zero values below 20 with a loud error.
+  Very narrow widths force line breaks inside Markdown constructs and were the source of nearly all fuzz-found width pathology; no real document wants them.
+  0 still means unbounded (sentence mode) or the default 80 (wrap mode).
 
-- Library API: `Check` is renamed `NeedsFormat` — `ok, err := Check(...)`, the shape a Go reader expects from that name, read exactly backwards (`true` means the file *would* change). The `--check` flag keeps its name; it describes the operation, the function describes the question. No deprecation wrapper: renaming now, pre-v1, is the cheap moment.
+- Library API: `Check` is renamed `NeedsFormat` — `ok, err := Check(...)`, the shape a Go reader expects from that name, read exactly backwards (`true` means the file *would* change).
+  The `--check` flag keeps its name; it describes the operation, the function describes the question.
+  No deprecation wrapper: renaming now, pre-v1, is the cheap moment.
 - `Mode`, `HardBreakStyle`, and `Dialect` now implement `fmt.Stringer` with their CLI-facing names ("sentence", "gfm", "br", ...), so validation errors and logs speak the same vocabulary as flags and config keys.
-- Library API, pre-v1 cleanup: `Span` is now a concrete struct whose `Start`/`End` fields appear in rendered documentation (it was an alias to an internal type that pkg.go.dev showed with no fields), and the option enums have a single internal definition instead of hand-mirrored public/internal copies. No source changes needed for typical callers; a custom `Segmenter` implementation is unaffected beyond recompiling.
+- Library API, pre-v1 cleanup: `Span` is now a concrete struct whose `Start`/`End` fields appear in rendered documentation (it was an alias to an internal type that pkg.go.dev showed with no fields), and the option enums have a single internal definition instead of hand-mirrored public/internal copies.
+  No source changes needed for typical callers; a custom `Segmenter` implementation is unaffected beyond recompiling.
 
 - The library now requires Go 1.25+ (was 1.24), following a dependency update; releases build with the current Go toolchain.
 
 ### Removed
 
-- Typography substitution (`--smart-quotes`, `--ellipses`, the `typography:` config key, and the library's `Typography` options) is removed. It was the only feature whose purpose was to change rendered output, which put it at odds with mdreflow's core guarantee; substituting at render time is the better home (goldmark's Typographer, Hugo's smartypants, Python-Markdown's smarty), and anyone wanting it baked into source bytes wants a full parse-and-re-emit formatter, which mdreflow deliberately is not. A leftover `typography:` key in `.mdreflow.yaml` is now an unknown-key config error (exit 2); delete the line.
+- Typography substitution (`--smart-quotes`, `--ellipses`, the `typography:` config key, and the library's `Typography` options) is removed.
+  It was the only feature whose purpose was to change rendered output, which put it at odds with mdreflow's core guarantee; substituting at render time is the better home (goldmark's Typographer, Hugo's smartypants, Python-Markdown's smarty), and anyone wanting it baked into source bytes wants a full parse-and-re-emit formatter, which mdreflow deliberately is not.
+  A leftover `typography:` key in `.mdreflow.yaml` is now an unknown-key config error (exit 2); delete the line.
 
 ### Fixed
 
-- Trailing double spaces inside a code span that closes on a later marker line (a `:::` fence, say) are no longer treated as a hard break: they are span content, and normalizing them wrote a literal `<br>` into the rendered code. Fuzz-found on pathological input; v0.1.4 renders it corrupted, while the render backstop above already reduced it to a missed reflow before this root fix.
+- Trailing double spaces inside a code span that closes on a later marker line (a `:::` fence, say) are no longer treated as a hard break: they are span content, and normalizing them wrote a literal `<br>` into the rendered code.
+  Fuzz-found on pathological input; v0.1.4 renders it corrupted, while the render backstop above already reduced it to a missed reflow before this root fix.
 - A paragraph is no longer skipped just because a code span contains a URL (`` `oci://ghcr.io/org/chart` ``), which is how documentation names a registry or endpoint (#29, contributed by Karl Isenberg).
   The backtick-in-bare-URL guard now requires the URL to start *before* the backtick, which is the only order in which linkify can swallow one.
 - A paragraph whose link text or destination spans a line break is no longer skipped unless the paragraph could actually form a link reference definition (#18, contributed by Karl Isenberg).

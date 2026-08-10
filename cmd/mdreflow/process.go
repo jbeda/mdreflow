@@ -21,6 +21,30 @@ type processResult struct {
 	reformatted bool
 }
 
+// printExplain reports every paragraph Format left unformatted in
+// content, one record per paragraph on stderr (keeping stdout clean for
+// formatted output and diffs): a "path:start-end: skipped:" line naming
+// what fired plus its stable reason code in brackets, then an indented
+// remediation line. Diagnostics only — exit codes and output bytes are
+// unaffected. Explain errors are impossible here by construction (Format
+// already accepted the same content and options), so they are reported
+// and otherwise ignored rather than failing a run that already
+// succeeded.
+func printExplain(path string, content []byte, opts mdreflow.Options, stderr io.Writer) {
+	frozen, err := mdreflow.Explain(content, opts)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: explain failed: %v\n", path, err)
+		return
+	}
+	for _, fp := range frozen {
+		loc := fmt.Sprintf("%d", fp.StartLine)
+		if fp.EndLine != fp.StartLine {
+			loc = fmt.Sprintf("%d-%d", fp.StartLine, fp.EndLine)
+		}
+		fmt.Fprintf(stderr, "%s:%s: skipped: %s [%s]\n  %s\n", path, loc, fp.Detail, fp.Reason, fp.Remediation)
+	}
+}
+
 // unifiedDiff renders a unified diff of before -> after, labeled path,
 // for --diff output.
 func unifiedDiff(path string, before, after []byte) (string, error) {
@@ -124,6 +148,10 @@ func processFile(path string, opts mdreflow.Options, f *flags, ex *excluder, exp
 		return res, fmt.Errorf("%s: %w", path, err)
 	}
 	changed := !bytes.Equal(content, out)
+
+	if f.explain {
+		printExplain(path, content, opts, stderr)
+	}
 
 	if f.check || f.diff {
 		if changed {
@@ -237,6 +265,10 @@ func processStdin(opts mdreflow.Options, f *flags, stdin io.Reader, stdout, stde
 		return res, fmt.Errorf("<stdin>: %w", err)
 	}
 	changed := !bytes.Equal(content, out)
+
+	if f.explain {
+		printExplain("<stdin>", content, opts, stderr)
+	}
 
 	if f.check || f.diff {
 		if changed {

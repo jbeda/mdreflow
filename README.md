@@ -1,8 +1,6 @@
 # mdreflow
 
-[![CI build status badge](https://github.com/jbeda/mdreflow/actions/workflows/ci.yaml/badge.svg)](https://github.com/jbeda/mdreflow/actions/workflows/ci.yaml)
-[![Go reference documentation badge](https://pkg.go.dev/badge/github.com/jbeda/mdreflow.svg)](https://pkg.go.dev/github.com/jbeda/mdreflow)
-[![Latest release version badge](https://img.shields.io/github/v/release/jbeda/mdreflow)](https://github.com/jbeda/mdreflow/releases/latest)
+[![CI build status badge](https://github.com/jbeda/mdreflow/actions/workflows/ci.yaml/badge.svg)](https://github.com/jbeda/mdreflow/actions/workflows/ci.yaml) [![Go reference documentation badge](https://pkg.go.dev/badge/github.com/jbeda/mdreflow.svg)](https://pkg.go.dev/github.com/jbeda/mdreflow) [![Latest release version badge](https://img.shields.io/github/v/release/jbeda/mdreflow)](https://github.com/jbeda/mdreflow/releases/latest)
 
 Reflow Markdown prose.
 The default mode is sentence-per-line ([semantic line breaks](https://sembr.org/)); paragraph-per-line and classic hard wrap share the same pipeline.
@@ -45,12 +43,16 @@ The sections below cover the parts you will look up most.
 mdreflow docs/                  # format a tree in place (respects .gitignore + excludes)
 mdreflow --check docs/          # CI gate: exit 1 if anything would change
 mdreflow --diff README.md       # show what would change
+mdreflow --explain docs/        # report each frozen paragraph and why, to stderr
 mdreflow < in.md > out.md       # pipe mode, e.g. an editor filter binding
 ```
 
 With path arguments, mdreflow formats in place: files directly, directories by walking them for `.md`, `.mdx`, and `.markdown` files.
 With no arguments (or `-`), it reads stdin and writes stdout; `--check` and `--diff` work there too, reporting the input as `-`.
 Never redirect a file onto itself in pipe mode (the shell truncates it first); use in-place mode for that.
+
+Some paragraphs are deliberately never reflowed — constructs like link-reference-definition shapes make reflow unsafe, so mdreflow preserves them byte-for-byte ([why](docs/why-this-is-hard.md)). `--explain` reports each one to stderr with its location, a stable machine-legible reason code, and a remediation hint; it combines with every mode and never changes output or exit codes.
+The same report is available as a library call, `mdreflow.Explain`.
 
 As a library:
 
@@ -65,14 +67,15 @@ The full API reference is on [pkg.go.dev](https://pkg.go.dev/github.com/jbeda/md
 
 ## Modes
 
-- `sentence` (default): one sentence per source line. `--max-width` optionally adds clause-level breaks inside sentences that run past the limit; the default of 0 means unbounded. Non-zero widths below 20 are refused in every mode — very narrow wrapping forces breaks inside Markdown constructs.
+- `sentence` (default): one sentence per source line. `--max-width` optionally adds clause-level breaks inside sentences that run past the limit; the default of 0 means unbounded.
+  Non-zero widths below 20 are refused in every mode — very narrow wrapping forces breaks inside Markdown constructs.
 - `para`: each paragraph joined onto a single line. `--max-width` is an error here.
 - `wrap`: classic hard wrap at `--max-width` (default 80).
 
 ## Dialects
 
-The default dialect, `gfm`, is the permissive GitHub-flavored superset: GFM extensions plus footnotes. Docusaurus, Hugo, and MDX constructs are recognized and passed through untouched in every dialect.
-`--dialect mkdocs` additionally reflows MkDocs/Python-Markdown admonition bodies (`!!! note` followed by a 4-space-indented body), which CommonMark parsers can only see as indented code blocks — opt-in because reflowing one changes what a CommonMark renderer emits.
+The default dialect, `gfm`, is the permissive GitHub-flavored superset: GFM extensions plus footnotes.
+Docusaurus, Hugo, and MDX constructs are recognized and passed through untouched in every dialect. `--dialect mkdocs` additionally reflows MkDocs/Python-Markdown admonition bodies (`!!! note` followed by a 4-space-indented body), which CommonMark parsers can only see as indented code blocks — opt-in because reflowing one changes what a CommonMark renderer emits.
 Recognition is deliberately narrow: bodies containing a fence marker or more than one paragraph are left alone.
 
 ## Configuration
@@ -93,7 +96,7 @@ exclude:                # gitignore syntax, matched like a .gitignore
   - "generated/**"
 ```
 
-These are all the keys; `--strip-sentence-terminal-breaks` is flag-only.
+These are all the keys; `--strip-sentence-terminal-breaks` and `--explain` are flag-only.
 
 ## Excludes
 
