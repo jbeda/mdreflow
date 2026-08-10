@@ -554,10 +554,7 @@ func TestCodeSpanBracketsDoNotArmGuards(t *testing.T) {
 		{"unmatched backtick leaves the bracket outside any span", "Text with `unclosed [bracket\nand more. Second sentence.\n", true},
 		{"backtick run length must match to close", "A ``x `y` [z\nw`` here. Second sentence.\n", true},
 		{"real destination outside a code span still arms", "See [t](/a\nb) and `arr[0]` here. Second one.\n", false},
-		// inLinkRefDefZone runs ahead of the masking and is deliberately blunt
-		// about definition-shaped lines, so this stays skipped. Recorded so the
-		// interaction is not mistaken for the masking failing.
-		{"definition label inside a code span still hits the zone", "Text `[label]: /url\nmore` here. Second sentence.\n", false},
+		{"definition label inside a code span is inert", "Text `[label]: /url\nmore` here. Second sentence.\n", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

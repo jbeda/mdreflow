@@ -16,6 +16,8 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ### Fixed
 
+- A link-reference-definition shape inside an inline code span no longer pulls its paragraph into the definition zone, so pages documenting Markdown syntax reflow (contributed by Karl Isenberg).
+  The zone's shape scan now runs on code-span-masked lines, which became possible once spans came from a goldmark parse: an earlier attempt at the same narrowing was not idempotent, because a hand-scanned span boundary shifted as reflow moved the line breaks.
 - A run of repeated same-label footnote-style definitions (`[^0]: …` twice, then prose) no longer keeps re-joining on every pass; such paragraphs now pass through untouched (#35).
 - A MkDocs admonition written without a blank line after its marker is no longer flattened into one paragraph, which stopped it rendering as a callout (#31, contributed by Karl Isenberg).
   That spelling is a single paragraph to CommonMark, since the indented body is a lazy continuation rather than the code block the blank-line spelling produces.

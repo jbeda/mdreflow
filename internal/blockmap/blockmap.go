@@ -743,6 +743,10 @@ var bareCaretOpenerRE = regexp.MustCompile(`\\?\[` + caretLabelBody + `\]:[ \t\r
 // whitespace at all (found by FuzzFormat on
 // "[0]:0\n\"0\"[00]:0\n\"\n\"[0]:0", seed a651ae68822c7c5c).
 func inLinkRefDefZone(source []byte, trimmed []string, contentStart int, zoneAbove map[int]bool) bool {
+	// A definition shape inside an inline code span is literal text and
+	// defines nothing. Spans now come from a goldmark parse, so masking is
+	// stable across passes rather than shifting with the line breaks.
+	trimmed = maskCodeSpans(trimmed)
 	for _, t := range trimmed {
 		if nonCaretDefShapeRE.MatchString(t) || bareCaretOpenerRE.MatchString(t) || orphanDefCloserRE.MatchString(t) {
 			return true
