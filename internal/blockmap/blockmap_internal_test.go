@@ -659,6 +659,27 @@ func TestBacktickInBareURLNeedsURLFirst(t *testing.T) {
 	}
 }
 
+// A MkDocs admonition written without a blank line after its marker is a
+// single paragraph: the indented body is a lazy continuation. Reflowing it
+// as ordinary prose joins the marker into the body and drops the indent,
+// and the callout stops being one.
+func TestLazyAdmonitionKeepsItsShape(t *testing.T) {
+	const src = "!!! tip \"Title here\"\n    The recommended shape is the v2 API at\n    a decomposed resource. Second sentence here.\n"
+	b := []byte(src)
+	doc := gm.New().Parser().Parse(text.NewReader(b))
+	paras := Paragraphs(doc, b)
+	if len(paras) != 1 {
+		t.Fatalf("got %d paragraphs, want 1", len(paras))
+	}
+	p := paras[0]
+	if !p.Boundary[0] {
+		t.Error("marker line is not a boundary, so reflow may join it into the body")
+	}
+	if p.ContPrefix != "    " {
+		t.Errorf("ContPrefix = %q, want the 4-space body indent", p.ContPrefix)
+	}
+}
+
 func TestParenGuardNarrowing(t *testing.T) {
 	cases := []struct {
 		name     string
