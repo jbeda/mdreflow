@@ -87,7 +87,7 @@ func ParagraphsForDialect(doc ast.Node, source []byte, mkdocs bool) []Paragraph 
 // lineFacts holds the per-physical-line verdicts inLinkRefDefZone needs,
 // keyed by the line's start byte offset in scanLineFacts's returned map.
 // chainStart, orphanCloser, and bareCaretOpener are the direct regex
-// verdicts for the line itself (defLineOpenerRE, orphanDefCloserRE, and
+// verdicts for the line itself (defChainStartRE, orphanDefCloserRE, and
 // bareCaretOpenerRE respectively); defAbove is the transitive seen-above
 // bit described below.
 type lineFacts struct {
@@ -125,7 +125,7 @@ func scanLineFacts(source []byte) map[int]lineFacts {
 		}
 		line := bytes.TrimRight(source[ls:end], "\r")
 		f := lineFacts{
-			chainStart:      defLineOpenerRE.Match(line),
+			chainStart:      defChainStartRE.Match(line),
 			orphanCloser:    orphanDefCloserRE.Match(line),
 			bareCaretOpener: bareCaretOpenerRE.Match(line),
 			defAbove:        seen,
@@ -617,7 +617,7 @@ func overlapsSiblingDef(p ast.Node, start, end int) bool {
 // design.md's "Footnote definitions are exempt and keep reflowing"): the
 // caret exemption applies uniformly to every zone check, contains and
 // neighbor alike, because verdict stability demands it (see
-// defLineOpenerRE's doc comment).
+// defChainStartRE's doc comment).
 const nonCaretLabelBody = `(?:\\.|[^\^\[\]])(?:\\.|[^\[\]])*`
 
 // nonFootnoteCaretLabelAlt matches the caret-led labels that are NOT
@@ -659,23 +659,41 @@ const caretLabelBody = `\^[^ \t\[\]][^\[\]]*`
 // shape the neighbor itself was allowed to reshape.
 var nonCaretDefShapeRE = regexp.MustCompile(`\\?\[(?:` + nonCaretLabelBody + `|` + nonFootnoteCaretLabelAlt + `)?\]:`)
 
-// defLineOpenerRE is nonCaretDefShapeRE's counterpart for judging the
-// raw source line directly above a paragraph (see inLinkRefDefZone). It
-// excludes caret-led labels, the same exemption as the contains check —
-// NOT because an adjacent "[^label]:" line is harmless (to a parser with
-// no footnote extension it is an ordinary definition shape), but because
-// deferring to a caret line can never be verdict-stable: a footnote body
-// is exempt from the zone precisely so it can reflow, and its reflow
-// legitimately rewrites the physical line a neighbor would key on — found
-// by FuzzFormat on ")B[^1]: 78\n  + ,b X2nx1" (seed 86487504c2bddd82),
-// where the list deferred on pass 1 to a caret line the exempt paragraph
-// above then split. Caret-shape hazards are owned instead by the
-// emission escapes (package reflow's isCompleteLinkRefDefLine and the
-// bare-opener escape), the harness's documented caret scope gate, and
-// the public convergence backstop — see design.md's zone section.
-var defLineOpenerRE = regexp.MustCompile(`^[ \t>]*\\?\[(?:` + nonCaretLabelBody + `|` + nonFootnoteCaretLabelAlt + `)?\]:`)
+// defChainStartRE is nonCaretDefShapeRE's counterpart for judging whether
+// the raw source line directly above a paragraph (see inLinkRefDefZone)
+// OPENS a definition chain — used for the chainStart fact (see
+// scanLineFacts), which feeds both inLinkRefDefZone's direct
+// immediately-preceding-line check and, transitively, the defAbove reach
+// across intervening lines.
+//
+// It excludes caret-led labels, the same exemption as the contains check
+// — NOT because an adjacent "[^label]:" line is harmless (to a parser
+// with no footnote extension it is an ordinary definition shape), but
+// because deferring to a caret line can never be verdict-stable: a
+// footnote body is exempt from the zone precisely so it can reflow, and
+// its reflow legitimately rewrites the physical line a neighbor would key
+// on — found by FuzzFormat on ")B[^1]: 78\n  + ,b X2nx1" (seed
+// 86487504c2bddd82), where the list deferred on pass 1 to a caret line
+// the exempt paragraph above then split. Caret-shape hazards are owned
+// instead by the emission escapes (package reflow's
+// isCompleteLinkRefDefLine and the bare-opener escape), the harness's
+// documented caret scope gate, and the public convergence backstop — see
+// design.md's zone section.
+//
+// The label may sit after any number of list-marker segments:
+// definitions are extracted starting at a paragraph's first content,
+// which inside a list item sits after the marker, so "- [a]: /url" opens
+// a definition chain exactly as a bare "[a]: /url" line does. The
+// marker-segment group repeats to cover nested items
+// ("- - [a]: /url"). A marker glyph not followed by whitespace is not a
+// marker and stops the prefix match there, so "* *emphasis* [x]:" does
+// not match (the "*" before "emphasis" has no trailing whitespace of its
+// own to close the marker segment, and once the alternation gives up on
+// consuming it as a marker the fixed "[ \t>]*" prefix cannot skip over
+// the intervening "*emphasis* " prose either).
+var defChainStartRE = regexp.MustCompile(`^[ \t>]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+[ \t>]*)*\\?\[(?:` + nonCaretLabelBody + `|` + nonFootnoteCaretLabelAlt + `)?\]:`)
 
-// defShapeAnywhereRE is defLineOpenerRE's counterpart with no left-
+// defShapeAnywhereRE is defChainStartRE's counterpart with no left-
 // boundary requirement at all — used only for the "spans the boundary"
 // check (see inLinkRefDefZone's (c)): a chain of link reference
 // definitions can legitimately continue immediately after a previous one's
@@ -686,11 +704,17 @@ var defLineOpenerRE = regexp.MustCompile(`^[ \t>]*\\?\[(?:` + nonCaretLabelBody 
 // definition's own destination scan reaches into a following paragraph
 // that is otherwise just a lone quote character, sitting directly after
 // "[00]:0" with no separating whitespace at all. Broader than
-// defLineOpenerRE on purpose: the boundary requirement that keeps rules
+// defChainStartRE on purpose: the boundary requirement that keeps rules
 // (a)/(b) from flagging ordinary prose like "word[key]: text" doesn't hold
 // once a definition can start immediately after another already-consumed
 // one, so this check accepts some extra false-positive skips as the price
-// of staying blunt rather than tracking definition-chain state.
+// of staying blunt rather than tracking definition-chain state. A match
+// wholly inside the preceding line is only chain-relevant when everything
+// to its left on that line is container-prefix-plausible — see
+// inLinkRefDefZone's (c) and plausibleDefPrefix — since a mid-line shape
+// with prose to its left (e.g. an inline-code error message quoted in a
+// bullet) can never be reached by a definition chain, which must start at
+// a paragraph's first content.
 var defShapeAnywhereRE = regexp.MustCompile(`\\?\[(?:` + nonCaretLabelBody + `|` + nonFootnoteCaretLabelAlt + `)?\]:`)
 
 // footnoteDefFirstLineRE matches a footnote definition's own opening
@@ -775,15 +799,25 @@ var bareCaretOpenerRE = regexp.MustCompile(`\\?\[` + caretLabelBody + `\]:[ \t\r
 // anyDefLineOpenerRE (caret-inclusive — see its own doc comment for why):
 // a blank line there can never match a "[...]:" shape, so "no blank line
 // between" falls out for free.
-// (c) checks whether a def shape spans the boundary itself, anywhere in
-// the preceding-raw-line-plus-this-paragraph's-own-first-line window, with
-// no left-boundary requirement (anyDefShapeAnywhereRE — see its own doc
-// comment for why "opens with" alone is not enough): the label can open on
-// the preceding raw line and close on this paragraph's own first line
+// (c) checks whether a def shape occurs anywhere in the
+// preceding-raw-line-plus-this-paragraph's-own-first-line window
+// (defShapeAnywhereRE — see its own doc comment for why "opens with"
+// alone is not enough), classified by where the match falls. A match
+// spanning the boundary itself fires unconditionally: the label can open
+// on the preceding raw line and close on this paragraph's own first line
 // (found by FuzzFormat/issue#11 on "[\]\n]:0\n\"\"0"), or a definition can
 // open immediately after a previous one's title closes with no separating
 // whitespace at all (found by FuzzFormat on
-// "[0]:0\n\"0\"[00]:0\n\"\n\"[0]:0", seed a651ae68822c7c5c).
+// "[0]:0\n\"0\"[00]:0\n\"\n\"[0]:0", seed a651ae68822c7c5c). A match
+// wholly inside the preceding line fires only when everything to its left
+// on that line is container-prefix-plausible (plausibleDefPrefix): only
+// then could a definition chain have started at that line's own first
+// content and reached the shape, since a chain's opener must pass
+// defChainStartRE, which requires nothing but markers and padding before
+// the label. A mid-line shape with prose to its left — e.g. a bullet
+// quoting an inline-code error message like "runnerGroups[0]: ..." — can
+// never be reached by a chain and no longer freezes its neighbor (issue
+// #37).
 func inLinkRefDefZone(source []byte, trimmed []string, contentStart int, facts map[int]lineFacts) bool {
 	for _, t := range trimmed {
 		if nonCaretDefShapeRE.MatchString(t) || bareCaretOpenerRE.MatchString(t) || orphanDefCloserRE.MatchString(t) {
@@ -819,11 +853,50 @@ func inLinkRefDefZone(source []byte, trimmed []string, contentStart int, facts m
 	}
 	if len(trimmed) > 0 {
 		window := string(prevLine) + "\n" + trimmed[0]
-		if defShapeAnywhereRE.MatchString(window) {
-			return true
+		for _, m := range defShapeAnywhereRE.FindAllStringIndex(window, -1) {
+			if m[1] > len(prevLine) {
+				// Spans the boundary, or sits wholly inside trimmed[0]:
+				// fires unconditionally, as before. (A match wholly
+				// inside trimmed[0] is already caught by the contains
+				// check (a) above — same pattern applied to the same
+				// line — so firing here too is harmless parity.)
+				return true
+			}
+			// Wholly inside prevLine: a definition chain can only reach
+			// this shape if it could have started at prevLine's own
+			// first content, i.e. everything to the shape's left is
+			// container-prefix-plausible. Prose to its left (the
+			// runnerGroups[0] mid-sentence case) means no chain can
+			// reach it, and any chain reaching from further above is
+			// already covered by the defAbove check earlier in this
+			// function.
+			if plausibleDefPrefix(prevLine[:m[0]]) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// plausibleDefPrefix reports whether prefix — the bytes of a line to the
+// left of a def-shaped match — could plausibly be a container prefix
+// (blockquote/list markers and padding) rather than prose, for
+// inLinkRefDefZone's (c). It is deliberately loose in the freezing
+// direction: it accepts every byte in the set space, tab, '>', '-', '+',
+// '*', '0'-'9', '.', ')' , so a non-marker run like "3.5) " still counts
+// as plausible and the paragraph below stays frozen — conservatism here
+// is free. Only a clearly-prose prefix (letters, quotes, backticks, and
+// the like) makes it return false and lets the paragraph unfreeze.
+func plausibleDefPrefix(prefix []byte) bool {
+	for _, b := range prefix {
+		switch {
+		case b == ' ' || b == '\t' || b == '>' || b == '-' || b == '+' || b == '*' || b == '.' || b == ')':
+		case b >= '0' && b <= '9':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // continuationPrefix derives the container-prefix bytes for every output

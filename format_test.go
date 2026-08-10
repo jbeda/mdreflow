@@ -183,6 +183,46 @@ func TestParagraphAdjacentToLinkRefDefPassesThrough(t *testing.T) {
 	}
 }
 
+// TestNeighborMidLineDefShapeReflowsAndConverges covers issue #37 end to
+// end: a bullet whose ONLY "[label]:" shape sits mid-prose inside an
+// inline code span (a quoted error message, e.g. "runnerGroups[0]: ...")
+// no longer freezes the sibling bullet below it, because no definition
+// chain can reach a shape with prose to its left. Format twice at a
+// narrow wrap width and check both that the previously-frozen second
+// bullet now actually reflows and that the result is idempotent.
+func TestNeighborMidLineDefShapeReflowsAndConverges(t *testing.T) {
+	src := "- See `runnerGroups[0]: priorityClassName is not allowed` here for more context now.\n" +
+		"- This continues with more prose and no special characters at all now.\n"
+	opts := mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 20}
+
+	pass1, err := mdreflow.Format([]byte(src), opts)
+	if err != nil {
+		t.Fatalf("Format (pass1): %v", err)
+	}
+	pass2, err := mdreflow.Format(pass1, opts)
+	if err != nil {
+		t.Fatalf("Format (pass2): %v", err)
+	}
+	if string(pass1) != string(pass2) {
+		t.Errorf("Format is not idempotent at MaxWidth 20:\npass1: %q\npass2: %q", pass1, pass2)
+	}
+
+	if bytes.Count(pass1, []byte("This continues")) != 1 {
+		t.Fatalf("pass1 lost or duplicated the second bullet's opening words: %q", pass1)
+	}
+	// The second bullet must have actually rewrapped onto more lines than
+	// its single source line — proof it left the zone rather than merely
+	// surviving pass-through.
+	secondBulletStart := bytes.Index(pass1, []byte("This continues"))
+	if secondBulletStart < 0 {
+		t.Fatalf("second bullet not found in pass1 output: %q", pass1)
+	}
+	secondBulletLines := bytes.Count(pass1[secondBulletStart:], []byte("\n"))
+	if secondBulletLines < 2 {
+		t.Errorf("second bullet did not rewrap at MaxWidth 20 (got %d line breaks after it): %q", secondBulletLines, pass1)
+	}
+}
+
 // corpusFixtures returns every fixture input in testdata/ — the top-level
 // family and the mode families — as paths.
 func corpusFixtures(t *testing.T) []string {

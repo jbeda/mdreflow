@@ -227,6 +227,117 @@ func TestInLinkRefDefZone(t *testing.T) {
 	}
 }
 
+// paragraphEligibleAt reports whether the paragraph containing needle (a
+// substring expected to appear exactly once in src) is reflow-eligible —
+// i.e. NOT frozen by the link-reference-definition zone. It parses src
+// under the default dialect, finds needle's byte offset, and checks
+// whether that offset falls inside any of Paragraphs' returned ranges
+// (only reflow-eligible paragraphs are returned at all; a frozen one is
+// skipped and never appears there — see collect's use of build's skip
+// return).
+func paragraphEligibleAt(t *testing.T, src, needle string) bool {
+	t.Helper()
+	b := []byte(src)
+	idx := indexOf(src, needle)
+	if idx < 0 {
+		t.Fatalf("needle %q not found in source %q", needle, src)
+	}
+	doc := gm.New().Parser().Parse(text.NewReader(b))
+	for _, p := range Paragraphs(doc, b) {
+		if idx >= p.Start && idx < p.End {
+			return true
+		}
+	}
+	return false
+}
+
+func indexOf(s, substr string) int {
+	for i := 0; i+len(substr) <= len(s); i++ {
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
+	}
+	return -1
+}
+
+// TestNeighborDefShapeReachability covers inLinkRefDefZone's check (c)
+// after the chain-reachability narrowing (issue #37): a mid-line
+// "[label]:" shape freezes its neighbor only when a definition chain
+// could actually reach it, and defChainStartRE's marker tolerance closes
+// the blindspot the narrowing depends on (a definition opening after a
+// list marker now freezes its own run transitively, the same as a
+// top-level one).
+func TestNeighborDefShapeReachability(t *testing.T) {
+	t.Run("issue #37: mid-prose shape in a code span no longer freezes the sibling bullet", func(t *testing.T) {
+		src := "- See `runnerGroups[0]: priorityClassName is not allowed` here for more context now.\n" +
+			"- This continues with more prose and no special characters at all now.\n"
+		// The first bullet stays ineligible: its OWN line contains the
+		// shape, caught by the untouched contains check (a).
+		if got := paragraphEligibleAt(t, src, "See `runnerGroups"); got {
+			t.Errorf("first bullet eligible = %v, want false (contains check (a) still fires)", got)
+		}
+		// The second bullet is now eligible: the shape on the line above
+		// has prose ("See `runnerGroups") to its left, so no definition
+		// chain could reach it.
+		if got := paragraphEligibleAt(t, src, "This continues"); !got {
+			t.Errorf("second bullet eligible = %v, want true", got)
+		}
+	})
+
+	t.Run("mid-line shape with prose to its left, non-list layout, still unfreezes its neighbor", func(t *testing.T) {
+		src := "# see `x[l]: u` here\n" +
+			"plain paragraph line without brackets at all here for length.\n"
+		if got := paragraphEligibleAt(t, src, "plain paragraph"); !got {
+			t.Errorf("eligible = %v, want true", got)
+		}
+	})
+
+	t.Run("marker-def single step: a list-marker-led definition still freezes its sibling", func(t *testing.T) {
+		src := "- [a]: /url\n" +
+			"- plain sibling paragraph text with more words here now indeed.\n"
+		if got := paragraphEligibleAt(t, src, "plain sibling"); got {
+			t.Errorf("eligible = %v, want false (defChainStartRE must match the marker-led opener)", got)
+		}
+	})
+
+	// The remaining cases exercise inLinkRefDefZone/scanLineFacts
+	// directly, mirroring TestInLinkRefDefZone's own pattern: the shapes
+	// under test (a non-marker numeral-paren prefix, and a multi-line
+	// transitive reach through a marker-led opener) either collapse into
+	// a single AST paragraph or fail to split into the separate blocks
+	// needed under a real parse, so the function-level check is the
+	// direct way to pin down the byte-level verdict.
+	t.Run("marker-def transitive: reach carries across intervening lines like a top-level opener", func(t *testing.T) {
+		// Mirrors the seed 97329a80dd2cb7d4 case in TestInLinkRefDefZone
+		// ("[1]:0\n\"20\n0\n00\nbar") with the opener now led by a list
+		// marker — new coverage from defChainStartRE's marker tolerance.
+		source := "- [1]:0\n\"20\n0\n00\nbar"
+		trimmed := []string{"bar"}
+		contentStart := 17
+		if got := inLinkRefDefZone([]byte(source), trimmed, contentStart, scanLineFacts([]byte(source))); !got {
+			t.Errorf("inLinkRefDefZone(%q, %v, %d) = %v, want true", source, trimmed, contentStart, got)
+		}
+	})
+
+	t.Run("boundary-spanning shape still fires unconditionally", func(t *testing.T) {
+		source := "[ab\ncd]: x"
+		trimmed := []string{"cd]: x"}
+		contentStart := 4
+		if got := inLinkRefDefZone([]byte(source), trimmed, contentStart, scanLineFacts([]byte(source))); !got {
+			t.Errorf("inLinkRefDefZone(%q, %v, %d) = %v, want true", source, trimmed, contentStart, got)
+		}
+	})
+
+	t.Run("plausible-prefix conservatism: a numeral-paren prefix that is not a real marker still freezes", func(t *testing.T) {
+		source := "3.5) [a]: x\nplain paragraph line here"
+		trimmed := []string{"plain paragraph line here"}
+		contentStart := 12
+		if got := inLinkRefDefZone([]byte(source), trimmed, contentStart, scanLineFacts([]byte(source))); !got {
+			t.Errorf("inLinkRefDefZone(%q, %v, %d) = %v, want true", source, trimmed, contentStart, got)
+		}
+	})
+}
+
 // TestFootnoteDefFirstLineRE checks footnoteDefFirstLineRE's shape: a
 // footnote definition's own "[^label]:" marker at the start of a trimmed
 // line, per design.md's footnote continuation-indent rule.
