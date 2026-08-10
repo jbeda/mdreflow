@@ -71,6 +71,7 @@ From the AST we derive:
 - **Paragraph ranges**: the blocks eligible for reflow, with their container context (list item, blockquote) for continuation indentation.
 - **No-break inline spans** within paragraphs: inline code, links and link destinations, autolinks, images, inline math, footnote references, inline HTML/JSX.
   Break points never land inside these; a span longer than any width limit simply overflows.
+  These are computed on the *joined cluster text* (which exists nowhere in the document), by parsing that text through goldmark itself — see "No-break spans: ask goldmark" below.
 - **Skip ranges**: everything below.
 
 ### Convergence: reflow runs to fixpoint
@@ -136,7 +137,10 @@ It selects:
 
 The zero value, `DialectGFM` (`--dialect gfm`), is exactly the permissive GFM-plus-footnotes configuration the parser has always hardcoded — existing behavior, renamed rather than changed.
 `commonmark` is deliberately *reserved* for a future strict CommonMark profile (GFM extensions off) rather than aliased to the default: aliasing it now would make the name unavailable for the one profile it accurately describes.
-`mkdocs` layers admonition-body recognition on the GFM base; its true target renderer (Python-Markdown) is not CommonMark and cannot be modeled by our oracle, so its recognitions must stay narrow and are verified externally (full `mkdocs build` diffs), per the render-backstop section's divergence caveat.
+`mkdocs` layers admonition-body recognition on the GFM base and drops the linkify extension from its goldmark configuration: Python-Markdown has no GFM autolinking, so a bare URL is plain prose to the target — and because the span computation and the render backstop both use the profile's configuration (see "No-break spans: ask goldmark"), bare URLs automatically stop being protected or compared as links under this dialect, with no per-dialect guard logic anywhere.
+Dropping linkify cannot let reflow split a URL in any mode: every break candidate is a whitespace run, and a bare URL contains none, so reflow only ever moves the whitespace *around* the token — which autolinks (or doesn't) identically at line start, mid-line, or line end.
+The only behavior linkify actually governs in span computation is code-span pairing around a backtick inside a bare URL, a shape near-nonexistent in real prose.
+Its true target renderer (Python-Markdown) is not CommonMark and cannot be modeled by our oracle, so its recognitions must stay narrow and are verified externally (full `mkdocs build` diffs), per the render-backstop section's divergence caveat.
 
 For everything else mdreflow still targets one permissive superset of dialects ("do our best on everything").
 Dialect awareness beyond the profile is a *skip-list* — constructs recognized only well enough to pass through untouched — not a set of dialect implementations.
@@ -267,15 +271,52 @@ pile for the caret case:
 Residual adversarial corners in the caret zone are owned by the emission escapes and the convergence backstop, not by further adjacency guards.
 (The worst such family — typography substitution verdicts flipping next to `[^label]:` shapes built out of quote soup — vanished with typography's removal, taking the fuzz harness's one documented scope gate with it.)
 
+### No-break spans: ask goldmark, not a hand grammar
+
+(Amendment 2026-08-09, issue #30; supersedes the hand-written inline scanners and the linkify guards built around their blind spots.)
+
+The text whose break points reflow chooses — a cluster's lines joined into one — exists nowhere in the document, so the document parse's AST cannot be queried about it.
+The original answer was a package of hand-written scanners (`segment.NoBreakSpans`) approximating CommonMark's inline grammar: code-span pairing, bracket/paren matching for links, a destination-and-title grammar, an inline-HTML tag grammar, an autolink regex.
+Every one was a mirror that could drift from goldmark, and GFM linkify was the worst: its grammar was deliberately *not* mirrored, so a family of skip guards existed solely to keep the approximation honest, each costing coverage (#29 measured 2.8 points of sentence-per-line coverage on a real docset).
+
+The replacement parses the joined cluster text through goldmark itself and reads the answer out of the inline AST — the same parser answering the same question the renderer will ask, so drift is structurally impossible.
+Three decisions make it work:
+
+1. **A paragraph-only block layer.**
+   `internal/gm` builds a second parser configuration sharing the document profile's inline set (including linkify, per dialect) but whose *block* layer is only goldmark's paragraph parser, with no paragraph transformers.
+   Standalone-parse divergence — joined text starting with `- ` or `#` parsing as a list or heading, a `[label]: dest` line vanishing into a definition — cannot happen: every cluster text parses as one `Paragraph`, which is what it is in the document (spike-confirmed for list/heading/blockquote/fence/definition/thematic-break shapes).
+   Both configurations are constructed from one shared site in `internal/gm`, so an extension added to the document profile cannot silently miss the span profile.
+2. **Spans by complement, not per-construct extents.**
+   goldmark's inline `Link`/`Image` nodes carry no source extent for their `](dest "title")` syntax, so computing each construct's byte range from the AST is a losing game.
+   Inverted, the problem disappears: the *breakable* regions are the segments of plain `Text` nodes whose ancestry is only `Paragraph`/`Emphasis`/`Strikethrough`; every other byte of the cluster text — link syntax, code-span interiors and delimiters, autolink URLs, raw HTML — is no-break, computed as the complement.
+   This is conservative by construction: adjacent constructs merge into one protected gap (harmless), and any node kind the walk doesn't recognize defaults to protected.
+3. **Reference links resolve as in the document.**
+   The span parse runs with a `parser.Context` pre-loaded with the document's link reference definitions, so `[text][ref]` forms the same link it forms in context.
+   This is a purity refinement, not a correctness requirement: an unresolved reference is literal prose on both sides of the comparison, and a break inside a reference label still matches (label matching collapses internal whitespace).
+
+**Degenerate parses fall back to no reflow of the cluster.**
+If the parse yields anything but a single `Paragraph` covering the text (the paragraph parser declines an all-indented line, producing an empty document), the whole cluster is one no-break span and passes through unbroken — coverage lost on a shape that is rare and ambiguous, never correctness.
+
+**What stays regex.**
+Constructs invisible to goldmark keep their existing scanners, layered on top as today: inline math (`$…$`), Hugo shortcodes, MDX `{expr}`, footnote references (the profile does not enable the footnote extension), and the near-tag opener guard (`htmlTagOpenerSpans`), which deliberately protects regions goldmark *declines* to call tags — an idempotency stabilizer the AST by definition cannot provide.
+
+**Code-span queries move to the same parse.**
+`segment.CodeSpans` — used to decide whether a hard-break boundary or cluster join lands inside a genuine code span, and by blockmap's guard-arm masking — shares the linkify blind spot (a backtick inside a bare URL is destination content, not a delimiter, so hand-pairing runs one delimiter out of step).
+Its answers now come from `CodeSpan` nodes of the same goldmark configuration (over the paragraph's `"\n"`-joined lines, matching how goldmark's inline parser sees a paragraph).
+This, not the no-break rewrite alone, is what retires the linkify guards: with every code-span consumer linkify-aware, `hasBacktickInBareURL` and the #28 ordering invariant have no blind spot left to cover.
+
+**Cost.** One paragraph-only parse per cluster measures ~7µs / ~4KB allocated (typical sentence cluster, i7-1165G7) — negligible against the render backstop's two whole-document renders.
+The spans are computed once per cluster text and shared by every consumer (width canonicalization, the width measurer, word/clause break generation, sentence splitting), which today each recompute them.
+
+**Verification.** This rewires the heart of span computation, so it ships only behind: a full-corpus differential (fixtures plus the accumulated fuzz corpus) of old spans vs new, expecting byte-identical output everywhere except the reclaimed linkify-guard skips; a long fuzz soak; and the benchmark suite.
+
 ### Spanning-construct guards: skip only what can actually span
 
 A CommonMark inline link's label and destination can each span a soft line break, so reflow's line-joining and line-splitting can change what they parse to.
-Two preparation steps and three whole-paragraph skip arms defend this, each scoped to the shape that can actually start the hazard:
+A preparation step and three whole-paragraph skip arms defend this, each scoped to the shape that can actually start the hazard.
+(These arms guard a *block-level* hazard — reflow's line rearrangement letting a link reference definition consume prose — which no per-cluster span computation addresses; they are untouched by the ask-goldmark rewrite above, except that their masking step now shares its parse.)
 
-**Linkify pre-check.** A paragraph with a backtick inside a GFM-linkify-eligible bare URL is skipped outright before anything else runs: linkify consumes such a backtick into the link destination, so every later backtick pairs one delimiter out of step with this package's own code-span scanning, which deliberately does not model linkify's grammar (scheme/`www.`/email forms plus trailing-punctuation trimming — a hand-mirror this codebase refuses to attempt; the skip costs only paragraphs with a backtick inside a bare URL, near-nonexistent in real prose).
-This check must stay ahead of the masking step below, which shares the same blind spot — `maskCodeSpans`'s doc comment and `TestMaskCodeSpansRequiresBareURLGuard` pin the ordering (issue #28).
-
-**Code-span masking.** The three arms scan a copy of the paragraph with every closed inline code span's interior replaced by filler bytes (same byte geometry, CommonMark's run-length pairing rule). A bracket or paren inside a code span is literal and can open nothing, so it arms no guard — paragraphs that merely *document* Markdown or YAML syntax (`` `runs-on: [self-hosted,` `` wrapping across a line) reflow. An unmatched backtick run opens no span and masks nothing, so a bracket after one still arms normally.
+**Code-span masking.** The three arms scan a copy of the paragraph with every closed inline code span's interior replaced by filler bytes (same byte geometry, spans read from the ask-goldmark parse above). A bracket or paren inside a code span is literal and can open nothing, so it arms no guard — paragraphs that merely *document* Markdown or YAML syntax (`` `runs-on: [self-hosted,` `` wrapping across a line) reflow. An unmatched backtick run opens no span and masks nothing, so a bracket after one still arms normally.
 
 - **Bracket arm**: a `[` left structurally open at a line's end (even one
   a later line closes — the span across the break is itself the hazard),
