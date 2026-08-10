@@ -8,7 +8,9 @@ package gm
 import (
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer/html"
+	"github.com/yuin/goldmark/util"
 )
 
 // New returns a freshly configured goldmark instance: CommonMark plus the
@@ -40,5 +42,38 @@ func New() goldmark.Markdown {
 		goldmark.WithRendererOptions(
 			html.WithUnsafe(),
 		),
+	)
+}
+
+// inlineExtensions is the inline-relevant subset of New's extension.GFM
+// bundle, shared with NewInline below so the two configurations are
+// constructed from one site: extension.GFM also carries Table and
+// TaskList, which are block-level constructs a paragraph-only parser
+// never sees, so NewInline lists only the extensions that change inline
+// parsing (Linkify's bare-URL autolinking, Strikethrough's "~~text~~").
+var inlineExtensions = []goldmark.Extender{
+	extension.Linkify,
+	extension.Strikethrough,
+}
+
+// NewInline returns a goldmark instance for computing breakable-region
+// spans over a reflow cluster's joined text (see docs/design.md, "No-break
+// spans: ask goldmark, not a hand grammar"). Its block layer is only
+// goldmark's paragraph parser, with no paragraph transformers, so the
+// cluster text — which exists nowhere in the document itself — always
+// parses as exactly one Paragraph: it can never diverge into a List,
+// Heading, blockquote, fence, or link reference definition the way a
+// full block parse of the same bytes standalone could. The inline layer
+// is goldmark's default inline parser set plus inlineExtensions, the
+// dialect-relevant subset of New's GFM bundle.
+func NewInline() goldmark.Markdown {
+	return goldmark.New(
+		goldmark.WithParser(parser.NewParser(
+			parser.WithBlockParsers(
+				util.Prioritized(parser.NewParagraphParser(), 100),
+			),
+			parser.WithInlineParsers(parser.DefaultInlineParsers()...),
+		)),
+		goldmark.WithExtensions(inlineExtensions...),
 	)
 }

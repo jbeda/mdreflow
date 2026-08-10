@@ -9,6 +9,11 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+### Changed
+
+- More prose now reflows near bare URLs: a paragraph that contains both a URL and a stray backtick is no longer skipped wholesale (#30).
+  The spans reflow must not break inside — inline code, links, autolinks — are now read from the same Markdown parser that renders the document, so bare-URL autolinking is handled exactly as the renderer handles it instead of being approximated and then guarded against with a conservative skip.
+
 ### Fixed
 
 - A MkDocs admonition written without a blank line after its marker is no longer flattened into one paragraph, which stopped it rendering as a callout (#31, contributed by Karl Isenberg).

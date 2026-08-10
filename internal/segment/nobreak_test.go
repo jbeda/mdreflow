@@ -6,6 +6,13 @@ import "testing"
 // covering the marker construct in each case, so a sentence break can never
 // land inside it. It does not assert exact byte ranges (several rules can
 // overlap the same text); it asserts coverage.
+//
+// "reference link" and "shortcut reference" are deliberately absent here
+// as of issue #30: the ask-goldmark parse registers no reference
+// definitions (docs/design.md, "Reference links need no resolution"), so
+// "[text][ref]" and "[ref]" parse as literal bracket prose, not a link —
+// a break inside the label is harmless (label matching collapses internal
+// whitespace) and is no longer protected. See TestNoBreakSpansUnresolvedReferenceNotProtected.
 func TestNoBreakSpansCover(t *testing.T) {
 	cases := []struct {
 		name string
@@ -17,8 +24,6 @@ func TestNoBreakSpansCover(t *testing.T) {
 		{"inline code", "See `a. b()` here.", "`a. b()`"},
 		{"link", "Read [the docs](https://example.com/a.b) now.", "[the docs](https://example.com/a.b)"},
 		{"image", "See ![a diagram](img/a.b.png) below.", "![a diagram](img/a.b.png)"},
-		{"reference link", "Read [the docs][ref] now.", "[the docs][ref]"},
-		{"shortcut reference", "Read [ref] now.", "[ref]"},
 		{"nested bracket link text", "See [a [nested] link](https://example.com) now.", "[a [nested] link](https://example.com)"},
 		{"autolink", "Visit <https://example.com/a.b> now.", "<https://example.com/a.b>"},
 		{"footnote reference", "This needs a citation.[^1] More text.", "[^1]"},

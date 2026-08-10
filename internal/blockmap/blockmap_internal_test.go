@@ -1,9 +1,9 @@
 package blockmap
 
 import (
-	"github.com/yuin/goldmark/ast"
 	"testing"
 
+	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/text"
 
 	"github.com/jbeda/mdreflow/internal/gm"
@@ -427,32 +427,6 @@ func TestBareCaretOpenerRE(t *testing.T) {
 	}
 }
 
-// TestHasBacktickInBareURL tables hasBacktickInBareURL: a backtick inside
-// a linkify-eligible bare URL token (seed 41e98cb4c9e00729), including the
-// mid-token spelling linkify also fires on.
-func TestHasBacktickInBareURL(t *testing.T) {
-	cases := []struct {
-		name  string
-		lines []string
-		want  bool
-	}{
-		{"backtick inside a scheme URL", []string{"see http://e.m/`x here"}, true},
-		{"backtick inside a www URL", []string{"see www.e.m/`x here"}, true},
-		{"mid-token URL after a stray \"](\"", []string{"[a](https://e.m/p`q rest"}, true},
-		{"URL without a backtick", []string{"see http://e.m/x here"}, false},
-		{"backtick without a URL", []string{"see `code` here"}, false},
-		{"backtick and URL in separate tokens", []string{"see `code` and http://e.m/x"}, false},
-		{"no lines", nil, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := hasBacktickInBareURL(tc.lines); got != tc.want {
-				t.Errorf("hasBacktickInBareURL(%v) = %v, want %v", tc.lines, got, tc.want)
-			}
-		})
-	}
-}
-
 // TestHasEmptyLine checks hasEmptyLine's simple membership test.
 func TestHasEmptyLine(t *testing.T) {
 	cases := []struct {
@@ -632,28 +606,28 @@ func TestMkDocsAdmonitionBody(t *testing.T) {
 	}
 }
 
-// Only a bare URL that starts before a backtick can swallow it into the
-// linkified token. A backtick that opens first is a code-span delimiter
-// whose span happens to contain a URL, which is how documentation names a
-// registry or an endpoint.
-func TestBacktickInBareURLNeedsURLFirst(t *testing.T) {
+// A backtick inside a bare URL is destination content to goldmark's
+// linkify, never a code-span delimiter, whether the backtick sits inside
+// the URL or the URL sits inside a real code span elsewhere: masking
+// (segment.CodeSpans, itself linkify-aware) agrees with the parse, so
+// none of these shapes disqualify their paragraph.
+func TestBacktickInBareURLDoesNotDisqualify(t *testing.T) {
 	cases := []struct {
-		name     string
-		src      string
-		eligible bool
+		name string
+		src  string
 	}{
-		{"backtick inside a bare URL", "See https://example.com/a`b and more here.\nSecond line. Third sentence.\n", false},
-		{"www form", "See www.example.com/a`b here and more.\nSecond line. Third sentence.\n", false},
-		{"email form", "Mail a@b.com/x`y here and more text.\nSecond line. Third sentence.\n", false},
-		{"URL inside a code span", "Pushed to\n`oci://ghcr.io/org/chart`, with its version set. Second sentence.\n", true},
-		{"code span then a separate URL", "See `code` and https://example.com/x here.\nSecond line. Third sentence.\n", true},
+		{"backtick inside a bare URL", "See https://example.com/a`b and more here.\nSecond line. Third sentence.\n"},
+		{"www form", "See www.example.com/a`b here and more.\nSecond line. Third sentence.\n"},
+		{"email form", "Mail a@b.com/x`y here and more text.\nSecond line. Third sentence.\n"},
+		{"URL inside a code span", "Pushed to\n`oci://ghcr.io/org/chart`, with its version set. Second sentence.\n"},
+		{"code span then a separate URL", "See `code` and https://example.com/x here.\nSecond line. Third sentence.\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			b := []byte(tc.src)
 			doc := gm.New().Parser().Parse(text.NewReader(b))
-			if got := len(Paragraphs(doc, b)) > 0; got != tc.eligible {
-				t.Errorf("eligible = %v, want %v", got, tc.eligible)
+			if got := len(Paragraphs(doc, b)); got == 0 {
+				t.Errorf("Paragraphs = 0, want at least 1: this shape has no guard to skip it")
 			}
 		})
 	}
@@ -709,34 +683,34 @@ func TestParenGuardNarrowing(t *testing.T) {
 	}
 }
 
-// TestMaskCodeSpansRequiresBareURLGuard pins maskCodeSpans's ordering
-// invariant (issue #28): its backtick pairing does not model GFM
-// linkify, so on a paragraph with a backtick inside a bare URL it masks
-// bytes goldmark treats as live prose — here swallowing a real
-// "[label]:" opener, which flips couldFormLinkRefDef. The guard that
-// makes this harmless is hasBacktickInBareURL returning first in build;
-// this test fails loudly if either half of that arrangement changes.
-func TestMaskCodeSpansRequiresBareURLGuard(t *testing.T) {
-	lines := []string{"see http://e.m/` and [label]: http://x.example/ ` tail"}
+// TestMaskCodeSpansIsLinkifyAware pins issue #30's replacement for the old
+// ordering invariant (issue #28): maskCodeSpans now sources its spans from
+// segment.CodeSpans, which parses the joined text through the same
+// goldmark configuration (linkify included) the document render uses, so
+// a backtick inside a GFM bare URL is destination content to it, never a
+// delimiter — exactly as goldmark itself sees it. The historical hazard
+// shape is FuzzFormat seed 41e98cb4c9e00729 (docs/design.md, quoted there
+// in full): a lone backtick sits inside a bare URL, followed by a real
+// code span later in the paragraph. This shape carries no bracket or
+// definition hazard of its own, so it exercises maskCodeSpans without
+// tripping an unrelated guard.
+func TestMaskCodeSpansIsLinkifyAware(t *testing.T) {
+	const line = "see http://e.m/` and `code` and http://x.example/` tail"
+	lines := []string{line}
 
-	if !hasBacktickInBareURL(lines) {
-		t.Fatal("hasBacktickInBareURL = false; the guard that shields maskCodeSpans's linkify blind spot no longer covers this input")
-	}
-	// Directly demonstrate the blind spot the guard exists to shield:
-	// masking must disagree with the raw text about the definition
-	// opener. If this ever passes with agreement, maskCodeSpans has
-	// learned about linkify and the ordering invariant can be relaxed.
-	if !couldFormLinkRefDef(lines) {
-		t.Fatal("couldFormLinkRefDef(raw) = false, want true: the input contains a literal \"[label]:\"")
-	}
-	if couldFormLinkRefDef(maskCodeSpans(lines)) {
-		t.Fatal("couldFormLinkRefDef(masked) = true; masking no longer swallows the opener — revisit whether the ordering invariant still holds")
-	}
-
-	// End to end: the paragraph must be skipped.
-	src := []byte(lines[0] + "\n")
+	// Not skipped: there is no blind spot left to guard against, so the
+	// paragraph reaches masking and reflow eligibility normally.
+	src := []byte(line + "\n")
 	doc := gm.New().Parser().Parse(text.NewReader(src))
-	if got := len(Paragraphs(doc, src)); got != 0 {
-		t.Fatalf("Paragraphs = %d, want 0: a backtick inside a bare URL must skip the paragraph before masking can misfire", got)
+	if got := len(Paragraphs(doc, src)); got != 1 {
+		t.Fatalf("Paragraphs = %d, want 1: a backtick inside a bare URL no longer skips the paragraph", got)
+	}
+
+	// Masked correctly: both URLs' backticks are destination content, not
+	// delimiters, so they stay untouched; only the real code span's
+	// interior becomes filler, with its own backtick delimiters intact.
+	const want = "see http://e.m/` and `xxxx` and http://x.example/` tail"
+	if got := maskCodeSpans(lines)[0]; got != want {
+		t.Fatalf("maskCodeSpans(%q)[0] = %q, want %q", line, got, want)
 	}
 }

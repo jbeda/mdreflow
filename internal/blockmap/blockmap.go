@@ -25,6 +25,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/jbeda/mdreflow/internal/segment"
 	"github.com/yuin/goldmark/ast"
 	gfmast "github.com/yuin/goldmark/extension/ast"
 	gmtext "github.com/yuin/goldmark/text"
@@ -326,33 +327,6 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// rare, ambiguity-laden, and worthless to reflow next to invisible
 		// metadata. inLinkRefDefZone replaces all of that with one blunt,
 		// shape-based predicate — see its own doc comment.
-		return Paragraph{}, true
-	}
-	if hasBacktickInBareURL(trimmed) {
-		// A backtick inside a GFM-linkify-eligible bare URL is not a code
-		// span delimiter to goldmark — linkify's URL parser consumes it
-		// into the link destination before the code-span parser can see
-		// it — so every backtick after it pairs one delimiter out of step
-		// with what this package's own scanner (segment.CodeSpans, which
-		// does not model linkify) computes. The protected no-break spans
-		// then cover the wrong bytes and a break can land *inside* a real
-		// code span, where a newline is whitespace: found by FuzzFormat on
-		// "http://e.m/` ``e`\tg `" (seed 41e98cb4c9e00729, minimized from
-		// a 4 KB corpus-derived input), whose real span content "\tg "
-		// became " g " once the tab was replaced by the break, which
-		// CommonMark then strips at both edges to "g" — a rendered content
-		// change.
-		//
-		// Skipping the paragraph rather than teaching segment.CodeSpans to
-		// model linkify is deliberate, and not the usual bluntness trade:
-		// mirroring linkify's grammar (scheme and "www." forms, email
-		// forms, and its trailing-punctuation trimming rules) is exactly
-		// the kind of hand-mirrored grammar this codebase has repeatedly
-		// lost to implementation quirks (see isCompleteLinkRefDefLine's
-		// history), and here a wrong mirror would misjudge the no-break
-		// spans of the very many *ordinary* documents that contain URLs.
-		// The skip costs only paragraphs with a backtick inside a bare
-		// URL, which is close to nonexistent in real prose.
 		return Paragraph{}, true
 	}
 	masked := maskCodeSpans(trimmed)
@@ -849,47 +823,6 @@ func looksLikeUnterminatedTag(firstLineTrimmed string) bool {
 	return unterminatedTagStartRE.MatchString(firstLineTrimmed) && !strings.ContainsRune(firstLineTrimmed, '>')
 }
 
-// linkifyStartRE matches where GFM's linkify extension turns text into a
-// bare link: a scheme-prefixed URL, a "www."-prefixed one, or an email
-// address. Same shape as package reflow's linkifyTokenStart (kept as an
-// independent copy — the two serve different roles: that one decides
-// whether a break may move a token, this one decides whether to skip a
-// paragraph) but deliberately UNANCHORED: linkify fires mid-token too,
-// e.g. after a "](" that never opened a real link, which is exactly the
-// shape seed 41e98cb4c9e00729 carries.
-var linkifyStartRE = regexp.MustCompile(
-	"(?i)(?:[a-z][a-z0-9+.-]*://|www\\.|[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\\.[a-z0-9-]+)+)")
-
-// hasBacktickInBareURL reports whether any whitespace-delimited token in
-// trimmedLines both starts like a linkify-eligible bare URL and contains
-// a backtick — see build's call site for the code-span pairing hazard.
-//
-// Verdict-stable by construction: a matching paragraph is skipped whole,
-// so its own tokens never move, and reflow can never *create* such a
-// token in another paragraph (joining lines inserts a space between
-// fragments, so two tokens never fuse; splitting only breaks tokens
-// apart).
-func hasBacktickInBareURL(trimmedLines []string) bool {
-	for _, line := range trimmedLines {
-		for _, tok := range strings.FieldsFunc(line, func(r rune) bool {
-			return r == ' ' || r == '\t' || r == '\r'
-		}) {
-			bt := strings.IndexByte(tok, '`')
-			if bt < 0 {
-				continue
-			}
-			// Only a URL that STARTS before the backtick can swallow it.
-			// A backtick that opens first is a code-span delimiter whose
-			// span merely contains a URL ("`oci://host/path`"), which is
-			// the ordinary way documentation names a registry or endpoint.
-			if loc := linkifyStartRE.FindStringIndex(tok); loc != nil && loc[0] < bt {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // hasUnbalancedBracket reports whether trimmedLines, taken together (a
 // paragraph's lines, in order), ever has a "[" left open at the end of a
 // line — including one later closed by a "]" on a *subsequent* line, not
@@ -1035,69 +968,33 @@ func hasUnclosedDelimiterAcrossLine(trimmedLines []string, open, close byte) boo
 // skips paragraphs that merely *document* Markdown or YAML syntax
 // ("`runs-on: [self-hosted,` / `<label>]`").
 //
-// Masking follows CommonMark's code-span rule rather than "text between
-// backticks": a backtick run of length N opens a span that only a run of
-// exactly N closes, newlines included. A run with no matching closer is
-// literal text and is deliberately left unmasked — that is what keeps an
-// unclosed "`unclosed [bracket" arming the guard, where the bracket is
-// ordinary prose and the paragraph really is hazardous.
+// Spans come from segment.CodeSpans, which parses the joined lines
+// through the same goldmark configuration (including linkify) the
+// document render uses (docs/design.md, "No-break spans: ask goldmark,
+// not a hand grammar"): a backtick inside a GFM bare URL is destination
+// content there, never a delimiter, exactly as goldmark sees it, so there
+// is no blind spot to guard against and no ordering dependency on a
+// separate skip check. A backtick run with no matching closer opens no
+// span and is not reported, so masking leaves it untouched — that is what
+// keeps an unclosed "`unclosed [bracket" arming the guard, where the
+// bracket is ordinary prose and the paragraph really is hazardous.
 //
-// ORDERING INVARIANT (issue #28): this pairing does not model GFM
-// linkify, so a backtick inside a linkify-eligible bare URL — which
-// goldmark consumes into the link destination, never a delimiter — pairs
-// one out of step here and masks bytes goldmark treats as live prose,
-// including a real "[label]:" opener (which would disarm
-// couldFormLinkRefDef on a paragraph that genuinely contains a
-// definition). This function is only sound because build's
-// hasBacktickInBareURL check returns first and skips every such
-// paragraph before masking runs. Anyone narrowing that guard must keep
-// this blind spot covered; TestMaskCodeSpansRequiresBareURLGuard pins
-// the dependency. The render backstop bounds the damage if this ever
-// regresses — a wrongly-disarmed guard becomes a reverted reflow, not
-// content loss — but a silently dead guard is still a bug.
+// Each reported span is delimiter-inclusive (the opening backtick run
+// through the closing run); only the interior is masked, so both
+// delimiter runs keep their identity for any caller that cares. Backtick
+// bytes and '\n' are never overwritten, preserving the geometry the
+// delimiter scans above depend on.
 func maskCodeSpans(trimmedLines []string) []string {
 	joined := strings.Join(trimmedLines, "\n")
 	b := []byte(joined)
 	out := make([]byte, len(b))
 	copy(out, b)
-	for i := 0; i < len(b); {
-		if b[i] != '`' {
-			i++
-			continue
-		}
-		run := 0
-		for i+run < len(b) && b[i+run] == '`' {
-			run++
-		}
-		// Look for a closing run of exactly the same length.
-		j := i + run
-		closed := -1
-		for j < len(b) {
-			if b[j] != '`' {
-				j++
-				continue
-			}
-			r2 := 0
-			for j+r2 < len(b) && b[j+r2] == '`' {
-				r2++
-			}
-			if r2 == run {
-				closed = j
-				break
-			}
-			j += r2
-		}
-		if closed < 0 {
-			// No closer: the run is literal text, mask nothing.
-			i += run
-			continue
-		}
-		for k := i + run; k < closed; k++ {
-			if out[k] != '\n' {
+	for _, sp := range segment.CodeSpans(joined) {
+		for k := sp.Start; k < sp.End; k++ {
+			if out[k] != '`' && out[k] != '\n' {
 				out[k] = 'x'
 			}
 		}
-		i = closed + run
 	}
 	return strings.Split(string(out), "\n")
 }
