@@ -201,7 +201,7 @@ func TestInLinkRefDefZone(t *testing.T) {
 		{
 			// A def line farther up the same non-blank run still counts:
 			// its title scan can reach the paragraph across intervening
-			// lines (seed 97329a80dd2cb7d4; see defRunAbove).
+			// lines (seed 97329a80dd2cb7d4; see scanLineFacts).
 			name:         "def line beyond the immediate neighbor, same non-blank run",
 			source:       "[1]:0\n\"20\n0\n00\nbar",
 			trimmed:      []string{"bar"},
@@ -220,7 +220,7 @@ func TestInLinkRefDefZone(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := inLinkRefDefZone([]byte(tc.source), tc.trimmed, tc.contentStart, defRunAbove([]byte(tc.source))); got != tc.want {
+			if got := inLinkRefDefZone([]byte(tc.source), tc.trimmed, tc.contentStart, scanLineFacts([]byte(tc.source))); got != tc.want {
 				t.Errorf("inLinkRefDefZone(%q, %v, %d) = %v, want %v", tc.source, tc.trimmed, tc.contentStart, got, tc.want)
 			}
 		})

@@ -80,32 +80,43 @@ func Paragraphs(doc ast.Node, source []byte) []Paragraph {
 func ParagraphsForDialect(doc ast.Node, source []byte, mkdocs bool) []Paragraph {
 	var out []Paragraph
 	fmEnd := frontMatterEnd(source)
-	collect(doc, source, false, 0, fmEnd, defRunAbove(source), &out, mkdocs)
+	collect(doc, source, false, 0, fmEnd, scanLineFacts(source), &out, mkdocs)
 	return out
 }
 
-// defRunAbove reports, per physical line (keyed by the line's start byte
-// offset), whether a definition-shaped line — the same shapes
-// inLinkRefDefZone checks on the immediately preceding line — occurs
-// anywhere ABOVE that line within its contiguous run of non-blank lines.
-// A blank line resets the run.
+// lineFacts holds the per-physical-line verdicts inLinkRefDefZone needs,
+// keyed by the line's start byte offset in scanLineFacts's returned map.
+// chainStart, orphanCloser, and bareCaretOpener are the direct regex
+// verdicts for the line itself (defLineOpenerRE, orphanDefCloserRE, and
+// bareCaretOpenerRE respectively); defAbove is the transitive seen-above
+// bit described below.
+type lineFacts struct {
+	chainStart, orphanCloser, bareCaretOpener, defAbove bool
+}
+
+// scanLineFacts computes, per physical line (keyed by the line's start byte
+// offset), the facts inLinkRefDefZone needs about that line and about
+// whether a definition-shaped line — the same shapes inLinkRefDefZone
+// checks on the immediately preceding line — occurs anywhere ABOVE that
+// line within its contiguous run of non-blank lines. A blank line resets
+// the run.
 //
-// This exists because a definition's reach downward is not limited to one
-// line: its title alone may span arbitrarily many lines, so a paragraph
-// can sit several lines below the "[label]:" opener yet still be the next
-// text the definition's own scan touches — reflowing that paragraph moves
-// the title's closing boundary and re-carves every line in between on the
-// next parse. Found by FuzzFormat on
-// "[0]:\n1\n\"\n\"[0]:0\n[1]:0\n\"20\n0\n00\n\"" (seed 97329a80dd2cb7d4):
-// the only reflow-eligible paragraph was the two-line tail of a title
-// spanning three lines below its def, one line beyond the neighbor check.
-// The transitive rule is verdict-stable by construction: every paragraph
-// inside a def-containing run is in-zone, so nothing in such a run ever
-// reflows, so the run's line layout — and with it every verdict keyed on
-// it — cannot change between passes. Computed in one top-down pass so the
-// zone check stays O(1) per paragraph.
-func defRunAbove(source []byte) map[int]bool {
-	m := make(map[int]bool)
+// The transitive defAbove bit exists because a definition's reach downward
+// is not limited to one line: its title alone may span arbitrarily many
+// lines, so a paragraph can sit several lines below the "[label]:" opener
+// yet still be the next text the definition's own scan touches —
+// reflowing that paragraph moves the title's closing boundary and
+// re-carves every line in between on the next parse. Found by FuzzFormat
+// on "[0]:\n1\n\"\n\"[0]:0\n[1]:0\n\"20\n0\n00\n\"" (seed
+// 97329a80dd2cb7d4): the only reflow-eligible paragraph was the two-line
+// tail of a title spanning three lines below its def, one line beyond the
+// neighbor check. The transitive rule is verdict-stable by construction:
+// every paragraph inside a def-containing run is in-zone, so nothing in
+// such a run ever reflows, so the run's line layout — and with it every
+// verdict keyed on it — cannot change between passes. Computed in one
+// top-down pass so the zone check stays O(1) per paragraph.
+func scanLineFacts(source []byte) map[int]lineFacts {
+	m := make(map[int]lineFacts)
 	seen := false
 	for ls := 0; ls < len(source); {
 		end := ls
@@ -113,10 +124,16 @@ func defRunAbove(source []byte) map[int]bool {
 			end++
 		}
 		line := bytes.TrimRight(source[ls:end], "\r")
-		m[ls] = seen
+		f := lineFacts{
+			chainStart:      defLineOpenerRE.Match(line),
+			orphanCloser:    orphanDefCloserRE.Match(line),
+			bareCaretOpener: bareCaretOpenerRE.Match(line),
+			defAbove:        seen,
+		}
+		m[ls] = f
 		if len(bytes.Trim(line, " \t")) == 0 {
 			seen = false
-		} else if defLineOpenerRE.Match(line) || bareCaretOpenerRE.Match(line) || orphanDefCloserRE.Match(line) {
+		} else if f.chainStart || f.bareCaretOpener || f.orphanCloser {
 			seen = true
 		}
 		ls = end + 1
@@ -153,7 +170,7 @@ const maxContainerDepth = 2
 // through untouched — no reflow is always render-preserving by
 // construction. Found by FuzzFormat on "000000000000000000\n>* >! 0"
 // (blockquote > list > blockquote, three levels).
-func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int, zoneAbove map[int]bool, out *[]Paragraph, mkdocs bool) {
+func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int, facts map[int]lineFacts, out *[]Paragraph, mkdocs bool) {
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
 		if cb, ok := c.(*ast.CodeBlock); ok {
 			*out = append(*out, admonitionBodies(cb, source, mkdocs)...)
@@ -182,7 +199,7 @@ func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int,
 			// shape, from build's own raw-byte scan (see
 			// inLinkRefDefZone) — design.md's "The link-reference-
 			// definition zone: skip bluntly, by shape".
-			if pp, skip := build(c, source, inBlockquote, fmEnd, precededByTable, zoneAbove); !skip {
+			if pp, skip := build(c, source, inBlockquote, fmEnd, precededByTable, facts); !skip {
 				*out = append(*out, pp)
 			}
 			continue
@@ -196,7 +213,7 @@ func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int,
 		case *ast.List:
 			childDepth++
 		}
-		collect(c, source, childInBQ, childDepth, fmEnd, zoneAbove, out, mkdocs)
+		collect(c, source, childInBQ, childDepth, fmEnd, facts, out, mkdocs)
 	}
 }
 
@@ -206,7 +223,7 @@ func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int,
 // or -1 if source has no front matter) — see its use below. precededByTable
 // is true when p's immediately preceding sibling in the AST is a GFM
 // *ast.Table — see its use below for why.
-func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTable bool, zoneAbove map[int]bool) (pp Paragraph, skip bool) {
+func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTable bool, facts map[int]lineFacts) (pp Paragraph, skip bool) {
 	lines := p.Lines()
 	n := lines.Len()
 	if n == 0 {
@@ -325,7 +342,7 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// machinery, not paragraph interior).
 		return Paragraph{}, true
 	}
-	if inLinkRefDefZone(source, trimmed, start0, zoneAbove) {
+	if inLinkRefDefZone(source, trimmed, start0, facts) {
 		// design.md, "The link-reference-definition zone: skip bluntly, by
 		// shape": a link reference definition renders nothing (it is URL
 		// metadata) and its grammar is the least reflow-compatible
@@ -767,7 +784,7 @@ var bareCaretOpenerRE = regexp.MustCompile(`\\?\[` + caretLabelBody + `\]:[ \t\r
 // open immediately after a previous one's title closes with no separating
 // whitespace at all (found by FuzzFormat on
 // "[0]:0\n\"0\"[00]:0\n\"\n\"[0]:0", seed a651ae68822c7c5c).
-func inLinkRefDefZone(source []byte, trimmed []string, contentStart int, zoneAbove map[int]bool) bool {
+func inLinkRefDefZone(source []byte, trimmed []string, contentStart int, facts map[int]lineFacts) bool {
 	for _, t := range trimmed {
 		if nonCaretDefShapeRE.MatchString(t) || bareCaretOpenerRE.MatchString(t) || orphanDefCloserRE.MatchString(t) {
 			return true
@@ -780,16 +797,17 @@ func inLinkRefDefZone(source []byte, trimmed []string, contentStart int, zoneAbo
 	if ls == 0 {
 		return false
 	}
-	if zoneAbove[ls] {
+	if facts[ls].defAbove {
 		// A def-shaped line anywhere above, in this line's contiguous
 		// non-blank run — not just on the immediately preceding line: a
 		// definition's title scan can reach the paragraph across any
-		// number of intervening machinery lines. See defRunAbove.
+		// number of intervening machinery lines. See scanLineFacts.
 		return true
 	}
 	prevStart := lineStart(source, ls-1)
 	prevLine := bytes.TrimRight(source[prevStart:ls], "\r\n")
-	if defLineOpenerRE.Match(prevLine) || bareCaretOpenerRE.Match(prevLine) || orphanDefCloserRE.Match(prevLine) {
+	pf := facts[prevStart]
+	if pf.chainStart || pf.bareCaretOpener || pf.orphanCloser {
 		// orphanDefCloserRE on the neighbor too, not just this
 		// paragraph's own lines: when a multi-line label's "]:" tail is
 		// the line directly ABOVE, this paragraph's own first line is
