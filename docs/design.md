@@ -290,9 +290,10 @@ Three decisions make it work:
    goldmark's inline `Link`/`Image` nodes carry no source extent for their `](dest "title")` syntax, so computing each construct's byte range from the AST is a losing game.
    Inverted, the problem disappears: the *breakable* regions are the segments of plain `Text` nodes whose ancestry is only `Paragraph`/`Emphasis`/`Strikethrough`; every other byte of the cluster text — link syntax, code-span interiors and delimiters, autolink URLs, raw HTML — is no-break, computed as the complement.
    This is conservative by construction: adjacent constructs merge into one protected gap (harmless), and any node kind the walk doesn't recognize defaults to protected.
-3. **Reference links resolve as in the document.**
-   The span parse runs with a `parser.Context` pre-loaded with the document's link reference definitions, so `[text][ref]` forms the same link it forms in context.
-   This is a purity refinement, not a correctness requirement: an unresolved reference is literal prose on both sides of the comparison, and a break inside a reference label still matches (label matching collapses internal whitespace).
+3. **Reference links need no resolution.**
+   The span parse registers no reference definitions, so `[text][ref]` parses as literal prose rather than the link it may form in the document.
+   Deliberate: the label is the only part of a reference link that lives in the paragraph (its destination lives in the definition, already a skipped zone), and a break inside a label is harmless — label matching collapses internal whitespace, and a soft break inside link text is the same whitespace move reflow makes in any prose.
+   Pre-loading the document's definitions into every cluster parse (`parser.Context`, spike-confirmed workable) was considered and rejected: machinery for a case that needs none.
 
 **Degenerate parses fall back to no reflow of the cluster.**
 If the parse yields anything but a single `Paragraph` covering the text (the paragraph parser declines an all-indented line, producing an empty document), the whole cluster is one no-break span and passes through unbroken — coverage lost on a shape that is rare and ambiguous, never correctness.
