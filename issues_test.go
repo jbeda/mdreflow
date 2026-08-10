@@ -130,6 +130,18 @@ func TestFuzzFamilyRegressions(t *testing.T) {
 
 			checkRender: true,
 		},
+		{
+			// Two same-label footnote-shaped definition lines, then a bare
+			// line: goldmark extracts the duplicate "[^0]:0" as a
+			// LinkReferenceDefinition node AND leaves the same bytes as the
+			// trailing paragraph's first line. Reflowing that paragraph
+			// destroys the neighbor line's def shape, so each pass extracts
+			// one fewer definition and the join migrates up a line — a
+			// treadmill. Fixed by blockmap's overlapsSiblingDef skip.
+			name: "issue35-footnote-linkrefdef-cluster-reflow",
+			src:  "[0]:0\n\"\n\"[0]:0\n[^0]:0\n[^0]:0\n0",
+			opts: mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 47},
+		},
 	}
 
 	// These are single-pass regressions: the convergence backstop would

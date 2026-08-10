@@ -268,6 +268,11 @@ pile for the caret case:
 - Reflowed footnote-body continuation lines are emitted with a 4-space indent.
   Renderers disagree about whether an unindented lazy-continuation line belongs to the footnote (GitHub's documented convention is to indent); the indented spelling is the one they all keep inside the footnote, and to mdreflow's own parser it is an ordinary paragraph continuation (indented code cannot interrupt a paragraph), so render preservation is unaffected.
 
+One structural exception outranks the exemption: **a paragraph whose bytes are double-owned by a sibling definition node passes through.**
+goldmark's duplicate-label handling can extract a repeated definition line as a `LinkReferenceDefinition` node while also leaving the same bytes as the trailing paragraph's first line (fuzz-found, issue #35: two same-label `[^0]:` lines then prose).
+Such a line is live definition machinery whatever its label shape, and reflowing it destroys the neighbor's def shape so the def/paragraph boundary migrates one line per pass — a treadmill no emission escape can stop.
+The check is AST-only, the same move as the table-adjacency and hidden-line-gap skips: if any sibling definition node's raw lines overlap the paragraph's own byte range, the paragraph is skipped byte-for-byte.
+
 Residual adversarial corners in the caret zone are owned by the emission escapes and the convergence backstop, not by further adjacency guards.
 (The worst such family — typography substitution verdicts flipping next to `[^label]:` shapes built out of quote soup — vanished with typography's removal, taking the fuzz harness's one documented scope gate with it.)
 

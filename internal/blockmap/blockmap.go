@@ -295,6 +295,23 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// this function: skip the whole paragraph, byte-for-byte.
 		return Paragraph{}, true
 	}
+	if overlapsSiblingDef(p, start0, end) {
+		// hasHiddenLineGap's sibling case, found by FuzzFormat on
+		// "[0]:0\n\"\n\"[0]:0\n[^0]:0\n[^0]:0\n0" (issue #35): goldmark's
+		// duplicate-label handling extracts a repeated definition line as a
+		// LinkReferenceDefinition node AND leaves the same bytes as this
+		// paragraph's first Lines() segment — one physical line owned by two
+		// sibling nodes at once. The caret exemption (inLinkRefDefZone) would
+		// let such a paragraph reflow as a footnote body, but the line is
+		// live definition machinery: joining it with the line below destroys
+		// the neighbor's own def shape, so each reparse extracts one fewer
+		// definition and the def/paragraph boundary migrates up one line per
+		// pass — a treadmill, never a fixpoint. Whenever any sibling
+		// definition node's raw lines overlap this paragraph's own byte
+		// range, the parse has double-owned bytes and no reflow of them can
+		// be stable; skip the whole paragraph, byte-for-byte.
+		return Paragraph{}, true
+	}
 	if hasControlByte(source[start0:end]) {
 		// design.md, "Control-character paragraphs pass through": a C0
 		// control byte other than tab/newline/CR inside a paragraph's raw
@@ -512,6 +529,33 @@ func hasHiddenLineGap(source []byte, lines *gmtext.Segments) bool {
 			// More than one line terminator in the gap means an entire
 			// physical source line was skipped over without becoming part
 			// of this node's Lines() at all.
+			return true
+		}
+	}
+	return false
+}
+
+// overlapsSiblingDef reports whether any sibling LinkReferenceDefinition
+// node's raw lines overlap the half-open byte range [start, end) — see its
+// call site in build for why double-owned bytes make a paragraph
+// unreflowable. Only siblings under the same parent can share a physical
+// line with this paragraph, so the scan does not need to walk the whole
+// document.
+func overlapsSiblingDef(p ast.Node, start, end int) bool {
+	parent := p.Parent()
+	if parent == nil {
+		return false
+	}
+	for c := parent.FirstChild(); c != nil; c = c.NextSibling() {
+		d, ok := c.(*ast.LinkReferenceDefinition)
+		if !ok {
+			continue
+		}
+		dl := d.Lines()
+		if dl.Len() == 0 {
+			continue
+		}
+		if dl.At(0).Start < end && dl.At(dl.Len()-1).Stop > start {
 			return true
 		}
 	}

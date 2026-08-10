@@ -16,6 +16,7 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ### Fixed
 
+- A run of repeated same-label footnote-style definitions (`[^0]: …` twice, then prose) no longer keeps re-joining on every pass; such paragraphs now pass through untouched (#35).
 - A MkDocs admonition written without a blank line after its marker is no longer flattened into one paragraph, which stopped it rendering as a callout (#31, contributed by Karl Isenberg).
   That spelling is a single paragraph to CommonMark, since the indented body is a lazy continuation rather than the code block the blank-line spelling produces.
   The marker line is now immovable and the body carries the 4-space indent the extension requires, the same treatment a footnote definition already gets.
