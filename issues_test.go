@@ -310,6 +310,45 @@ func TestIssue51InlineModifierAdmonitionsReflow(t *testing.T) {
 	}
 }
 
+// An admonition body indented past its own 4 spaces carries that extra
+// whitespace as content of the indented code block goldmark reads it as.
+// Reflow re-emits every body line at exactly 4 spaces, so such a body is
+// left alone rather than silently losing bytes; a body flush at 4 spaces
+// still reflows.
+func TestAdmonitionOverIndentedBodyLeftAlone(t *testing.T) {
+	mdreflow.SetRenderBackstop(false)
+	defer mdreflow.SetRenderBackstop(true)
+	for _, src := range []string{
+		"??? 7\n\n     0",
+		"!!! note\n\n     alpha beta gamma delta epsilon\n",
+		"!!! note\n\n     alpha beta\n     gamma delta\n",
+		"!!! note\n\n     alpha beta\n    gamma delta\n",
+		"!!! note\n\n    alpha beta\n     gamma delta\n",
+	} {
+		t.Run(src, func(t *testing.T) {
+			o := mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 20, Dialect: mdreflow.DialectMkDocs}
+			out, err := mdreflow.Format([]byte(src), o)
+			if err != nil {
+				t.Fatalf("Format: %v", err)
+			}
+			if !bytes.Equal(out, []byte(src)) {
+				t.Errorf("over-indented admonition body was reflowed.\nsrc: %q\nout: %q", src, out)
+			}
+		})
+	}
+	t.Run("flush body still reflows", func(t *testing.T) {
+		src := "!!! note\n\n    alpha beta\n    gamma delta\n"
+		o := mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 20, Dialect: mdreflow.DialectMkDocs}
+		out, err := mdreflow.Format([]byte(src), o)
+		if err != nil {
+			t.Fatalf("Format: %v", err)
+		}
+		if bytes.Equal(out, []byte(src)) {
+			t.Errorf("body flush at 4 spaces did not reflow.\nsrc: %q", src)
+		}
+	})
+}
+
 // A shape that merely starts with the marker punctuation, but is not an
 // admonition marker, must not claim the indented block below it. When that
 // block is an indented code block, treating it as admonition prose reflows

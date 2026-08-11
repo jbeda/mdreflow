@@ -1391,7 +1391,17 @@ func admonitionBodies(cb *ast.CodeBlock, source []byte, mkdocs bool) []Paragraph
 	}
 	for i := 0; i < lines.Len(); i++ {
 		seg := lines.At(i)
-		t := bytes.TrimLeft(seg.Value(source), " \t")
+		v := seg.Value(source)
+		// A line indented past the admonition's own 4 spaces keeps that
+		// extra whitespace as code-block content, and reflow re-emits
+		// every body line at exactly the 4-space indent — so reflowing
+		// such a line deletes bytes that are content to the CommonMark
+		// reading of the block. Callout bodies worth reflowing sit flush
+		// at 4 spaces; anything deeper is left alone.
+		if len(v) > 0 && (v[0] == ' ' || v[0] == '\t') {
+			return nil
+		}
+		t := bytes.TrimLeft(v, " \t")
 		if bytes.HasPrefix(t, []byte("```")) || bytes.HasPrefix(t, []byte("~~~")) {
 			return nil
 		}
