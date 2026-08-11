@@ -57,11 +57,10 @@ var spaceBeforeBr = regexp.MustCompile(` <br>`)
 // "<br/>". HTML tag names are case-insensitive per the HTML spec, so a
 // browser renders all of these identically; goldmark's raw-HTML pass-
 // through does not normalize them, so they can differ byte-for-byte
-// without differing in rendered meaning. HardBreakStyle normalization
-// canonicalizes to "<br>" regardless of which spelling the source used
-// (matching design.md's documented hard-break-style render-preservation
-// exception), so this rule canonicalizes both sides of a comparison the
-// same way — found by FuzzFormat on input "\x00<Br>\n00".
+// without differing in rendered meaning. Reflow keeps a source-authored
+// <br> but canonicalizes its spelling to "<br>" (docs/design.md, "Hard
+// line breaks"), so this rule canonicalizes both sides of a comparison
+// the same way — found by FuzzFormat on input "\x00<Br>\n00".
 var anyBrTag = regexp.MustCompile(`(?i)<br\s*/?>`)
 
 // Normalize collapses whitespace runs to a single space before comparing
@@ -78,8 +77,8 @@ var anyBrTag = regexp.MustCompile(`(?i)<br\s*/?>`)
 // them into the break, e.g. "x    \ny" (4 trailing spaces) renders as
 // "x <br>\ny", not "x<br>\ny". mdreflow's hard-break detection treats any
 // run of 2+ trailing spaces as one break (matching the CommonMark spec's
-// stated semantics, and required for HardBreakStyle normalization to have
-// one canonical output regardless of how many spaces the source used), so
+// stated semantics) and, when it promotes such a run to a backslash, has
+// one canonical output regardless of how many spaces the source used, so
 // it does not reproduce that single leftover space. Dropping it here
 // (after the whitespace collapse, so it also can't reappear from an
 // unrelated spelled-out multi-space run elsewhere) treats it as the

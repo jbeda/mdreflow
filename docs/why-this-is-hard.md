@@ -234,6 +234,41 @@ The classification of a single line flips with a parser flag.
 
 The consequence for correctness work: every hazard analysis is per- dialect, and fuzzing coverage must exercise each dialect separately, because a soak that only ever parses GFM proves nothing about MkDocs inputs (issue #26 tracks this gap).
 
+## The three hard-break spellings are not interchangeable
+
+CommonMark gives a hard line break three spellings — two trailing spaces, a trailing backslash, a literal `<br>` — and it is tempting to treat them as three names for one thing, freely convertible.
+They are not. `<br>` is raw HTML: a different class of content from the other two, which are Markdown syntax proper.
+The other two are themselves not equivalent to each other: each is recognized only in the specific narrow contexts CommonMark's grammar allows, and the contexts do not overlap completely.
+An earlier version of mdreflow normalized every preserved hard break to one configured spelling, on the assumption that the three were interchangeable.
+Fuzzing found four bugs (#40, #47, #49, #52) living in exactly the positions where that assumption failed: the configured spelling did not actually produce a break at its landing position, so the normalization silently changed what the document rendered to.
+
+**Two spaces are invisible.** Nothing distinguishes a deliberate hard break from an editor's stray trailing whitespace, or from an author blind-typing two spaces after a period out of an old habit.
+Version control shows nothing, code review shows nothing, and any editor with "trim trailing whitespace on save" enabled — a common default — silently deletes it, turning the break into an ordinary soft one the next time the file is touched.
+
+**A backslash is visible but context-sensitive.** It reads clearly in a diff and survives whitespace-trimming, but goldmark recognizes it as a hard break in exactly one narrow shape: a single trailing backslash, immediately before the line ending.
+Two trailing backslashes are an escaped backslash (one literal backslash character, no break); three or four or any other count above one renders as literal backslash characters with an ordinary soft break.
+So a backslash cannot simply be appended after existing content that itself ends in backslashes — the byte immediately before it decides whether the result is a break at all.
+
+**`<br>` is raw HTML, not Markdown syntax, and always a break wherever it parses as a tag** — including on a paragraph's last line, where neither of the other two spellings works at all (CommonMark only reads a following line's worth of significance into a trailing backslash or double-space; there is nothing to break onto).
+That same unconditional recognition is why introducing one where the source never had it is not a safe default: not every downstream renderer treats raw HTML the way goldmark's `html.WithUnsafe()` test configuration does — a renderer configured to escape or strip raw HTML (a common, often default, security posture) turns a `<br>` mdreflow minted into either inert escaped text or nothing at all, silently deleting a break the author's own source had preserved in a form every renderer honors.
+
+The measured matrix — whether each spelling actually produces a rendered break, checked against goldmark directly rather than assumed:
+
+| Context | two spaces | backslash | `<br>` |
+|---|---|---|---|
+| Paragraph-final (nothing follows) | no — trailing spaces are insignificant on a block's last line | no — a lone trailing backslash on the last line is a literal character | yes — raw HTML is a tag wherever it parses as one, position included |
+| Task-list checkbox-only line (`* [X]` then the marker) | no — GFM's task-list extension consumes the line's whole trailing whitespace run, including the marker, before a hard break can be read from it (#40) | yes — the task-list extension's cleanup only consumes whitespace; a backslash survives it | yes |
+| Directly after an escaped (paired) backslash | yes — unaffected by what precedes it | no — the run is now 3 trailing backslashes, which renders as literal characters, not a break (see above) | yes |
+| Inside an HTML tag's attribute value (a line break inside `<a href="...">`) | no — inert literal content; CommonMark's raw-HTML-tag grammar consumes it as attribute text, never running inline break detection there at all | no — same | no — even a literal `<br>` typed inside an attribute value is just more attribute text, not a nested tag |
+| Inside a raw HTML block's body (e.g. between `<div>` and `</div>`) | no — HTML block content passes through with no Markdown inline parsing whatsoever | no — same | effectively yes, but not because CommonMark recognized it as a break — the whole block is untouched pass-through, and a literal `<br>` written there was already functioning raw HTML before mdreflow ever saw it |
+
+The two structural rows are the checkbox line and the post-escaped-backslash position: they show that even the two "plain Markdown syntax" spellings are not interchangeable with each other, which rules out simply normalizing between the two of them, let alone folding in `<br>` as a third equal option.
+The two HTML-context rows show why `<br>` is a different class of content from the other two, not a third equivalent spelling of the same thing: it is only ever inert or already-real HTML, never a piece of Markdown syntax that a parser reads contextually.
+
+**The policy this drives:** mdreflow keeps whichever spelling the source used, with one promotion — two invisible spaces become a visible backslash, since that is the direction that turns an accident-prone spelling into a robust one without introducing a different class of content.
+Where the backslash cannot land (the escaped-backslash-run position above), the fallback is two spaces, never `<br>`: falling forward to `<br>` would repeat the exact mistake this section describes, introducing raw HTML into a document that never had any.
+A `<br>` the source already wrote is always kept; mdreflow never removes hard-break content, only respells it.
+
 ## What authors can do about a frozen paragraph
 
 The freezes are shape-based, so authors can remove the shape.

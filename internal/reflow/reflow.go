@@ -6,8 +6,9 @@
 // is copied byte-for-byte.
 //
 // Hard line breaks (trailing double-space, trailing backslash, `<br>`) are
-// immovable: the pipeline never joins across one. Preserved hard breaks are
-// normalized to Options.HardBreaks's configured style.
+// immovable: the pipeline never joins across one. A preserved hard break
+// keeps the source's own spelling, except that two trailing spaces are
+// promoted to a backslash (see markerFor).
 package reflow
 
 import (
@@ -33,20 +34,9 @@ type Segmenter interface {
 	Breaks(text string) []segment.Span
 }
 
-// HardBreakStyle mirrors mdreflow.HardBreakStyle (an internal package
-// package opts is the one definition of both enums (go-quality review
-// S4: the former hand-mirrored copies here were "kept in lockstep" by
-// comment alone); these aliases keep this package's call sites reading
-// naturally.
-type HardBreakStyle = opts.HardBreakStyle
-
-const (
-	HardBreakBr        = opts.HardBreakBr
-	HardBreakSpaces    = opts.HardBreakSpaces
-	HardBreakBackslash = opts.HardBreakBackslash
-)
-
-// Mode aliases the shared definition in package opts; see HardBreakStyle.
+// Mode aliases the shared definition in package opts (go-quality review
+// S4: package opts is the one definition, so the root and pipeline
+// packages can never drift).
 type Mode = opts.Mode
 
 const (
@@ -71,15 +61,6 @@ type Options struct {
 	// responsible for rejecting MaxWidth != 0 with ModePara before this
 	// package ever sees it.
 	MaxWidth int
-	// HardBreaks selects the normalized hard-break style every preserved
-	// hard break is rewritten to.
-	HardBreaks HardBreakStyle
-	// StripSentenceTerminalBreaks treats a trailing double-space
-	// immediately after sentence-terminal punctuation as an accidental
-	// hard break and removes it (the line rejoins its neighbor as an
-	// ordinary soft break instead). Only the double-space syntax is
-	// eligible; backslash and <br> hard breaks are always respected.
-	StripSentenceTerminalBreaks bool
 	// MkDocs enables MkDocs-specific block recognition, currently the
 	// admonition body; see blockmap.admonitionBody.
 	MkDocs bool
@@ -270,7 +251,7 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 			// verdict: the joined text's trailing backslash/space bytes
 			// are always that line's trailing bytes (the join preserves
 			// them), so its per-line flag is the right one to consult.
-			if m, rest := detectHardBreak(text, opts, lastCluster, insideSpan, astHard); m != "" {
+			if m, rest := detectHardBreak(text, lastCluster, insideSpan, astHard); m != "" {
 				marker = m
 				text = rest
 			}
@@ -342,14 +323,15 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 			continue
 		}
 
-		marker, rest := detectHardBreak(content, opts, i == n-1, insideSpanAfter[i], astHardAfter[i])
+		marker, rest := detectHardBreak(content, i == n-1, insideSpanAfter[i], astHardAfter[i])
 		if i == 0 && i < n-1 && trimLineSpace(rest) == "" && marker == "<br>" {
 			// Fuzz-found hazard: a paragraph's first output line, with no
-			// prose preceding a HardBreakBr marker, would consist solely
-			// of the bytes "<br>" — which, on a line that opens a fresh
-			// block (nothing precedes it, so it cannot be a paragraph
-			// lazy-continuation line, which is the only context immune to
-			// this), CommonMark's HTML-block condition 7 recognizes as an
+			// prose preceding a source-authored "<br>" marker, would
+			// consist solely of the bytes "<br>" — which, on a line that
+			// opens a fresh block (nothing precedes it, so it cannot be a
+			// paragraph lazy-continuation line, which is the only context
+			// immune to this), CommonMark's HTML-block condition 7
+			// recognizes as an
 			// HTML block opener, not inline content. Reparsing the
 			// output would then swallow following lines into that HTML
 			// block, corrupting structure. Two trailing spaces are not a
@@ -359,8 +341,7 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 			// entirely on reparse — verified empirically, not merely
 			// assumed. A lone trailing backslash is safe: it is not a
 			// blank line and is not any block-opening trigger, so it is
-			// always the fallback for this one narrow position,
-			// regardless of the configured style.
+			// always the fallback for this one narrow position.
 			//
 			// The "i < n-1" guard (there is a following line to worry
 			// about) matters: without it, a single-line paragraph whose
@@ -1992,12 +1973,20 @@ func isTableDelimiterRowShaped(line string) bool {
 // which also defeats the emphasis the original had). Precisely
 // replicating CommonMark's flanking algorithm (which depends on more than
 // just the immediately adjacent byte) is out of scope; this is accepted as
-// a narrow extension of design.md's existing hard-break-style-
-// normalization render-preservation exception, not silently — see the M2
-// report and fuzz_test.go's stripEmphasisNearHardBreak.
+// a narrow extension of design.md's existing hard-break-spelling render-
+// preservation exception, not silently — see the M2 report and
+// fuzz_test.go's stripEmphasisNearHardBreak.
 func attachMarker(s, marker string) string {
 	if marker == "" || s == "" {
 		return s + marker
+	}
+	if marker == `\` && trailingBackslashCount(s) > 0 && !endsInUnescapedBackslash(s) {
+		// goldmark reads a hard break from a trailing backslash run of
+		// exactly one; appending to an even, non-zero run lands on three
+		// or more, which is literal text. Two trailing spaces work after
+		// an escaped backslash, so fall back to them rather than
+		// introduce raw HTML the author never wrote.
+		marker = "  "
 	}
 	if endsInUnescapedBackslash(s) && isASCIIPunct(marker[0]) {
 		return s + " " + marker
@@ -2287,8 +2276,8 @@ func stripLineEnding(raw []byte) (content string, hadNewline bool) {
 // goldmark renders it as literal, HTML-escaped text ("&lt;Br &gt;"), but
 // the over-broad \s made mdreflow treat the *entire* line as nothing but
 // a hard-break marker with zero prose in front of it, which (via the
-// "bare first line" HardBreakBr safety fallback a few lines below)
-// discarded the original content outright, replacing it with a lone
+// "bare first line" safety fallback a few lines below) discarded the
+// original content outright, replacing it with a lone
 // backslash — silent, severe data loss for real prose that merely
 // contained a stray form-feed byte.
 // Interior whitespace is accepted only in the self-closing spelling
@@ -2315,19 +2304,12 @@ func stripLineEnding(raw []byte) (content string, hadNewline bool) {
 // case above.
 var hardBreakBrRE = regexp.MustCompile(`(?i)[ \t\r]*<br([ \t]*/)?>[ \t\r]*$`)
 
-// sentenceTerminalEndRE matches text ending in sentence-terminal
-// punctuation (optionally followed by closing quotes/brackets), used by
-// Options.StripSentenceTerminalBreaks.
-var sentenceTerminalEndRE = regexp.MustCompile(`[.!?…]["'”’)\]]*$`)
-
 // detectHardBreak inspects a line's content (line ending already stripped)
 // for one of the three hard-break syntaxes mdreflow recognizes: trailing
 // backslash, trailing double-space (or more), or a trailing <br>. On a
-// match it returns the marker normalized to Options.HardBreaks's style (to
-// be emitted in place of the original bytes) and the remaining prose. On no
-// match — or when Options.StripSentenceTerminalBreaks removes an accidental
-// double-space break — it returns an empty marker and the content
-// unchanged, so the line rejoins its neighbor as an ordinary soft break.
+// match it returns the marker to emit (see markerFor) and the remaining
+// prose. On no match it returns an empty marker and the content unchanged,
+// so the line rejoins its neighbor as an ordinary soft break.
 //
 // isLastLine must be true when content is the paragraph's final source
 // line: per CommonMark, a trailing backslash or double-space is only a
@@ -2364,7 +2346,7 @@ var sentenceTerminalEndRE = regexp.MustCompile(`[.!?…]["'”’)\]]*$`)
 // marker spelling, which a flush-time join can manufacture from bytes no
 // single source line carried ("<Br\n/>" joining to "<Br />"), where no
 // per-line AST flag exists to consult.
-func detectHardBreak(content string, opts Options, isLastLine, insideSpan, astHard bool) (marker, rest string) {
+func detectHardBreak(content string, isLastLine, insideSpan, astHard bool) (marker, rest string) {
 	if insideSpan {
 		return "", content
 	}
@@ -2401,7 +2383,7 @@ func detectHardBreak(content string, opts Options, isLastLine, insideSpan, astHa
 			// every spelling, so this is a normalization, not a content
 			// change; a remaining odd backslash run is still handled by
 			// attachMarker's fusion guard.
-			return normalizedMarker(opts), strings.TrimRight(content[:len(content)-1], " \t\r")
+			return markerFor(`\`), strings.TrimRight(content[:len(content)-1], " \t\r")
 		}
 
 		// Trailing spaces: two or more.
@@ -2410,11 +2392,7 @@ func detectHardBreak(content string, opts Options, isLastLine, insideSpan, astHa
 			i--
 		}
 		if len(content)-i >= 2 {
-			rest := content[:i]
-			if opts.StripSentenceTerminalBreaks && sentenceTerminalEndRE.MatchString(rest) {
-				return "", rest
-			}
-			return normalizedMarker(opts), rest
+			return markerFor("  "), content[:i]
 		}
 	}
 
@@ -2444,10 +2422,24 @@ func detectHardBreak(content string, opts Options, isLastLine, insideSpan, astHa
 			// by FuzzFormat on "00000\<Br>".
 			return "", content
 		}
-		return normalizedMarker(opts), prefix
+		return markerFor("<br>"), prefix
 	}
 
 	return "", content
+}
+
+// markerFor maps the spelling detectHardBreak found in the source (src) to
+// the spelling to emit: the source's own spelling is kept, except that two
+// trailing spaces — invisible, and routinely stripped by editors in
+// transit — are promoted to a backslash. Raw HTML is never introduced:
+// "<br>" is emitted only where the author already wrote it. Where the
+// promoted backslash cannot work at its landing position, attachMarker
+// falls back to two trailing spaces rather than to "<br>".
+func markerFor(src string) string {
+	if src == "  " {
+		return `\`
+	}
+	return src
 }
 
 // endsInUnescapedBackslash reports whether s ends in an odd number of
@@ -2465,17 +2457,4 @@ func trailingBackslashCount(s string) int {
 		n++
 	}
 	return n
-}
-
-// normalizedMarker returns the hard-break marker bytes for opts.HardBreaks,
-// regardless of which of the three syntaxes the original line used.
-func normalizedMarker(opts Options) string {
-	switch opts.HardBreaks {
-	case HardBreakSpaces:
-		return "  "
-	case HardBreakBackslash:
-		return "\\"
-	default:
-		return "<br>"
-	}
 }

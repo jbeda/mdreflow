@@ -9,6 +9,14 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+### Changed
+
+- **Breaking:** hard line breaks (trailing double-space, trailing backslash, `<br>`) are no longer normalized to a configured style — mdreflow now keeps the spelling the source used, promoting only a trailing double-space to a backslash (double spaces are invisible and routinely stripped by editors in transit). mdreflow no longer introduces raw HTML (`<br>`) into a document that didn't already use it.
+  This fixes four bugs found in the narrow contexts where the old normalized spelling didn't actually work at its landing position (#40, #47, #49, #52). **Removed:** the `--hard-breaks` flag, `Options.HardBreaks`, `HardBreakStyle` and its constants, and the `hard-breaks:` config key.
+  If your `.mdreflow.yaml` has a `hard-breaks:` key, delete it — mdreflow now refuses the file with an unknown-key error instead of silently ignoring it.
+- **Breaking:** removed the unused `--strip-sentence-terminal-breaks` flag and `Options.StripSentenceTerminalBreaks`.
+  If you set this option or flag, remove it; there is no replacement.
+
 ### Fixed
 
 - Under `--dialect mkdocs`, an admonition marker is now recognized by its opening punctuation plus a class word (`!!! note`, `??? tip`, `???+ warning`) rather than by a pattern anchored to the end of the line.

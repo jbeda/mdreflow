@@ -1,67 +1,87 @@
 package mdreflow_test
 
 import (
-	"github.com/jbeda/mdreflow/internal/render"
-
 	"testing"
 
 	"github.com/jbeda/mdreflow"
+	"github.com/jbeda/mdreflow/internal/render"
 )
 
-// TestHardBreakStyleMatrix checks every combination of input hard-break
-// syntax (trailing double-space, trailing backslash, literal <br>) against
-// every Options.HardBreaks style: the output always uses the configured
-// style, regardless of which syntax the source used, and rendered HTML is
-// unchanged by the substitution (see internal/gm's html.WithUnsafe comment
-// for why a literal "<br>" in the source renders the same as a true
-// hard-break node).
-func TestHardBreakStyleMatrix(t *testing.T) {
-	inputs := []struct {
+// TestHardBreakSpellingPolicy checks mdreflow's hard-break spelling policy
+// (docs/design.md, "Hard line breaks"): each source spelling is preserved
+// as-is, except that two trailing spaces are promoted to a backslash — the
+// one respelling mdreflow performs, since two spaces are invisible and
+// routinely stripped by editors in transit. A literal "<br>" is never
+// introduced for a source that did not already use it. Every case must
+// also render identically before and after, and be idempotent.
+func TestHardBreakSpellingPolicy(t *testing.T) {
+	cases := []struct {
 		name string
 		src  string
+		want string
 	}{
-		{"spaces", "First line ends here.  \nSecond line follows.\n"},
-		{"backslash", "First line ends here.\\\nSecond line follows.\n"},
-		{"br", "First line ends here.<br>\nSecond line follows.\n"},
-	}
-	styles := []struct {
-		name   string
-		style  mdreflow.HardBreakStyle
-		marker string
-	}{
-		{"br", mdreflow.HardBreakBr, "<br>"},
-		{"spaces", mdreflow.HardBreakSpaces, "  "},
-		{"backslash", mdreflow.HardBreakBackslash, "\\"},
+		{"spaces promoted to backslash", "First line ends here.  \nSecond line follows.\n", "First line ends here.\\\nSecond line follows.\n"},
+		{"backslash preserved", "First line ends here.\\\nSecond line follows.\n", "First line ends here.\\\nSecond line follows.\n"},
+		{"br preserved", "First line ends here.<br>\nSecond line follows.\n", "First line ends here.<br>\nSecond line follows.\n"},
 	}
 
-	for _, in := range inputs {
-		for _, st := range styles {
-			t.Run(in.name+"->"+st.name, func(t *testing.T) {
-				got, err := mdreflow.Format([]byte(in.src), mdreflow.Options{HardBreaks: st.style})
-				if err != nil {
-					t.Fatalf("Format: %v", err)
-				}
-				want := "First line ends here." + st.marker + "\nSecond line follows.\n"
-				if string(got) != want {
-					t.Errorf("Format(%s hard break, style %s) = %q, want %q", in.name, st.name, got, want)
-				}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := mdreflow.Format([]byte(tc.src), mdreflow.Options{})
+			if err != nil {
+				t.Fatalf("Format: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("Format(%q) = %q, want %q", tc.src, got, tc.want)
+			}
 
-				before := render.Normalize(renderHTML(t, []byte(in.src)))
-				after := render.Normalize(renderHTML(t, got))
-				if before != after {
-					t.Errorf("hard-break style normalization changed rendered HTML.\n--- before ---\n%s\n--- after ---\n%s", before, after)
-				}
+			before := render.Normalize(renderHTML(t, []byte(tc.src)))
+			after := render.Normalize(renderHTML(t, got))
+			if before != after {
+				t.Errorf("hard-break spelling changed rendered HTML.\n--- before ---\n%s\n--- after ---\n%s", before, after)
+			}
 
-				// Idempotency: reformatting the already-normalized output
-				// with the same style must be a no-op.
-				twice, err := mdreflow.Format(got, mdreflow.Options{HardBreaks: st.style})
-				if err != nil {
-					t.Fatalf("Format(Format(x)): %v", err)
-				}
-				if string(twice) != string(got) {
-					t.Errorf("Format not idempotent for style %s: got %q, then %q", st.name, got, twice)
-				}
-			})
-		}
+			twice, err := mdreflow.Format(got, mdreflow.Options{})
+			if err != nil {
+				t.Fatalf("Format(Format(x)): %v", err)
+			}
+			if string(twice) != string(got) {
+				t.Errorf("Format not idempotent: got %q, then %q", got, twice)
+			}
+		})
+	}
+}
+
+// TestHardBreakPromotionFallback checks the promotion's own fallback: a
+// two-space hard break normally promotes to a backslash, but not where a
+// backslash cannot land — directly after an even, non-zero run of trailing
+// backslashes, since appending one more would leave three or more, which
+// goldmark reads as literal text, not a hard break. There mdreflow falls
+// back to two trailing spaces instead, never to "<br>" (docs/design.md,
+// "Hard line breaks").
+func TestHardBreakPromotionFallback(t *testing.T) {
+	src := "a\\\\  \nb\n"
+	want := "a\\\\  \nb\n"
+
+	got, err := mdreflow.Format([]byte(src), mdreflow.Options{})
+	if err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+	if string(got) != want {
+		t.Errorf("Format(%q) = %q, want %q", src, got, want)
+	}
+
+	before := render.Normalize(renderHTML(t, []byte(src)))
+	after := render.Normalize(renderHTML(t, got))
+	if before != after {
+		t.Errorf("promotion fallback changed rendered HTML.\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	}
+
+	twice, err := mdreflow.Format(got, mdreflow.Options{})
+	if err != nil {
+		t.Fatalf("Format(Format(x)): %v", err)
+	}
+	if string(twice) != string(got) {
+		t.Errorf("Format not idempotent: got %q, then %q", got, twice)
 	}
 }

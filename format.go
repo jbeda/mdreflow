@@ -78,15 +78,13 @@ func Format(src []byte, opts Options) ([]byte, error) {
 	} else {
 		seg = segment.New(opts.Abbreviations)
 	}
-	// Mode and HardBreakStyle are aliases of the shared internal
-	// definitions (package opts), so no conversion happens here — the
-	// former hand-mirrored enums and their unchecked casts are gone.
+	// Mode and Dialect are aliases of the shared internal definitions
+	// (package opts), so no conversion happens here — the former
+	// hand-mirrored enums and their unchecked casts are gone.
 	rOpts := reflow.Options{
-		Mode:                        opts.Mode,
-		MaxWidth:                    opts.MaxWidth,
-		HardBreaks:                  opts.HardBreaks,
-		StripSentenceTerminalBreaks: opts.StripSentenceTerminalBreaks,
-		MkDocs:                      opts.Dialect == DialectMkDocs,
+		Mode:     opts.Mode,
+		MaxWidth: opts.MaxWidth,
+		MkDocs:   opts.Dialect == DialectMkDocs,
 	}
 
 	out := formatOnce(src, seg, rOpts)
@@ -97,7 +95,7 @@ func Format(src []byte, opts Options) ([]byte, error) {
 	for i := 1; i < maxFormatPasses; i++ {
 		next := formatOnce(cur, seg, rOpts)
 		if bytes.Equal(next, cur) {
-			return renderChecked(src, cur, opts), nil
+			return renderChecked(src, cur), nil
 		}
 		cur = next
 	}
@@ -109,20 +107,15 @@ func Format(src []byte, opts Options) ([]byte, error) {
 // to the same normalized HTML as src, and src unchanged otherwise — "we
 // could not safely flow this" is a no-op, never corruption. The
 // comparison runs through internal/render, the production home of the
-// fuzz harness's render oracle, so "same" means "modulo the two
-// documented cosmetic normalizations" (soft-break whitespace, <br>
-// spelling) and nothing else.
-//
-// StripSentenceTerminalBreaks is the one option whose entire purpose is
-// a render change (removing an accidental hard break removes a <br>), so
-// the check is skipped when it is set — it is design.md's documented,
-// flag-reversible exception, and the flag is opt-in.
+// fuzz harness's render oracle, so "same" means "modulo the one
+// documented cosmetic normalization" (soft-break whitespace) and nothing
+// else.
 //
 // A render error is treated as "cannot verify": src is returned
 // unchanged. In practice goldmark's renderer only fails on writer
 // errors, which a bytes.Buffer never produces.
-func renderChecked(src, out []byte, opts Options) []byte {
-	if !renderBackstop || opts.StripSentenceTerminalBreaks || bytes.Equal(src, out) {
+func renderChecked(src, out []byte) []byte {
+	if !renderBackstop || bytes.Equal(src, out) {
 		return out
 	}
 	before, err := render.Normalized(src)

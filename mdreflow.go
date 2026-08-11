@@ -10,8 +10,8 @@
 // by splicing reflowed prose into the verbatim source bytes.
 //
 // The library API in docs/design.md is complete: all three modes,
-// MaxWidth, hard-break normalization, the abbreviation list, and a
-// pluggable Segmenter are all implemented.
+// MaxWidth, hard-break spelling, the abbreviation list, and a pluggable
+// Segmenter are all implemented.
 package mdreflow
 
 import (
@@ -21,18 +21,18 @@ import (
 
 // Mode selects the top-level reflow strategy.
 //
-// (Mode, HardBreakStyle, and their constants are aliases of one shared
-// definition in an internal leaf package the pipeline uses directly, so
-// the public and internal values can never drift; this alias is the
-// documented, supported name.)
+// (Mode and its constants are aliases of one shared definition in an
+// internal leaf package the pipeline uses directly, so the public and
+// internal values can never drift; this alias is the documented,
+// supported name.)
 type Mode = opts.Mode
 
 const (
 	// ModeSentence joins each paragraph's lines and splits at sentence
 	// boundaries, one sentence per line. The default mode.
 	ModeSentence Mode = opts.ModeSentence
-	// ModePara joins each paragraph (each hard-break cluster — see
-	// HardBreakStyle) to a single line, with no further splitting.
+	// ModePara joins each paragraph (each hard-break cluster) to a single
+	// line, with no further splitting.
 	// Options.MaxWidth must be 0 in this mode: para mode's whole point is
 	// one unconditional line, so a non-zero MaxWidth has nothing to apply
 	// to and Format returns an error rather than silently ignoring it —
@@ -44,23 +44,6 @@ const (
 	// defaults to 80 in this mode only — see Options.MaxWidth's doc
 	// comment.
 	ModeWrap Mode = opts.ModeWrap
-)
-
-// HardBreakStyle selects how hard line breaks are normalized when
-// reflowed prose moves them to a new position in the source. Every
-// preserved hard break (however it was originally spelled) is rewritten to
-// this style.
-type HardBreakStyle = opts.HardBreakStyle
-
-const (
-	// HardBreakBr renders a hard break as a literal <br>. Default: an
-	// accidental double-space hard break survives formatting but becomes
-	// loudly visible in a diff.
-	HardBreakBr HardBreakStyle = opts.HardBreakBr
-	// HardBreakSpaces renders a hard break as a trailing double space.
-	HardBreakSpaces HardBreakStyle = opts.HardBreakSpaces
-	// HardBreakBackslash renders a hard break as a trailing backslash.
-	HardBreakBackslash HardBreakStyle = opts.HardBreakBackslash
 )
 
 // Span is a half-open byte range [Start, End) into the text passed to a
@@ -109,9 +92,8 @@ const (
 )
 
 // Options configures Format, NeedsFormat, and FormatReader. The zero value is
-// the default and is always valid: sentence mode, unbounded width, <br>
-// hard-break style, the GFM dialect, the built-in segmenter with its
-// default abbreviation list.
+// the default and is always valid: sentence mode, unbounded width, the
+// GFM dialect, the built-in segmenter with its default abbreviation list.
 type Options struct {
 	// Mode selects the reflow strategy. Zero value is ModeSentence.
 	Mode Mode
@@ -152,18 +134,6 @@ type Options struct {
 	//     single line unconditionally in this mode, so Format returns an
 	//     error for a non-zero MaxWidth rather than silently ignoring it.
 	MaxWidth int
-
-	// HardBreaks selects the normalized hard-break style every preserved
-	// hard break is rewritten to. Zero value is HardBreakBr.
-	HardBreaks HardBreakStyle
-
-	// StripSentenceTerminalBreaks treats a trailing double-space
-	// immediately after sentence-terminal punctuation as an accidental
-	// hard break and removes it — a documented, flag-reversible exception
-	// to render preservation. Only that syntax, only that position: a
-	// trailing backslash or <br>, or a double-space anywhere else, is
-	// always respected.
-	StripSentenceTerminalBreaks bool
 
 	// Abbreviations adds to (never replaces) the built-in segmenter's
 	// abbreviation exception list. Ignored if Segmenter is set.

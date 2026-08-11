@@ -47,8 +47,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs.BoolVar(&ff.force, "force", false, "format anyway despite an exclude match or a non-Markdown/binary refusal")
 	fs.StringVar(&ff.configPath, "config", "", "use this config file instead of discovering .mdreflow.yaml upward from each target")
 	fs.BoolVar(&ff.noGitignore, "no-gitignore", false, "do not consult .gitignore files when walking directories or checking excludes")
-	fs.StringVar(&ff.hardBreaks, "hard-breaks", "br", "hard line break style: br, spaces, or backslash")
-	fs.BoolVar(&ff.stripSentenceTerminalBreaks, "strip-sentence-terminal-breaks", false, "treat a trailing double-space immediately after sentence-terminal punctuation as an accidental hard break and remove it")
 	fs.BoolVar(&ff.explain, "explain", false, "report each paragraph left unformatted to stderr, with the reason and a remediation hint; combines with any other mode and never changes output or exit codes")
 	fs.BoolVar(&ff.version, "version", false, "print version information to stdout and exit 0")
 

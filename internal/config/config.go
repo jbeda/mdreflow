@@ -32,9 +32,9 @@ const MaxFileSize = 1 << 20 // 1 MiB
 // nine elements each expands to roughly 3.5e9 scalars and OOMs the
 // process). A legitimate .mdreflow.yaml never nests a handful of list
 // levels deep and never uses anchors or aliases at all — Mode,
-// MaxWidth, HardBreaks, Abbreviations, and Exclude are all plain
-// scalars or flat lists — so both limits are far below anything a real
-// config needs. maxAliasRefs is set well below the "100" a literal
+// MaxWidth, Abbreviations, and Exclude are all plain scalars or flat
+// lists — so both limits are far below anything a real config needs.
+// maxAliasRefs is set well below the "100" a literal
 // alias-reference count might suggest: the review's own 10-anchor,
 // 9-way-fan-out proof of concept produces only 82 literal '*name'
 // tokens (the exponential blowup comes from repeated expansion, not
@@ -53,7 +53,6 @@ type File struct {
 	Mode          string   `yaml:"mode"`
 	Dialect       string   `yaml:"dialect"`
 	MaxWidth      int      `yaml:"max-width"`
-	HardBreaks    string   `yaml:"hard-breaks"`
 	Abbreviations []string `yaml:"abbreviations"`
 	Exclude       []string `yaml:"exclude"`
 }
