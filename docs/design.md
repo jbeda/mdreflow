@@ -140,6 +140,11 @@ Dropping linkify cannot let reflow split a URL in any mode: every break candidat
 The only behavior linkify actually governs in span computation is code-span pairing around a backtick inside a bare URL, a shape near-nonexistent in real prose.
 Its true target renderer (Python-Markdown) is not CommonMark and cannot be modeled by our oracle, so its recognitions must stay narrow and are verified externally (full `mkdocs build` diffs), per the render-backstop section's divergence caveat.
 
+(Amendment 2026-08-11.)
+The admonition-marker line itself — the trigger for the body recognition above, and for the same line acting as an immovable boundary when a marker and its body are lazily joined into one paragraph (no blank line between them) — is recognized bluntly: a line starting with `!!!` or `???`/`???+` is a marker, whatever follows on the line.
+This recognition, and the boundary it produces, are mkdocs-only; under `gfm` a line starting `!!!` or `???` is ordinary prose.
+See why-this-is-hard.md's "Why the verdicts are blunt" for why the prefix match replaced an earlier, end-anchored, type-word-requiring regex.
+
 For everything else mdreflow still targets one permissive superset of dialects ("do our best on everything").
 Dialect awareness beyond the profile is a *skip-list* — constructs recognized only well enough to pass through untouched — not a set of dialect implementations.
 Each rule is tagged by origin so dialect profiles can subset the existing rules rather than require new machinery:

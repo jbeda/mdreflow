@@ -291,7 +291,7 @@ func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int,
 			// shape, from build's own raw-byte scan (see
 			// inLinkRefDefZone) — design.md's "The link-reference-
 			// definition zone: skip bluntly, by shape".
-			if pp, reason := build(c, source, inBlockquote, fmEnd, precededByTable, facts); reason == SkipNone {
+			if pp, reason := build(c, source, inBlockquote, fmEnd, precededByTable, facts, mkdocs); reason == SkipNone {
 				*out = append(*out, pp)
 			} else {
 				recordSkip(c, reason)
@@ -317,8 +317,10 @@ func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int,
 // offset (frontMatterEnd(source), or -1 if source has no front matter) —
 // see its use below. precededByTable is true when p's immediately
 // preceding sibling in the AST is a GFM *ast.Table — see its use below
-// for why.
-func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTable bool, facts map[int]lineFacts) (pp Paragraph, reason SkipReason) {
+// for why. mkdocs gates the admonition-marker boundary check below: a
+// line starting "!!!"/"???" is only treated as an immovable marker under
+// the mkdocs dialect.
+func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTable bool, facts map[int]lineFacts, mkdocs bool) (pp Paragraph, reason SkipReason) {
 	lines := p.Lines()
 	n := lines.Len()
 	if n == 0 {
@@ -608,7 +610,7 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// nesting), not a replacement for it.
 		contPrefix += "    "
 	}
-	if admonitionMarkerRE.MatchString(trimmed[0]) {
+	if mkdocs && admonitionMarkerRE.MatchString(trimmed[0]) {
 		// A MkDocs admonition written without a blank line after its
 		// marker is one paragraph here: the indented body is a lazy
 		// continuation, not the code block the blank-line spelling
@@ -616,7 +618,8 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// callout, and so does dropping the body's indent, so the marker
 		// line is immovable and the body carries the 4-space indent the
 		// extension requires. Same treatment as the footnote definition
-		// above, for the same reason.
+		// above, for the same reason. Gated on the mkdocs dialect: under
+		// GFM a line starting "!!!"/"???" is ordinary prose.
 		boundary[0] = true
 		contPrefix += "    "
 	}
@@ -1330,10 +1333,19 @@ func couldFormLinkRefDef(trimmedLines []string) bool {
 }
 
 // admonitionMarkerRE matches a MkDocs / Python-Markdown admonition marker
-// line: "!!! note", "??? warning", "???+ tip", optionally with a quoted
-// title. The type word is required, which is what keeps an ordinary
-// paragraph merely starting with "!!!" from claiming the block below it.
-var admonitionMarkerRE = regexp.MustCompile(`^(?:!{3}|\?{3}\+?)[ \t]+[A-Za-z][\w-]*(?:[ \t]+"[^"]*")?[ \t]*$`)
+// line by prefix alone: a line starting with "!!!" or "???"/"???+" is a
+// marker, whatever follows it and however the line ends. The verdict must
+// not depend on where the line ends, since reflow is exactly what moves
+// that boundary — an end-anchored, type-word-requiring version of this
+// regex let a wrap cut turn an ordinary paragraph's own break point into a
+// marker match on the next pass (issue #51). A blunt prefix match is a
+// fixpoint: it looks only at bytes reflow cannot move. It also means
+// "!!!!" and "!!!bang" count as markers, and it recognizes Material for
+// MkDocs's inline modifiers ("!!! note inline end \"Title\""), which the
+// stricter regex missed entirely. Callers gate this on the mkdocs dialect
+// (see admonitionBodies and build's use of it); under other dialects a
+// line starting with "!!!" is ordinary prose.
+var admonitionMarkerRE = regexp.MustCompile(`^(?:!{3}|\?{3}\+?)`)
 
 // admonitionBody reports whether cb is the indented body of a MkDocs
 // admonition and, if so, describes it as a reflow-eligible paragraph.

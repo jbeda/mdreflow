@@ -750,11 +750,16 @@ func TestMkDocsAdmonitionBody(t *testing.T) {
 	}{
 		{"body is invisible under the default dialect", body, false, false},
 		{"body reflows under the mkdocs dialect", body, true, true},
-		{"marker needs a type word", "!!!\n\n    Some prose here. And more of it.\n", true, false},
+		{"bare marker prefix is recognized", "!!!\n\n    Some prose here. And more of it.\n", true, true},
 		{"plain indented code after prose is untouched", "Some prose here.\n\n    func main() { x := 1\n    fmt.Println(x) }\n", true, false},
 		{"a fenced block inside the body is untouched", "!!! note \"X\"\n\n    ```go\n    x := 1\n    ```\n", true, false},
 		{"a multi-paragraph body is left alone", "!!! note \"X\"\n\n    First para here.\n\n    Second para here.\n", true, false},
 		{"collapsible marker is recognized", "??? note \"X\"\n\n    Use the selector to switch. A capability listed\n    under dev has not shipped.\n", true, true},
+		{"expandable collapsible marker with title", "???+ tip \"Expandable\"\n\n    Use the selector to switch. A capability listed\n    under dev has not shipped.\n", true, true},
+		{"custom title", "!!! note \"Custom Title\"\n\n    Use the selector to switch. A capability listed\n    under dev has not shipped.\n", true, true},
+		{"empty title", `!!! note ""` + "\n\n    Use the selector to switch. A capability listed\n    under dev has not shipped.\n", true, true},
+		{"Material inline modifier", "!!! note inline\n\n    Use the selector to switch. A capability listed\n    under dev has not shipped.\n", true, true},
+		{"Material inline end modifier with title", `!!! note inline end "Title"` + "\n\n    Use the selector to switch. A capability listed\n    under dev has not shipped.\n", true, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -803,12 +808,13 @@ func TestBacktickInBareURLDoesNotDisqualify(t *testing.T) {
 // A MkDocs admonition written without a blank line after its marker is a
 // single paragraph: the indented body is a lazy continuation. Reflowing it
 // as ordinary prose joins the marker into the body and drops the indent,
-// and the callout stops being one.
+// and the callout stops being one. The marker boundary is mkdocs-only, so
+// this exercises ParagraphsForDialect with mkdocs enabled.
 func TestLazyAdmonitionKeepsItsShape(t *testing.T) {
 	const src = "!!! tip \"Title here\"\n    The recommended shape is the v2 API at\n    a decomposed resource. Second sentence here.\n"
 	b := []byte(src)
 	doc := gm.New().Parser().Parse(text.NewReader(b))
-	paras := Paragraphs(doc, b)
+	paras := ParagraphsForDialect(doc, b, true)
 	if len(paras) != 1 {
 		t.Fatalf("got %d paragraphs, want 1", len(paras))
 	}
@@ -818,6 +824,57 @@ func TestLazyAdmonitionKeepsItsShape(t *testing.T) {
 	}
 	if p.ContPrefix != "    " {
 		t.Errorf("ContPrefix = %q, want the 4-space body indent", p.ContPrefix)
+	}
+}
+
+// The same shape under the default (GFM) dialect is ordinary prose: the
+// marker boundary logic must not run outside mkdocs.
+func TestLazyAdmonitionShapeIsOrdinaryProseUnderGFM(t *testing.T) {
+	const src = "!!! tip \"Title here\"\n    The recommended shape is the v2 API at\n    a decomposed resource. Second sentence here.\n"
+	b := []byte(src)
+	doc := gm.New().Parser().Parse(text.NewReader(b))
+	paras := Paragraphs(doc, b)
+	if len(paras) != 1 {
+		t.Fatalf("got %d paragraphs, want 1", len(paras))
+	}
+	p := paras[0]
+	if p.Boundary[0] {
+		t.Error("marker line is a boundary under GFM, want the admonition rule to be mkdocs-only")
+	}
+	if p.ContPrefix != "" {
+		t.Errorf("ContPrefix = %q, want no admonition body indent under GFM", p.ContPrefix)
+	}
+}
+
+// A reflow wrap cut can end a line at any point in the original paragraph,
+// so the admonition-marker verdict must depend only on the "!!!"/"???"
+// prefix, never on where the line happens to end. An end-anchored version
+// of this predicate let a cut that isolated "!!! ev" on its own line read
+// as a marker when the source line was really "!!! ev BX1201" (issue #51):
+// the verdict flipped depending on a boundary reflow itself moves. Pinning
+// this directly against the regex (rather than only through end-to-end
+// reflow) keeps the property visible if the regex is ever touched again.
+func TestAdmonitionMarkerVerdictIndependentOfLineEnd(t *testing.T) {
+	cases := []struct {
+		name  string
+		short string // a marker-shaped line
+		long  string // the same prefix, with more words appended
+	}{
+		{"three-bang marker", "!!! ev", "!!! ev BX1201"},
+		{"collapsible marker", "??? note", "??? note extra words here"},
+		{"expandable collapsible marker", "???+ tip", `???+ tip "Title" trailing words`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			short := admonitionMarkerRE.MatchString(tc.short)
+			long := admonitionMarkerRE.MatchString(tc.long)
+			if !short {
+				t.Errorf("marker-shaped line %q does not match", tc.short)
+			}
+			if short != long {
+				t.Errorf("verdict depends on line end: short=%v (%q), long=%v (%q)", short, tc.short, long, tc.long)
+			}
+		})
 	}
 }
 
