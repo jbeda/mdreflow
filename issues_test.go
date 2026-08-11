@@ -310,6 +310,42 @@ func TestIssue51InlineModifierAdmonitionsReflow(t *testing.T) {
 	}
 }
 
+// Reflow must not manufacture an admonition marker. A paragraph opening
+// with the marker punctuation but no class word ("!!!" alone) is not a
+// marker, so its lines used to join freely — and a wrap that pulled the
+// next word up produced "!!! word", which the following pass read as a
+// marker and indented the body under. The line is now pinned either way,
+// so the verdict is the same on every pass.
+func TestAdmonitionMarkerNotManufacturedByWrap(t *testing.T) {
+	mdreflow.SetConvergenceBackstop(false)
+	defer mdreflow.SetConvergenceBackstop(true)
+	for _, src := range []string{
+		"!!!\nww wid%\nX+ 0",
+		"???\nsome words that wrap\nand more words here\n",
+		"???+\nsome words that wrap\nand more words here\n",
+	} {
+		t.Run(src, func(t *testing.T) {
+			o := mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 13, Dialect: mdreflow.DialectMkDocs}
+			once, err := mdreflow.Format([]byte(src), o)
+			if err != nil {
+				t.Fatalf("Format: %v", err)
+			}
+			twice, err := mdreflow.Format(once, o)
+			if err != nil {
+				t.Fatalf("Format(Format(x)): %v", err)
+			}
+			if !bytes.Equal(once, twice) {
+				t.Errorf("not idempotent.\nsrc: %q\nonce: %q\ntwice: %q", src, once, twice)
+			}
+			before := normalizeForRender(renderHTML(t, []byte(src)))
+			after := normalizeForRender(renderHTML(t, once))
+			if before != after {
+				t.Errorf("rendered HTML changed.\nsrc: %q\nout: %q\n--- before ---\n%s\n--- after ---\n%s", src, once, before, after)
+			}
+		})
+	}
+}
+
 // An admonition body indented past its own 4 spaces carries that extra
 // whitespace as content of the indented code block goldmark reads it as.
 // Reflow re-emits every body line at exactly 4 spaces, so such a body is

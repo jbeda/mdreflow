@@ -610,7 +610,7 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// nesting), not a replacement for it.
 		contPrefix += "    "
 	}
-	if mkdocs && admonitionMarkerRE.MatchString(trimmed[0]) {
+	if mkdocs && admonitionMarkerPunctRE.MatchString(trimmed[0]) {
 		// A MkDocs admonition written without a blank line after its
 		// marker is one paragraph here: the indented body is a lazy
 		// continuation, not the code block the blank-line spelling
@@ -620,8 +620,17 @@ func build(p ast.Node, source []byte, inBlockquote bool, fmEnd int, precededByTa
 		// extension requires. Same treatment as the footnote definition
 		// above, for the same reason. Gated on the mkdocs dialect: under
 		// GFM a line starting "!!!"/"???" is ordinary prose.
+		//
+		// The line is pinned on the opening punctuation alone, but only a
+		// line that also carries a class word is a marker whose body takes
+		// the indent: pinning keeps the verdict stable across passes (see
+		// admonitionMarkerPunctRE), while indenting under a non-marker like
+		// a bare "!!!" would turn ordinary prose into an indented code
+		// block.
 		boundary[0] = true
-		contPrefix += "    "
+		if admonitionMarkerRE.MatchString(trimmed[0]) {
+			contPrefix += "    "
+		}
 	}
 
 	return Paragraph{
@@ -1356,6 +1365,18 @@ func couldFormLinkRefDef(trimmedLines []string) bool {
 // build's use of it); under other dialects a line starting with "!!!" is
 // ordinary prose.
 var admonitionMarkerRE = regexp.MustCompile(`^(?:!{3}|\?{3}\+?)[ \t]+\S`)
+
+// admonitionMarkerPunctRE matches the opening punctuation of an admonition
+// marker without requiring the class word admonitionMarkerRE demands.
+//
+// A paragraph's first line decides whether the paragraph is the no-blank-
+// line admonition form, and reflow can rewrite that line: joining the next
+// source line onto a bare "!!!" produces "!!! word", which the next pass
+// reads as a marker and indents the body under — output that never settles.
+// The first line's opening bytes are the one part of a paragraph reflow
+// cannot move, so pinning the line whenever it opens with the punctuation
+// keeps the marker verdict identical on every pass.
+var admonitionMarkerPunctRE = regexp.MustCompile(`^(?:!{3}|\?{3}\+?)`)
 
 // admonitionBody reports whether cb is the indented body of a MkDocs
 // admonition and, if so, describes it as a reflow-eligible paragraph.

@@ -22,6 +22,9 @@ At release time the section is retitled to the version and the prose lead is wri
 - Under `--dialect mkdocs`, an admonition marker is now recognized by its opening punctuation plus a class word (`!!! note`, `??? tip`, `???+ warning`) rather than by a pattern anchored to the end of the line.
   A narrow-width wrap could previously cut a line into something the old pattern read as a marker, so the next `mdreflow` run indented the line below it and output stopped being stable (#51).
   Marker lines are left alone whatever follows the class word, so Material for MkDocs's inline modifiers are handled.
+- Under `--dialect mkdocs`, wrapping a paragraph that opens with `!!!` or `???` and no callout type no longer manufactures an admonition marker out of ordinary prose.
+  Pulling the next word up onto the opening line produced something the following run read as a marker and indented the rest of the paragraph under, so output never settled and the file was returned unformatted.
+  Such an opening line is now left where the author put it.
 - Under `--dialect mkdocs`, a single admonition whose body is indented past the 4 spaces the extension requires no longer stops the whole file from formatting.
   Reflow re-emits a callout body at exactly 4 spaces, which would have deleted the extra indent — content, to a CommonMark parser reading that block as code — so the safety check that compares renders was returning the file untouched.
   Such a body is now left alone and the rest of the file formats normally; bodies flush at 4 spaces are unaffected.
