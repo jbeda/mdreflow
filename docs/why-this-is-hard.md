@@ -209,9 +209,13 @@ The MkDocs admonition marker (`!!! note`, `??? warning`, `???+ tip`) is the same
 An earlier version of the marker regex required a type word after the punctuation and anchored the match at end of line — `^(?:!{3}|\?{3}\+?)[ \t]+[A-Za-z][\w-]*(?:[ \t]+"[^"]*")?[ \t]*$` — on the theory that an ordinary paragraph merely starting with `!!!` shouldn't be misread as a callout.
 The end anchor reads a byte reflow moves: a wrap cut that happens to fall right after `!!! ev` leaves that alone on a line, which the anchored regex then matched, even though the source line was `!!! ev BX1201` and never meant to open an admonition (issue #51).
 The verdict flipped depending on where the *previous* pass had broken the line — the same class of self-inflicted instability as the definition zone above, just triggered by the wrap loop instead of a join.
-The fix is the same blunt move: match the prefix only, unanchored, so the verdict depends solely on the three or four bytes reflow never relocates.
-The measured cost is a paragraph starting `!!!` or `???` no longer reflowing under the mkdocs dialect, however the rest of the line reads — narrower coverage of a rare paragraph opener, traded for a guaranteed fixpoint.
-The type-word requirement also turned out to reject real syntax: Material for MkDocs's inline modifiers (`!!! note inline end "Title"`) never matched it, so those admonitions' bodies were silently skipped from reflow entirely; the blunt prefix match recognizes them as a side effect of no longer trying to parse the rest of the line at all.
+The fix is the same blunt move: read a bounded prefix — punctuation, whitespace, one more byte — and nothing else, so the verdict depends solely on bytes reflow never relocates.
+Nothing constrains what follows, which also repaired a second defect: the type-word requirement rejected real syntax, since Material for MkDocs's inline modifiers (`!!! note inline end "Title"`) never matched it and those admonitions' bodies were silently skipped from reflow entirely.
+The measured cost is a paragraph opening `!!! ` or `??? ` no longer reflowing under the mkdocs dialect, however the rest of the line reads — narrower coverage of a rare paragraph opener, traded for a guaranteed fixpoint.
+
+Blunt does not mean unbounded, and the boundary is worth stating precisely, because a first attempt at this rule matched the punctuation alone and that was too blunt. `!!!bang`, `!!!!x`, `???01010` and a bare `!!!` then counted as markers and claimed the indented block beneath them.
+Where that block is an indented code block rather than prose, treating it as an admonition body reflows and escapes its contents — `0)` becomes `0\)` — which is a render change, not a coverage loss.
+Requiring whitespace and one more byte after the punctuation costs nothing in fixpoint terms, since it is still a bounded prefix, and it keeps the rule from claiming blocks that were never admonition bodies at all.
 
 ## Dialects multiply the grammar
 

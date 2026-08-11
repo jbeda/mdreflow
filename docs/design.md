@@ -141,7 +141,9 @@ The only behavior linkify actually governs in span computation is code-span pair
 Its true target renderer (Python-Markdown) is not CommonMark and cannot be modeled by our oracle, so its recognitions must stay narrow and are verified externally (full `mkdocs build` diffs), per the render-backstop section's divergence caveat.
 
 (Amendment 2026-08-11.)
-The admonition-marker line itself — the trigger for the body recognition above, and for the same line acting as an immovable boundary when a marker and its body are lazily joined into one paragraph (no blank line between them) — is recognized bluntly: a line starting with `!!!` or `???`/`???+` is a marker, whatever follows on the line.
+The admonition-marker line itself — the trigger for the body recognition above, and for the same line acting as an immovable boundary when a marker and its body are lazily joined into one paragraph (no blank line between them) — is recognized from a bounded prefix: `!!!` or `???`/`???+`, whitespace, then at least one more byte.
+Nothing about the verdict depends on where the line ends, and nothing constrains what follows the class word, so Material for MkDocs's inline modifiers (`!!! note inline end "Title"`) and non-alphabetic types both match.
+The class word is required: a line that is only the punctuation, or runs it straight into other characters (`!!!bang`, `!!!!x`, `???01010`), is not a marker and must not claim the indented block below it — where that block is an indented code block, treating it as admonition prose reflows and escapes its contents, changing what the document renders to.
 This recognition, and the boundary it produces, are mkdocs-only; under `gfm` a line starting `!!!` or `???` is ordinary prose.
 See why-this-is-hard.md's "Why the verdicts are blunt" for why the prefix match replaced an earlier, end-anchored, type-word-requiring regex.
 

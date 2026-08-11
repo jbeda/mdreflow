@@ -1333,19 +1333,29 @@ func couldFormLinkRefDef(trimmedLines []string) bool {
 }
 
 // admonitionMarkerRE matches a MkDocs / Python-Markdown admonition marker
-// line by prefix alone: a line starting with "!!!" or "???"/"???+" is a
-// marker, whatever follows it and however the line ends. The verdict must
-// not depend on where the line ends, since reflow is exactly what moves
-// that boundary — an end-anchored, type-word-requiring version of this
-// regex let a wrap cut turn an ordinary paragraph's own break point into a
-// marker match on the next pass (issue #51). A blunt prefix match is a
-// fixpoint: it looks only at bytes reflow cannot move. It also means
-// "!!!!" and "!!!bang" count as markers, and it recognizes Material for
-// MkDocs's inline modifiers ("!!! note inline end \"Title\""), which the
-// stricter regex missed entirely. Callers gate this on the mkdocs dialect
-// (see admonitionBodies and build's use of it); under other dialects a
-// line starting with "!!!" is ordinary prose.
-var admonitionMarkerRE = regexp.MustCompile(`^(?:!{3}|\?{3}\+?)`)
+// line: "!!!" or "???"/"???+", a whitespace run, then at least one more
+// byte. Everything it reads is a bounded prefix; nothing depends on where
+// the line ends, which is the property that matters, since reflow is
+// exactly what moves a line ending. An end-anchored, type-word-requiring
+// version let a wrap cut turn a paragraph's own break point into a marker
+// match on the next pass (issue #51).
+//
+// Deliberately looser than Python-Markdown's own grammar in what may
+// follow the whitespace: it accepts any class word, so Material for
+// MkDocs's inline modifiers ("!!! note inline end \"Title\"") and
+// non-alphabetic types both match. Requiring a specific shape there is
+// what made the old pattern miss real admonitions.
+//
+// The trailing "\S" is load-bearing, not decoration. Without it, shapes
+// that are not admonitions at all — "!!!!x", "!!!bang", "???01010", a
+// bare "!!!" — claim the indented block below them. When that block is an
+// indented code block, treating it as admonition prose reflows and
+// escapes its contents, which changes what the document renders to.
+//
+// Callers gate this on the mkdocs dialect (see admonitionBodies and
+// build's use of it); under other dialects a line starting with "!!!" is
+// ordinary prose.
+var admonitionMarkerRE = regexp.MustCompile(`^(?:!{3}|\?{3}\+?)[ \t]+\S`)
 
 // admonitionBody reports whether cb is the indented body of a MkDocs
 // admonition and, if so, describes it as a reflow-eligible paragraph.

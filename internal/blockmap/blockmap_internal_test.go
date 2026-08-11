@@ -750,7 +750,10 @@ func TestMkDocsAdmonitionBody(t *testing.T) {
 	}{
 		{"body is invisible under the default dialect", body, false, false},
 		{"body reflows under the mkdocs dialect", body, true, true},
-		{"bare marker prefix is recognized", "!!!\n\n    Some prose here. And more of it.\n", true, true},
+		{"bare marker with no class word is not a marker", "!!!\n\n    Some prose here. And more of it.\n", true, false},
+		{"marker prefix run-on into a word is not a marker", "!!!bang\n\n    Some prose here. And more of it.\n", true, false},
+		{"four bangs is not a marker", "!!!!x\n\n    Some prose here. And more of it.\n", true, false},
+		{"question prefix run-on into digits is not a marker", "???01010\n\n    Some prose here. And more of it.\n", true, false},
 		{"plain indented code after prose is untouched", "Some prose here.\n\n    func main() { x := 1\n    fmt.Println(x) }\n", true, false},
 		{"a fenced block inside the body is untouched", "!!! note \"X\"\n\n    ```go\n    x := 1\n    ```\n", true, false},
 		{"a multi-paragraph body is left alone", "!!! note \"X\"\n\n    First para here.\n\n    Second para here.\n", true, false},
