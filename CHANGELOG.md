@@ -9,15 +9,35 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
-- New doc: [docs/why-this-is-hard.md](docs/why-this-is-hard.md) explains why safe Markdown reflow is hard and what to do when a paragraph will not reflow.
-- A paragraph sitting directly under a line whose only `[label]:` shape is mid-prose (typically a quoted error message in inline code) now reflows; a definition opening after a list marker (`- [a]: /url`) now freezes its whole run, the same as a top-level definition.
+## v0.1.7 (2026-08-11)
+
+When mdreflow declines to reflow a paragraph, it can now tell you why.
+The new `--explain` flag prints one record per frozen paragraph — file and line range, a stable machine-readable reason code, and a remediation hint — so authors get the fix for their exact case (usually: move the literal into a fenced code block) and agents get coverage measurement in one pass instead of hand-classifying diffs.
+On the 745-file real-world docset used to validate this release, 98.6% of paragraphs reflow, and every frozen one now names its reason.
+
+Coverage also improves where the old rule was bluntest: prose that merely quotes a `[label]:`-shaped error message in inline code no longer freezes the paragraph below it as definition machinery — the freeze now requires a definition chain that could actually reach the shape (#37, reported by Karl Isenberg with the fuzzing evidence that drove the fix).
+
+Two correctness fixes land where a hand-written rule disagreed with the Markdown parser; both were fuzz-found, and both now defer to the parser's own judgment.
+
+Nothing you must act on: no breaking changes, no changed defaults; one new flag.
+
+### Added
+
 - New `--explain` flag (#38): reports every paragraph mdreflow leaves unformatted to stderr — location, a stable machine-legible reason code, and a remediation hint.
   Combines with every mode and never changes output or exit codes.
   Also available as a library call, `mdreflow.Explain`.
-- A footnote-shaped paragraph (`[^label]: …`) sitting directly under link-reference-definition machinery — a `[label]:` line or a bare `[^label]:` opener — no longer reflows (#41): joining its lines could change whether the definition above it forms at all.
-  The ordinary back-to-back footnote layout is unaffected and keeps reflowing.
+- New doc: [docs/why-this-is-hard.md](docs/why-this-is-hard.md) explains why safe Markdown reflow is hard and what to do when a paragraph will not reflow.
+
+### Changed
+
+- A paragraph sitting directly under a line whose only `[label]:` shape is mid-prose (typically a quoted error message in inline code) now reflows; a definition opening after a list marker (`- [a]: /url`) now freezes its whole run, the same as a top-level definition (#37).
+
+### Fixed
+
 - Trailing double-space and trailing-backslash line endings are now treated as hard breaks only when the Markdown parser agrees they render as one (#39).
   Previously a task-list line whose prose is just the checkbox (`* [X]` followed by two trailing spaces) had those spaces read as a hard break even though it renders as a soft one, so the paragraph was left unformatted; it now reflows.
+- A footnote-shaped paragraph (`[^label]: …`) sitting directly under link-reference-definition machinery — a `[label]:` line or a bare `[^label]:` opener — no longer reflows (#41): joining its lines could change whether the definition above it forms at all.
+  The ordinary back-to-back footnote layout is unaffected and keeps reflowing.
 
 ## v0.1.6 (2026-08-10)
 
