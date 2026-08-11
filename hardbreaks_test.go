@@ -65,3 +65,37 @@ func TestHardBreakStyleMatrix(t *testing.T) {
 		}
 	}
 }
+
+// TestHardBreakSpacesCheckboxFallsBackToBackslash regression-tests #40: a
+// hard break whose cluster prose reduces to exactly a checkbox shape
+// ("[ ]"/"[x]"/"[X]") on a task-list item's first paragraph line, under
+// HardBreakSpaces, must not emit the configured "  " marker — the
+// task-list extension's own regexp (`^\[([\sxX])\]\s*`) swallows the
+// checkbox, the two marker spaces, and the line ending together, losing
+// the hard break entirely on reparse. mdreflow falls back to the
+// backslash spelling at this one position instead.
+func TestHardBreakSpacesCheckboxFallsBackToBackslash(t *testing.T) {
+	src := "* [X] <br>\n0\n"
+	got, err := mdreflow.Format([]byte(src), mdreflow.Options{HardBreaks: mdreflow.HardBreakSpaces})
+	if err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+	want := "* [X]\\\n  0\n"
+	if string(got) != want {
+		t.Errorf("Format(checkbox hard break, spaces style) = %q, want %q", got, want)
+	}
+
+	before := render.Normalize(renderHTML(t, []byte(src)))
+	after := render.Normalize(renderHTML(t, got))
+	if before != after {
+		t.Errorf("checkbox hard-break fallback changed rendered HTML.\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	}
+
+	twice, err := mdreflow.Format(got, mdreflow.Options{HardBreaks: mdreflow.HardBreakSpaces})
+	if err != nil {
+		t.Fatalf("Format(Format(x)): %v", err)
+	}
+	if string(twice) != string(got) {
+		t.Errorf("Format not idempotent for checkbox hard break: got %q, then %q", got, twice)
+	}
+}

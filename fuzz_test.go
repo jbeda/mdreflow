@@ -840,21 +840,25 @@ func hasHardBreakDeclarationRisk(src []byte) bool {
 }
 
 // deriveOptions computes an mdreflow.Options from src's own bytes, so
-// FuzzFormat exercises all three modes and a spread of MaxWidth values
-// without a second fuzz parameter (which would require re-seeding every
-// existing corpus entry with a paired mode/width byte). The derivation is
-// a simple, deterministic hash of src: fuzzing mutates src, which mutates
-// the derived options right along with the content being formatted, so
-// the corpus ends up covering combinations organically. Every field is
-// always derived into a combination Format accepts (MaxWidth forced to 0
-// whenever mode comes out ModePara — see Options.MaxWidth's doc comment),
-// since an error here would always be a deriveOptions bug, never a Format
-// bug worth failing the fuzz target over.
+// FuzzFormat exercises all three modes, a spread of MaxWidth values, and
+// all three hard-break styles without extra fuzz parameters (which would
+// require re-seeding every existing corpus entry with paired bytes). The
+// derivation is a simple, deterministic hash of src: fuzzing mutates src,
+// which mutates the derived options right along with the content being
+// formatted, so the corpus ends up covering combinations organically.
+// Every field is always derived into a combination Format accepts
+// (MaxWidth forced to 0 whenever mode comes out ModePara — see
+// Options.MaxWidth's doc comment), since an error here would always be a
+// deriveOptions bug, never a Format bug worth failing the fuzz target
+// over.
 //
 // (Bits 16/17 of the hash once selected typography flags; typography is
-// removed, and the bits are deliberately left unused rather than
-// re-purposed so existing corpus entries keep deriving the same mode and
-// width they were minimized under.)
+// removed. HardBreaks now claims bit 16, read the same way mode and width
+// read their own bit ranges — (h>>16)%3 — so existing corpus entries keep
+// deriving the same mode and width they were minimized under (mode and
+// width's own formulas are untouched) while also getting a hard-break
+// style. Bit 17 is left for #26 (fuzzing the mkdocs dialect) to claim as
+// its own flag.)
 func deriveOptions(src []byte) mdreflow.Options {
 	var h uint32
 	for _, b := range src {
@@ -865,7 +869,8 @@ func deriveOptions(src []byte) mdreflow.Options {
 	if mode != mdreflow.ModePara {
 		width = int((h >> 8) % 121) // 0..120: spans "unbounded"/"default" (0) through comfortably wider than most test prose.
 	}
-	return mdreflow.Options{Mode: mode, MaxWidth: width}
+	hardBreaks := mdreflow.HardBreakStyle((h >> 16) % 3) // br(0) | spaces(1) | backslash(2)
+	return mdreflow.Options{Mode: mode, MaxWidth: width, HardBreaks: hardBreaks}
 }
 
 // FuzzFormat fuzzes Format across every testdata fixture as seed corpus

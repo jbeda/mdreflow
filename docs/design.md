@@ -217,6 +217,9 @@ An accidental double-space hard break survives, but shows up loudly in the diff 
 For authors who habitually type two spaces after periods, the opt-in `StripSentenceTerminalBreaks` option treats a trailing double-space *immediately after sentence-terminal punctuation* as accidental and removes it (a documented, flag-reversible exception to render preservation).
 Hard breaks anywhere else are always respected.
 
+Emission has the mirror-image hazard to detection's #39: normalizing to the configured style can produce a marker an inline extension will itself swallow. `HardBreakSpaces` on a task-list item's first paragraph line, when the cluster's prose reduces to exactly a checkbox shape (`[ ]`/`[x]`/`[X]`), is the reachable case — the task-list extension's own regexp (`^\[([\sxX])\]\s*`) consumes the checkbox, the two marker spaces, and the line ending together, losing the break on reparse.
+At that one position mdreflow falls back to the backslash spelling instead, which the regexp's `\s*` does not consume (#40).
+
 ### Typography: removed (2026-08-09)
 
 mdreflow shipped opt-in smart-quote and ellipsis substitution through v0.1.4 and removed it, deliberately.

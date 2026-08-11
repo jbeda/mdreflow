@@ -9,6 +9,8 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+- Fixed: `--hard-breaks=spaces` no longer silently drops a hard break on a checked/unchecked task-list item's first line when the line is just the checkbox (e.g. `- [x] <br>`) — mdreflow now falls back to the backslash marker in that one case, since the spaces marker would otherwise be swallowed by task-list parsing.
+
 ## v0.1.7 (2026-08-11)
 
 When mdreflow declines to reflow a paragraph, it can now tell you why.

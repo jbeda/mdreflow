@@ -316,6 +316,25 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 		clusterLines := computeLines(text, seg, opts)
 		for i, s := range clusterLines {
 			if i == len(clusterLines)-1 {
+				if len(outLines) == 0 && marker == "  " && checkboxShapeRE.MatchString(s) && isListItemFirstChild(p.Node) {
+					// A spaces marker ("  ") attached to a paragraph's
+					// first output line whose entire prose is a
+					// checkbox shape, on a list item's first child, is
+					// swallowed whole by the task-list extension's own
+					// regexp (`^\[([\sxX])\]\s*`, extension/tasklist.go)
+					// — its trailing \s* consumes the two marker spaces
+					// and the line ending right along with the
+					// checkbox, leaving no text node to carry the
+					// break: the hard break is lost on reparse (#40).
+					// A backslash marker survives: \s* stops at the
+					// non-whitespace "\", which parses as its own hard
+					// break. Only this one position is affected — a
+					// literal <br> is raw HTML in any context, and a
+					// bare backslash marker isn't whitespace for the
+					// regexp to eat either, so neither other style nor
+					// any other position needs this fallback.
+					marker = "\\"
+				}
 				s = attachMarker(s, marker)
 			}
 			outLines = append(outLines, outLine{text: s})
@@ -2017,6 +2036,24 @@ func isASCIIPunct(b byte) bool {
 		return false
 	}
 	return true
+}
+
+// checkboxShapeRE matches an output line whose entire content is a
+// task-list checkbox shape: the exact bytes the extension's own
+// taskListRegexp (`^\[([\sxX])\]\s*`) consumes, with no trailing
+// whitespace (already trimmed by joinClusterLines/computeLines) and no
+// following prose.
+var checkboxShapeRE = regexp.MustCompile(`^\[[ xX]\]$`)
+
+// isListItemFirstChild reports whether node is a list item's first child —
+// the same condition goldmark's task-list inline parser itself requires
+// (extension/tasklist.go's taskCheckBoxParser.Parse:
+// parent.Parent().FirstChild() == parent and parent.Parent() is a
+// *ast.ListItem) before it will recognize a leading "[ ]"/"[x]"/"[X]" as a
+// checkbox at all.
+func isListItemFirstChild(node ast.Node) bool {
+	parent := node.Parent()
+	return parent != nil && parent.Kind() == ast.KindListItem && parent.FirstChild() == node
 }
 
 // lineFrag is one source line's contribution to a hard-break cluster: its
