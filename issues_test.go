@@ -309,3 +309,32 @@ func TestIssue51InlineModifierAdmonitionsReflow(t *testing.T) {
 		})
 	}
 }
+
+// A shape that merely starts with the marker punctuation, but is not an
+// admonition marker, must not claim the indented block below it. When that
+// block is an indented code block, treating it as admonition prose reflows
+// and escapes its contents, which changes what the document renders to.
+func TestAdmonitionNonMarkerLeavesIndentedCodeAlone(t *testing.T) {
+	mdreflow.SetRenderBackstop(false)
+	defer mdreflow.SetRenderBackstop(true)
+	for _, src := range []string{
+		"!!!\n\n    0)",
+		"!!! \n\n    0)",
+		"!!!bang\n\n    0)",
+		"!!!!x\n\n    0)",
+		"???01010\n\n    0)",
+	} {
+		t.Run(src, func(t *testing.T) {
+			o := mdreflow.Options{Mode: mdreflow.ModePara, Dialect: mdreflow.DialectMkDocs}
+			out, err := mdreflow.Format([]byte(src), o)
+			if err != nil {
+				t.Fatalf("Format: %v", err)
+			}
+			before := normalizeForRender(renderHTML(t, []byte(src)))
+			after := normalizeForRender(renderHTML(t, out))
+			if before != after {
+				t.Errorf("rendered HTML changed.\nsrc: %q\nout: %q\n--- before ---\n%s\n--- after ---\n%s", src, out, before, after)
+			}
+		})
+	}
+}
