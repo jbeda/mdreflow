@@ -295,16 +295,19 @@ definitions, fuzz-found), and the content profile is the
 opposite: a footnote body is real prose. Two protections replace the guard
 pile for the caret case:
 
-The exemption shields a footnote-shaped paragraph from *caret-shaped*
-neighbor evidence only (the back-to-back `[^1]: …` / `[^2]: …` layout it
-exists for). Non-caret definition machinery above — a `[label]:` chain
-start, an orphaned `]:` closer, or their transitive reach through the run —
-freezes a footnote-shaped paragraph exactly as it freezes any other: a
-titleless `[label]:` line completes its destination from the line below it,
-so joining that paragraph's lines changes whether the definition forms at
-all (fuzz-found, issue #41: `" [0]:"` above a `[^0]:0` paragraph). The
-per-line facts table tracks the two kinds of seen-above evidence as
-separate bits so this is a rule over facts, not a new scan.
+The exemption applies to a paragraph's *own* shape only — the zone's
+neighbor checks have no footnote carve-out (issue #41 removed the one they
+had). None is needed: a complete footnote-body line (`[^1]: body text`, the
+line above in the ordinary back-to-back layout) sets none of the facts the
+neighbor checks consult, so back-to-back footnotes stay eligible for free —
+while the caret lines that do set a fact (bare `[^label]:` openers,
+orphaned closers) are live definition machinery: like a titleless
+`[label]:` line, a bare caret opener completes its destination from the
+line below it, so joining the paragraph beneath changes whether the
+definition forms at all. Both spellings were fuzz-found under the old
+blanket carve-out (`" [0]:"` and `" [^0]:"` above a `[^0]:0` paragraph),
+and every line the checks key on is itself frozen, so the uniform rule is
+verdict-stable.
 
 - Emission escapes, label-shape-agnostic: an output line that would itself
   parse as a complete definition (judged empirically — the line is parsed in

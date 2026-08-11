@@ -174,11 +174,11 @@ func TestInLinkRefDefZone(t *testing.T) {
 			source: "[^foo]:\nbar", trimmed: []string{"bar"}, contentStart: 8, want: true,
 		},
 		{
-			// The exemption instead fires when THIS paragraph's own first
-			// line is the footnote opener — even directly after another
-			// (possibly also caret-led) definition line, the ordinary
-			// back-to-back footnote layout.
-			name:         "footnote-own paragraph exempt even when preceded by another def line",
+			// The ordinary back-to-back footnote layout stays eligible
+			// with no special case: a COMPLETE footnote-body line above
+			// ("[^1]: first") sets none of the neighbor facts, so nothing
+			// fires (see inLinkRefDefZone's no-exemption comment).
+			name:         "back-to-back footnote bodies stay eligible (complete def line above sets no facts)",
 			source:       "[^1]: first\n[^2]: second",
 			trimmed:      []string{"[^2]: second"},
 			contentStart: 12,
@@ -198,17 +198,22 @@ func TestInLinkRefDefZone(t *testing.T) {
 			want:         true,
 		},
 		{
-			// The caret side of the same split: a bare caret opener above
-			// a footnote-shaped paragraph stays exempt (the documented
-			// caret scope gate owns that hazard).
-			name:         "bare caret opener above a footnote-shaped paragraph stays exempt",
+			// The caret side is hazardous too: a bare caret opener is a
+			// titleless definition to the footnote-less parser and
+			// completes its destination from the line below, so it
+			// freezes a footnote-shaped paragraph the same way. Found by
+			// FuzzFormat on " [^0]:\n [^0]:0\n\"\"0" (seed
+			// issue41_caret_above_footnote_body) four minutes into the
+			// post-#41 soak, which reflowed under the exemption the first
+			// #41 fix kept for caret evidence.
+			name:         "bare caret opener above a footnote-shaped paragraph freezes it too",
 			source:       "[^0]:\n[^1]: body more",
 			trimmed:      []string{"[^1]: body more"},
 			contentStart: 6,
-			want:         false,
+			want:         true,
 		},
 		{
-			// Transitive reach splits the same way: a non-caret chain
+			// Transitive reach behaves the same: a non-caret chain
 			// start farther up the run freezes a footnote-shaped
 			// paragraph...
 			name:         "#41 transitive: non-caret def beyond the immediate neighbor freezes a footnote body",
@@ -218,12 +223,13 @@ func TestInLinkRefDefZone(t *testing.T) {
 			want:         true,
 		},
 		{
-			// ...while a bare caret opener farther up does not.
-			name:         "transitive caret reach stays exempt for a footnote body",
+			// ...and so does a bare caret opener farther up: the
+			// transitive bit carries all three evidence kinds uniformly.
+			name:         "transitive caret reach freezes a footnote body too",
 			source:       "[^0]:\nx y\n[^1]: body",
 			trimmed:      []string{"[^1]: body"},
 			contentStart: 10,
-			want:         false,
+			want:         true,
 		},
 		{
 			// The same transitive caret reach still freezes a paragraph

@@ -14,7 +14,7 @@ At release time the section is retitled to the version and the prose lead is wri
 - New `--explain` flag (#38): reports every paragraph mdreflow leaves unformatted to stderr — location, a stable machine-legible reason code, and a remediation hint.
   Combines with every mode and never changes output or exit codes.
   Also available as a library call, `mdreflow.Explain`.
-- A footnote-shaped paragraph (`[^label]: …`) sitting directly under link-reference-definition machinery no longer reflows (#41): joining its lines could change whether the definition above it forms at all.
+- A footnote-shaped paragraph (`[^label]: …`) sitting directly under link-reference-definition machinery — a `[label]:` line or a bare `[^label]:` opener — no longer reflows (#41): joining its lines could change whether the definition above it forms at all.
   The ordinary back-to-back footnote layout is unaffected and keeps reflowing.
 - Trailing double-space and trailing-backslash line endings are now treated as hard breaks only when the Markdown parser agrees they render as one (#39).
   Previously a task-list line whose prose is just the checkbox (`* [X]` followed by two trailing spaces) had those spaces read as a hard break even though it renders as a soft one, so the paragraph was left unformatted; it now reflows.
