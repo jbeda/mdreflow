@@ -10,7 +10,7 @@ At release time the section is retitled to the version and the prose lead is wri
 ## Unreleased
 
 - Fixed: `--hard-breaks=spaces` no longer silently drops a hard break on a checked/unchecked task-list item's first line when the line is just the checkbox (e.g. `- [x] <br>`) — mdreflow now falls back to the backslash marker in that one case, since the spaces marker would otherwise be swallowed by task-list parsing.
-- Fixed: `--hard-breaks=backslash` no longer emits an unreadable hard break when prose already ends in one or more backslashes (e.g. an escaped literal backslash) — mdreflow now falls back to `<br>` in that one case, since gluing another backslash on would produce a run the Markdown parser does not read back as a break.
+- Fixed: `--hard-breaks=backslash` no longer emits an unreadable hard break when prose ends in an escaped literal backslash (e.g. `path\\`) — mdreflow now falls back to `<br>` in that one case, since gluing another backslash on would produce a run the Markdown parser does not read back as a break.
 
 ## v0.1.7 (2026-08-11)
 

@@ -100,13 +100,36 @@ func TestHardBreakSpacesCheckboxFallsBackToBackslash(t *testing.T) {
 	}
 }
 
+// TestHardBreakBackslashOddRunKeepsConfiguredStyle pins the boundary of
+// #47's fallback: prose ending in an *odd* backslash run still gets the
+// configured backslash marker, space-separated by the escape-fusion rule,
+// which leaves a trailing run of exactly one — a hard break goldmark does
+// read back. The fallback is only for runs the configured style cannot
+// serve.
+func TestHardBreakBackslashOddRunKeepsConfiguredStyle(t *testing.T) {
+	src := "a\\  \n0\n"
+	got, err := mdreflow.Format([]byte(src), mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 54, HardBreaks: mdreflow.HardBreakBackslash})
+	if err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+	want := "a\\ \\\n0\n"
+	if string(got) != want {
+		t.Errorf("Format(odd backslash run, backslash style) = %q, want %q", got, want)
+	}
+
+	before := render.Normalize(renderHTML(t, []byte(src)))
+	after := render.Normalize(renderHTML(t, got))
+	if before != after {
+		t.Errorf("odd backslash run changed rendered HTML.\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	}
+}
+
 // TestHardBreakBackslashRunFallsBackToBr regression-tests #47: a backslash
-// hard-break marker glued onto prose that itself ends in one or more
-// backslashes produces a trailing run goldmark's inline parser does not
-// read back as a hard break (only a trailing run of exactly one backslash
-// is special-cased — see attachMarker's doc comment). mdreflow falls back
-// to the "<br>" spelling at this one position instead, regardless of the
-// configured style.
+// hard-break marker glued onto prose that ends in an even, non-zero
+// backslash run would produce a trailing run goldmark's inline parser does
+// not read back as a hard break (only a trailing run of exactly one
+// backslash is special-cased — see attachMarker's doc comment). mdreflow
+// falls back to the "<br>" spelling at this one position instead.
 func TestHardBreakBackslashRunFallsBackToBr(t *testing.T) {
 	src := "y\\\\\n\\\n0\n"
 	got, err := mdreflow.Format([]byte(src), mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 54, HardBreaks: mdreflow.HardBreakBackslash})

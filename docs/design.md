@@ -220,8 +220,9 @@ Hard breaks anywhere else are always respected.
 Emission has the mirror-image hazard to detection's #39: normalizing to the configured style can produce a marker an inline extension will itself swallow. `HardBreakSpaces` on a task-list item's first paragraph line, when the cluster's prose reduces to exactly a checkbox shape (`[ ]`/`[x]`/`[X]`), is the reachable case — the task-list extension's own regexp (`^\[([\sxX])\]\s*`) consumes the checkbox, the two marker spaces, and the line ending together, losing the break on reparse.
 At that one position mdreflow falls back to the backslash spelling instead, which the regexp's `\s*` does not consume (#40).
 
-`HardBreakBackslash` has its own such hazard: gluing a bare `\` onto prose that already ends in one or more backslashes produces a trailing run of two or more, and goldmark's inline parser reads back a hard break only from a trailing run of *exactly* one backslash (confirmed empirically — runs of 0, 2, 3, 4, 5, and 6 trailing backslashes all parse as literal text, never a break).
-At that position mdreflow falls back to `<br>` instead — raw HTML, so it parses as a break regardless of what precedes it (#47).
+`HardBreakBackslash` has its own such hazard: goldmark's inline parser reads back a hard break only from a trailing run of *exactly* one backslash (confirmed empirically — runs of 0, 2, 3, 4, 5, and 6 all parse as literal text, never a break).
+Prose ending in an *even*, non-zero run — an escaped literal backslash — is the case the configured spelling cannot serve, since appending lands on a run of three or more; mdreflow falls back to `<br>` there, raw HTML that parses as a break regardless of what precedes it (#47).
+An *odd* run needs no fallback: the escape-fusion rule separates the marker with a space, leaving a run of exactly one, so the configured style is kept.
 
 ### Typography: removed (2026-08-09)
 

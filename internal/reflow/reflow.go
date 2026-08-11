@@ -2018,24 +2018,22 @@ func attachMarker(s, marker string) string {
 	if marker == "" || s == "" {
 		return s + marker
 	}
-	if marker == "\\" && trailingBackslashCount(s) > 0 {
-		// A bare backslash marker glued onto prose that itself ends in one
-		// or more backslashes produces a trailing run of two or more
-		// bytes, which goldmark's inline parser does not read back as a
-		// hard break: empirically (see hardbreaks_test.go), only a
-		// trailing run of *exactly* one backslash is special-cased —
-		// runs of 0, 2, 3, 4, 5, and 6 all parse as literal text.
-		// Appending here would always land at 2+ (s already contributes
-		// 1+), so the marker falls back to "<br>" at this one position
-		// instead. "<br>" is raw HTML and is recognized as a hard break
-		// regardless of what precedes it (aside from the escape-fusion
-		// case the check below still guards for its own leading "<");
-		// two trailing spaces was the other candidate, but #40's
-		// checkbox-swallowing hazard is specific to that spelling, and a
-		// checkbox-shaped s (exactly "[ ]"/"[x]"/"[X]", per
-		// checkboxShapeRE) can never itself end in a backslash, so this
-		// fallback and #40's cannot both apply to the same line — no need
-		// to pick between them or guard one against the other.
+	if marker == "\\" && trailingBackslashCount(s) > 0 && !endsInUnescapedBackslash(s) {
+		// goldmark reads a hard break from a trailing backslash run of
+		// *exactly* one; runs of two or more parse as literal text
+		// (measured, not assumed — see hardbreaks_test.go). Prose ending
+		// in an even, non-zero run is the case a bare backslash marker
+		// cannot serve: appending lands on an odd run of three or more.
+		//
+		// An odd run needs no fallback — the escape-fusion check below
+		// separates the marker with a space, leaving a run of exactly
+		// one — so the configured style still works there and is kept.
+		//
+		// "<br>" is raw HTML and reads as a break regardless of what
+		// precedes it. Two spaces was the other candidate, but that
+		// spelling carries #40's checkbox-swallowing hazard; the two
+		// fallbacks can never contend for the same line anyway, since a
+		// checkbox-shaped s (exactly "[ ]"/"[x]"/"[X]") ends in "]".
 		marker = "<br>"
 	}
 	if endsInUnescapedBackslash(s) && isASCIIPunct(marker[0]) {
