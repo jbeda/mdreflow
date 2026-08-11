@@ -30,13 +30,14 @@ tasks:
       - go install -ldflags "{{ .LDFLAGS }}" ./cmd/mdreflow
 
   verify:
-    desc: "Full verification chain: build, vet, gofmt, lint, tests"
+    desc: "Full verification chain: build, vet, gofmt, lint, tests, dogfood"
     cmds:
       - go build ./...
       - go vet ./...
       - test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - golangci-lint run
       - go test ./... -count=1
+      - task: dogfood-check
 
   fuzz:
     desc: "Foreground fuzz soak (FUZZTIME=300s default); required after any reflow-logic change"

@@ -3,9 +3,12 @@ package mdreflow_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"sync/atomic"
 	"testing"
 	"unicode/utf8"
 
@@ -976,7 +979,7 @@ func FuzzFormat(f *testing.F) {
 		// still meaningful, compare with the same whitespace
 		// normalization format_test.go uses.
 		//
-		if !hasRenderRiskyShape(src) && !hasRenderRiskyShape(out) {
+		if noteRenderOracle(src, out) {
 			before := normalizeForRender(renderHTML(t, src))
 			after := normalizeForRender(renderHTML(t, out))
 			if before != after {
@@ -986,8 +989,9 @@ func FuzzFormat(f *testing.F) {
 	})
 }
 
-// hasRenderRiskyShape ORs together all fifteen documented, narrow
-// render-preservation exceptions above. It is checked against *both* src
+// hasRenderRiskyShape reports whether any of the documented, narrow
+// render-preservation exceptions in renderGates fires. It is checked
+// against *both* src
 // and out (see FuzzFormat's call site), not just src: most of these
 // exceptions were found and documented against a pre-existing shape
 // already present in the *source*, but a width-based cut (ModeWrap, and
@@ -1005,19 +1009,95 @@ func FuzzFormat(f *testing.F) {
 // htmlTagSpans and bracketedSpans doc comments, and mdreflow issue #3),
 // and the typography feature they existed for has since been removed.
 func hasRenderRiskyShape(b []byte) bool {
-	return hasHardBreakAdjacentDelimiter(b) ||
-		hasMultilineCodeSpanCandidate(b) ||
-		hasLinkRefDefCollisionRisk(b) ||
-		hasIrregularCRRun(b) ||
-		hasSplitTaskListMarker(b) ||
-		hasMultilineLinkLabelRisk(b) ||
-		hasTableAdjacentSetextLine(b) ||
-		hasDeepListContinuationIndent(b) ||
-		hasNestedDashOnlyLine(b) ||
-		hasBareBrLine(b) ||
-		hasTagLineWithInsignificantTab(b) ||
-		hasMultilineInlineTagCandidate(b) ||
-		hasWrapInducedBlockInterruptRisk(b) ||
-		hasFreshTableAdjacency(b) ||
-		hasHardBreakDeclarationRisk(b)
+	return firstRenderGate(b) >= 0
+}
+
+// renderGates lists the exceptions in the order they are checked. The
+// names are what the skip report prints, so keep them short and specific.
+var renderGates = []struct {
+	name string
+	fn   func([]byte) bool
+}{
+	{"hard-break-adjacent-delimiter", hasHardBreakAdjacentDelimiter},
+	{"multiline-code-span", hasMultilineCodeSpanCandidate},
+	{"link-ref-def-collision", hasLinkRefDefCollisionRisk},
+	{"irregular-cr-run", hasIrregularCRRun},
+	{"split-task-list-marker", hasSplitTaskListMarker},
+	{"multiline-link-label", hasMultilineLinkLabelRisk},
+	{"table-adjacent-setext", hasTableAdjacentSetextLine},
+	{"deep-list-continuation-indent", hasDeepListContinuationIndent},
+	{"nested-dash-only-line", hasNestedDashOnlyLine},
+	{"bare-br-line", hasBareBrLine},
+	{"tag-line-insignificant-tab", hasTagLineWithInsignificantTab},
+	{"multiline-inline-tag", hasMultilineInlineTagCandidate},
+	{"wrap-induced-block-interrupt", hasWrapInducedBlockInterruptRisk},
+	{"fresh-table-adjacency", hasFreshTableAdjacency},
+	{"hard-break-declaration", hasHardBreakDeclarationRisk},
+}
+
+// firstRenderGate returns the index of the first gate that fires for b, or
+// -1 if none do. It short-circuits, so an input several gates would flag is
+// attributed to the earliest one — enough to tell which gate to narrow
+// next, and cheap enough for the fuzz inner loop.
+func firstRenderGate(b []byte) int {
+	for i, g := range renderGates {
+		if g.fn(b) {
+			return i
+		}
+	}
+	return -1
+}
+
+// Skip accounting for the render-preservation oracle. A green fuzz run
+// says nothing about how much of the oracle was dark; these counters turn
+// that into a number reportRenderSkips prints at the end of the run.
+var (
+	renderOracleRuns  atomic.Int64
+	renderOracleSkips atomic.Int64
+	renderGateHits    = make([]atomic.Int64, len(renderGates))
+)
+
+// noteRenderOracle records one oracle decision, attributing a skip to the
+// gate that caused it, and reports whether the check should run.
+func noteRenderOracle(src, out []byte) bool {
+	renderOracleRuns.Add(1)
+	gate := firstRenderGate(src)
+	if gate < 0 {
+		gate = firstRenderGate(out)
+	}
+	if gate < 0 {
+		return true
+	}
+	renderOracleSkips.Add(1)
+	renderGateHits[gate].Add(1)
+	return false
+}
+
+// reportRenderSkips prints the render-oracle skip rate and its per-gate
+// breakdown. TestMain calls it after the run; with -fuzz it reports one
+// worker process's share, which is still the right shape for judging
+// whether a narrowing helped.
+func reportRenderSkips() {
+	runs := renderOracleRuns.Load()
+	if runs == 0 {
+		return
+	}
+	skips := renderOracleSkips.Load()
+	fmt.Fprintf(os.Stderr, "render oracle: %d/%d inputs skipped (%.1f%% dark)\n",
+		skips, runs, 100*float64(skips)/float64(runs))
+
+	type row struct {
+		name string
+		hits int64
+	}
+	var rows []row
+	for i, g := range renderGates {
+		if n := renderGateHits[i].Load(); n > 0 {
+			rows = append(rows, row{g.name, n})
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].hits > rows[j].hits })
+	for _, r := range rows {
+		fmt.Fprintf(os.Stderr, "  %-32s %d\n", r.name, r.hits)
+	}
 }
