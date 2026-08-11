@@ -202,3 +202,110 @@ func TestFuzzFamilyRegressions(t *testing.T) {
 		})
 	}
 }
+
+// TestIssue51AdmonitionMarkerBoundary pins #51: a ModeWrap cut can land a
+// break right after "!!! ev", leaving that alone on a line — admonition-
+// marker-shaped under the old, end-anchored regex. The next pass then read
+// it as a marker and indented the line below it, so Format was not a fixed
+// point. The fix makes the marker verdict depend only on the "!!!"/"???"
+// prefix (never on where the line ends) and confines it to the mkdocs
+// dialect, so under gfm the marker-boundary logic never runs at all.
+func TestIssue51AdmonitionMarkerBoundary(t *testing.T) {
+	variants := []struct {
+		name string
+		src  string
+	}{
+		{"single space", "!!! ev BX1201\n"},
+		{"double space", "!!!  ev BX1201\n"},
+		{"tab", "!!!\tev BX1201\n"},
+	}
+
+	// Idempotent under a narrow wrap width, in both dialects: the
+	// whitespace between "!!!" and "ev" is incidental to the repro, only
+	// where the wrapper happens to cut the line matters.
+	mdreflow.SetConvergenceBackstop(false)
+	defer mdreflow.SetConvergenceBackstop(true)
+	for _, v := range variants {
+		for _, dialect := range []mdreflow.Dialect{mdreflow.DialectGFM, mdreflow.DialectMkDocs} {
+			t.Run(v.name, func(t *testing.T) {
+				o := mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 7, Dialect: dialect}
+				once, err := mdreflow.Format([]byte(v.src), o)
+				if err != nil {
+					t.Fatalf("first pass: %v", err)
+				}
+				twice, err := mdreflow.Format(once, o)
+				if err != nil {
+					t.Fatalf("second pass: %v", err)
+				}
+				if !bytes.Equal(once, twice) {
+					t.Errorf("not idempotent.\nonce:  %q\ntwice: %q", once, twice)
+				}
+			})
+		}
+	}
+
+	// Under gfm, "!!!"-leading text is ordinary prose: it still wraps.
+	t.Run("gfm still wraps a paragraph starting with !!!", func(t *testing.T) {
+		o := mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 20, Dialect: mdreflow.DialectGFM}
+		out, err := mdreflow.Format([]byte("!!! this is an ordinary paragraph that is long enough to need wrapping across more than one line.\n"), o)
+		if err != nil {
+			t.Fatalf("Format: %v", err)
+		}
+		if bytes.Count(out, []byte("\n")) < 2 {
+			t.Errorf("expected the paragraph to wrap across multiple lines, got %q", out)
+		}
+	})
+
+	// Under mkdocs, the same shape is a frozen marker line: it does not
+	// wrap or join, regardless of width.
+	t.Run("mkdocs freezes a bare marker line", func(t *testing.T) {
+		src := "!!! this is a long admonition marker line that would otherwise need wrapping\n\n    Body text here.\n"
+		o := mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 20, Dialect: mdreflow.DialectMkDocs}
+		out, err := mdreflow.Format([]byte(src), o)
+		if err != nil {
+			t.Fatalf("Format: %v", err)
+		}
+		gotFirst, _, _ := bytes.Cut(out, []byte("\n"))
+		wantFirst, _, _ := bytes.Cut([]byte(src), []byte("\n"))
+		if !bytes.Equal(gotFirst, wantFirst) {
+			t.Errorf("marker line changed.\nsrc:  %q\nout:  %q", wantFirst, gotFirst)
+		}
+	})
+}
+
+// TestIssue51InlineModifierAdmonitionsReflow pins the coverage gain that
+// came with #51's blunt marker rule: Material for MkDocs's inline
+// modifiers ("!!! note inline end \"Title\"") did not match the old
+// end-anchored, type-word-requiring regex, so those admonitions' bodies
+// were silently skipped — never reflowed at all. The prefix-only regex
+// recognizes them.
+func TestIssue51InlineModifierAdmonitionsReflow(t *testing.T) {
+	cases := []struct {
+		name   string
+		marker string
+	}{
+		{"plain", `!!! note`},
+		{"custom title", `!!! note "Custom Title"`},
+		{"empty title", `!!! note ""`},
+		{"expandable with title", `???+ tip "Expandable"`},
+		{"inline modifier", `!!! note inline`},
+		{"inline end modifier with title", `!!! note inline end "Title"`},
+	}
+	const bodyLine = "    This body sentence is long enough that it needs to wrap onto more than one output line here."
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := tc.marker + "\n\n" + bodyLine + "\n"
+			o := mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 40, Dialect: mdreflow.DialectMkDocs}
+			out, err := mdreflow.Format([]byte(src), o)
+			if err != nil {
+				t.Fatalf("Format: %v", err)
+			}
+			if bytes.Equal(out, []byte(src)) {
+				t.Errorf("body did not reflow, admonition marker was not recognized.\nsrc: %q\nout: %q", src, out)
+			}
+			if !bytes.HasPrefix(out, []byte(tc.marker+"\n")) {
+				t.Errorf("marker line changed.\nout: %q", out)
+			}
+		})
+	}
+}

@@ -205,6 +205,14 @@ Decisions are made per block, but the inputs are cluster-scoped (the raw line ab
 The cost is real but small and measurable: on a 266-file production docset, the definition zone freezes roughly ten lines, concentrated in documents that quote `label:` syntax inside code spans.
 The design trade is coverage of rare shapes for guaranteed render preservation of common ones.
 
+The MkDocs admonition marker (`!!! note`, `??? warning`, `???+ tip`) is the same lesson learned twice.
+An earlier version of the marker regex required a type word after the punctuation and anchored the match at end of line — `^(?:!{3}|\?{3}\+?)[ \t]+[A-Za-z][\w-]*(?:[ \t]+"[^"]*")?[ \t]*$` — on the theory that an ordinary paragraph merely starting with `!!!` shouldn't be misread as a callout.
+The end anchor reads a byte reflow moves: a wrap cut that happens to fall right after `!!! ev` leaves that alone on a line, which the anchored regex then matched, even though the source line was `!!! ev BX1201` and never meant to open an admonition (issue #51).
+The verdict flipped depending on where the *previous* pass had broken the line — the same class of self-inflicted instability as the definition zone above, just triggered by the wrap loop instead of a join.
+The fix is the same blunt move: match the prefix only, unanchored, so the verdict depends solely on the three or four bytes reflow never relocates.
+The measured cost is a paragraph starting `!!!` or `???` no longer reflowing under the mkdocs dialect, however the rest of the line reads — narrower coverage of a rare paragraph opener, traded for a guaranteed fixpoint.
+The type-word requirement also turned out to reject real syntax: Material for MkDocs's inline modifiers (`!!! note inline end "Title"`) never matched it, so those admonitions' bodies were silently skipped from reflow entirely; the blunt prefix match recognizes them as a side effect of no longer trying to parse the rest of the line at all.
+
 ## Dialects multiply the grammar
 
 Everything above assumed one grammar.

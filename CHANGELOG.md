@@ -9,6 +9,13 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+### Fixed
+
+- Under `--dialect mkdocs`, any line starting with `!!!`, `???`, or `???+` is left alone, regardless of what follows on the line — closes a case where a narrow-width wrap could cut a line into an admonition-marker shape, making the next `mdreflow` run indent the line below it and lose idempotency (#51).
+- MkDocs admonitions whose marker carries an inline modifier (`!!! note inline end "Title"`, `!!! note inline "Title"`) or a non-alphabetic type now have their bodies reflowed under `--dialect mkdocs`.
+  They were silently skipped.
+  This dialect's admonition-marker recognition no longer runs at all under `--dialect gfm`.
+
 ## v0.1.7 (2026-08-11)
 
 When mdreflow declines to reflow a paragraph, it can now tell you why.
