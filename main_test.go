@@ -14,5 +14,7 @@ import (
 // Tests that assert the floor itself re-enable it locally.
 func TestMain(m *testing.M) {
 	mdreflow.SetWidthFloor(false)
-	os.Exit(m.Run())
+	code := m.Run()
+	reportRenderSkips()
+	os.Exit(code)
 }
