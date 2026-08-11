@@ -15,6 +15,63 @@ import (
 	"github.com/jbeda/mdreflow"
 )
 
+// neverJoinedLines reports, for each line in lines, whether it is a fence
+// marker or interior line of a construct package blockmap's dialect skip
+// rules (dialect.go) mark wholeNodeAny/wholeNodeAll: a ```/~~~ code fence, a
+// "$$" math fence, or a "+++" TOML front-matter fence. Those regions are
+// never reflowed at all — their content, fence lines included, is emitted
+// byte-for-byte — so no line inside one is ever joined with a neighbor by
+// mdreflow's line-joining.
+//
+// A backtick-fence opener requires CommonMark's own info-string rule: no
+// backtick anywhere after the marker (a backtick there would make a closing
+// fence ambiguous with an inline code span, so CommonMark refuses to open
+// one) — found by FuzzFormat on "0 *  \n```0`*": "```0`*" looks like a
+// fence opener by prefix alone, but its info string ("0`*") contains a
+// backtick, so goldmark never opens a fence at all and the line stays
+// ordinary paragraph text, still joined to its predecessor. Treating it as
+// a fence anyway hid a real flanking-flip this gate exists to catch.
+func neverJoinedLines(lines [][]byte) []bool {
+	skip := make([]bool, len(lines))
+	fence := ""
+	for i, line := range lines {
+		t := bytes.TrimLeft(line, " \t")
+		tr := string(bytes.TrimRight(t, " \t\r"))
+		if fence == "" {
+			switch {
+			case bytes.HasPrefix(t, []byte("```")) && !bytes.Contains(bytes.TrimLeft(t, "`"), []byte("`")):
+				fence = "```"
+			case bytes.HasPrefix(t, []byte("~~~")):
+				fence = "~~~"
+			case tr == "$$":
+				fence = "$$"
+			case tr == "+++" && i == 0:
+				fence = "+++"
+			default:
+				continue
+			}
+			skip[i] = true
+			continue
+		}
+		skip[i] = true
+		switch fence {
+		case "```":
+			if bytes.HasPrefix(t, []byte("```")) {
+				fence = ""
+			}
+		case "~~~":
+			if bytes.HasPrefix(t, []byte("~~~")) {
+				fence = ""
+			}
+		case "$$", "+++":
+			if tr == fence {
+				fence = ""
+			}
+		}
+	}
+	return skip
+}
+
 // hasHardBreakAdjacentDelimiter conservatively reports whether src has a
 // line ending, or a following line starting (allowing a little slack for
 // a blockquote/list container prefix), with a CommonMark/GFM emphasis
@@ -55,10 +112,21 @@ import (
 // the render-preservation assertion is skipped.
 func hasHardBreakAdjacentDelimiter(src []byte) bool {
 	lines := bytes.Split(src, []byte("\n"))
+	neverJoined := neverJoinedLines(lines)
 	isDelim := func(b byte) bool { return b == '*' || b == '_' || b == '~' }
 	for i, line := range lines {
 		if i == len(lines)-1 {
 			break // nothing joins across the source's last line
+		}
+		if neverJoined[i] || neverJoined[i+1] {
+			// Fenced code/math/front-matter content is never joined with
+			// its neighbors — see neverJoinedLines — so a delimiter shape
+			// here poses no flanking risk. Found by FuzzFormat on a math
+			// block whose "\quad \text{and} \quad" body line, which package
+			// blockmap's wholeNodeAny skip rule (dialect.go) passes through
+			// byte-for-byte, tripped the next-line check below even though
+			// reflow never touches it.
+			continue
 		}
 		// A trailing "\r" (present when src uses CRLF line endings,
 		// since splitting only on "\n" leaves it attached to the
@@ -462,41 +530,63 @@ func hasFreshTableAdjacency(b []byte) bool {
 	return false
 }
 
+// listItemMarkerRE matches a list-item marker (bullet or ordered) plus the
+// whitespace run separating it from the item's own first-line content —
+// the same span package blockmap's continuationPrefix reads column-width
+// from to derive every later output line's structural indent.
+var listItemMarkerRE = regexp.MustCompile(`^([-*+]|\d{1,9}[.)])([ \t]+)`)
+
 // hasDeepListContinuationIndent conservatively reports whether src has a
 // list-item-shaped first line (a bullet or ordered marker) followed by a
-// continuation line indented by 4 or more spaces.
+// continuation line indented deeper than that marker's own structural
+// width.
 //
 // This gates an eighth, final narrow, documented render-preservation
 // exception: found by FuzzFormat on "0) - \n    0", where the list item's
 // continuation line carries one space of leading indentation *beyond*
-// what the marker's own width structurally requires, and that extra
-// space turns out to be significant content (preserved as a literal
-// leading space in the rendered list item text), not insignificant
-// padding. mdreflow's own continuation-line joining
+// what the marker's own width structurally requires — "0) " is a 3-byte
+// marker, so only 3 leading spaces are structural padding, and the 4th is
+// significant content (preserved as a literal leading space in the
+// rendered list item text). mdreflow's own continuation-line joining
 // (reflow.trimLineSpace, used when building a hard-break cluster) treats
 // all of a continuation line's leading whitespace as structural padding
-// to strip — correct for the overwhelmingly common case, where a
-// continuation line's indentation is exactly the container's own prefix
-// width and nothing more, but not when an author (or, as here, a fuzzer)
-// indents further. Reliably distinguishing "structural" from
-// "content-significant" leading whitespace on a continuation line would
-// require deriving each container's exact expected indent width from the
-// AST (list marker width, blockquote depth) and comparing it against what
-// the specific line actually has, rather than mdreflow's current
-// approach of reading a canonical prefix once from the paragraph's first
-// line (package blockmap's continuationPrefix) and applying it uniformly
-// — a real gap, not merely a cosmetic difference, but narrow enough (it
-// needs deliberately-over-indented continuation content, which is
-// unusual authoring style) that fully closing it is out of scope for
-// this milestone.
+// to strip — correct exactly up to the marker's own width, and wrong
+// beyond it. The actual mechanism, mirrored here: compare each
+// continuation line's leading-space count against the width of the list
+// item marker (plus its trailing whitespace run, capped at CommonMark's
+// own "5 or more collapses to 1" rule — the same computation
+// continuationPrefix performs from the AST) rather than a flat 4-space
+// guess unrelated to the marker that actually opened the item. A marker
+// wider than 4 bytes (e.g. "1234567890) ") makes the flat guess miss real
+// cases; a marker narrower than 3 (e.g. "- ") makes it flag continuation
+// lines reflow's own trim strips correctly. This byte-based width
+// (unlike continuationPrefix's column width) does not expand tabs to
+// tab stops, a narrower approximation accepted here since a tab in a list
+// marker's own trailing whitespace is rare enough not to be worth
+// replicating the AST-derived column math in a test-only heuristic.
 func hasDeepListContinuationIndent(src []byte) bool {
-	listItemStart := regexp.MustCompile(`^[-*+]\s|^\d{1,9}[.)]\s`)
 	lines := bytes.Split(src, []byte("\n"))
 	for i, line := range lines {
-		if i == 0 || !listItemStart.Match(lines[i-1]) {
+		if i == 0 {
 			continue
 		}
-		if bytes.HasPrefix(line, []byte("    ")) {
+		m := listItemMarkerRE.FindSubmatch(lines[i-1])
+		if m == nil {
+			continue
+		}
+		markerWidth := len(m[0])
+		if spaceRun := len(m[2]); spaceRun >= 5 {
+			// CommonMark: a marker's own trailing whitespace run of 5 or
+			// more collapses to a single structural space; the rest is
+			// the item's own (typically code-block) content indentation,
+			// not container padding continuationPrefix would strip.
+			markerWidth -= spaceRun - 1
+		}
+		n := 0
+		for n < len(line) && line[n] == ' ' {
+			n++
+		}
+		if n > markerWidth {
 			return true
 		}
 	}
