@@ -295,6 +295,17 @@ definitions, fuzz-found), and the content profile is the
 opposite: a footnote body is real prose. Two protections replace the guard
 pile for the caret case:
 
+The exemption shields a footnote-shaped paragraph from *caret-shaped*
+neighbor evidence only (the back-to-back `[^1]: …` / `[^2]: …` layout it
+exists for). Non-caret definition machinery above — a `[label]:` chain
+start, an orphaned `]:` closer, or their transitive reach through the run —
+freezes a footnote-shaped paragraph exactly as it freezes any other: a
+titleless `[label]:` line completes its destination from the line below it,
+so joining that paragraph's lines changes whether the definition forms at
+all (fuzz-found, issue #41: `" [0]:"` above a `[^0]:0` paragraph). The
+per-line facts table tracks the two kinds of seen-above evidence as
+separate bits so this is a rule over facts, not a new scan.
+
 - Emission escapes, label-shape-agnostic: an output line that would itself
   parse as a complete definition (judged empirically — the line is parsed in
   isolation by goldmark, not matched against a hand-mirrored grammar) or as a

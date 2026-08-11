@@ -159,18 +159,24 @@ func SkipsForDialect(doc ast.Node, source []byte, mkdocs bool) []Skip {
 // keyed by the line's start byte offset in scanLineFacts's returned map.
 // chainStart, orphanCloser, and bareCaretOpener are the direct regex
 // verdicts for the line itself (defChainStartRE, orphanDefCloserRE, and
-// bareCaretOpenerRE respectively); defAbove is the transitive seen-above
-// bit described below.
+// bareCaretOpenerRE respectively); defAbove and caretDefAbove are the
+// transitive seen-above bits described below, kept separate because the
+// footnote-body exemption shields against caret-shaped evidence only
+// (issue #41): defAbove carries non-caret chain starts and orphaned
+// closers, caretDefAbove carries bare caret openers.
 type lineFacts struct {
-	chainStart, orphanCloser, bareCaretOpener, defAbove bool
+	chainStart, orphanCloser, bareCaretOpener bool
+	defAbove, caretDefAbove                   bool
 }
 
 // scanLineFacts computes, per physical line (keyed by the line's start byte
 // offset), the facts inLinkRefDefZone needs about that line and about
 // whether a definition-shaped line — the same shapes inLinkRefDefZone
 // checks on the immediately preceding line — occurs anywhere ABOVE that
-// line within its contiguous run of non-blank lines. A blank line resets
-// the run.
+// line within its contiguous run of non-blank lines, tracked as two
+// separate bits (non-caret chain starts and orphaned closers vs bare
+// caret openers) so the footnote-body exemption can shield against the
+// caret kind only. A blank line resets the run.
 //
 // The transitive defAbove bit exists because a definition's reach downward
 // is not limited to one line: its title alone may span arbitrarily many
@@ -188,7 +194,7 @@ type lineFacts struct {
 // top-down pass so the zone check stays O(1) per paragraph.
 func scanLineFacts(source []byte) map[int]lineFacts {
 	m := make(map[int]lineFacts)
-	seen := false
+	seen, seenCaret := false, false
 	for ls := 0; ls < len(source); {
 		end := ls
 		for end < len(source) && source[end] != '\n' {
@@ -200,12 +206,18 @@ func scanLineFacts(source []byte) map[int]lineFacts {
 			orphanCloser:    orphanDefCloserRE.Match(line),
 			bareCaretOpener: bareCaretOpenerRE.Match(line),
 			defAbove:        seen,
+			caretDefAbove:   seenCaret,
 		}
 		m[ls] = f
 		if len(bytes.Trim(line, " \t")) == 0 {
-			seen = false
-		} else if f.chainStart || f.bareCaretOpener || f.orphanCloser {
-			seen = true
+			seen, seenCaret = false, false
+		} else {
+			if f.chainStart || f.orphanCloser {
+				seen = true
+			}
+			if f.bareCaretOpener {
+				seenCaret = true
+			}
 		}
 		ls = end + 1
 	}
@@ -887,11 +899,13 @@ var bareCaretOpenerRE = regexp.MustCompile(`\\?\[` + caretLabelBody + `\]:[ \t\r
 // "^" alternative.
 //
 // A paragraph whose own first line IS a footnote definition's opener
-// (footnoteDefFirstLineRE) is exempt from everything below: it is a
-// footnote body, deliberately reflow-eligible per design.md, and treating
-// an adjacent (possibly also caret-led) preceding line as hazardous here
-// would defeat that exemption for the ordinary back-to-back layout
-// ("[^1]: ...\n[^2]: ..." with no blank line between).
+// (footnoteDefFirstLineRE) is a footnote body, deliberately
+// reflow-eligible per design.md — but exempt from the CARET-shaped
+// neighbor evidence below only (bare caret openers and their transitive
+// reach), so the ordinary back-to-back layout ("[^1]: ...\n[^2]: ..."
+// with no blank line between) keeps reflowing. Non-caret evidence (chain
+// starts, orphaned closers, the (c) window) freezes a footnote-shaped
+// paragraph like any other — see the fnBody comment in the body (#41).
 //
 // (b) checks the raw source line immediately above contentStart with
 // anyDefLineOpenerRE (caret-inclusive — see its own doc comment for why):
@@ -922,14 +936,25 @@ func inLinkRefDefZone(source []byte, trimmed []string, contentStart int, facts m
 			return SkipLinkRefDefShape
 		}
 	}
-	if len(trimmed) > 0 && footnoteDefFirstLineRE.MatchString(trimmed[0]) {
-		return SkipNone
-	}
+	// A footnote-shaped paragraph (its own first line opens "[^label]:")
+	// is a footnote body, deliberately reflow-eligible — but the
+	// exemption shields it from CARET-shaped neighbor evidence only (the
+	// back-to-back "[^1]: ...\n[^2]: ..." layout it exists for, and the
+	// documented caret scope gate that owns caret-neighbor hazards via
+	// the emission escapes and backstops). Non-caret machinery above
+	// freezes it like any other paragraph: a titleless "[label]:" line
+	// completes its destination from the line below, so joining this
+	// paragraph's lines changes whether that definition forms at all —
+	// found by FuzzFormat on " [0]:\n [^0]:0\n\"\"0" (issue #41), where
+	// the old unconditional exemption returned eligible before the
+	// neighbor checks ran.
+	fnBody := len(trimmed) > 0 && footnoteDefFirstLineRE.MatchString(trimmed[0])
 	ls := lineStart(source, contentStart)
 	if ls == 0 {
 		return SkipNone
 	}
-	if facts[ls].defAbove {
+	f := facts[ls]
+	if f.defAbove || (!fnBody && f.caretDefAbove) {
 		// A def-shaped line anywhere above, in this line's contiguous
 		// non-blank run — not just on the immediately preceding line: a
 		// definition's title scan can reach the paragraph across any
@@ -939,7 +964,7 @@ func inLinkRefDefZone(source []byte, trimmed []string, contentStart int, facts m
 	prevStart := lineStart(source, ls-1)
 	prevLine := bytes.TrimRight(source[prevStart:ls], "\r\n")
 	pf := facts[prevStart]
-	if pf.chainStart || pf.bareCaretOpener || pf.orphanCloser {
+	if pf.chainStart || pf.orphanCloser || (!fnBody && pf.bareCaretOpener) {
 		// orphanDefCloserRE on the neighbor too, not just this
 		// paragraph's own lines: when a multi-line label's "]:" tail is
 		// the line directly ABOVE, this paragraph's own first line is

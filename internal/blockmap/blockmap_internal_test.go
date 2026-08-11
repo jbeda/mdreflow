@@ -185,6 +185,56 @@ func TestInLinkRefDefZone(t *testing.T) {
 			want:         false,
 		},
 		{
+			// The exemption shields against caret evidence ONLY (#41): a
+			// non-caret "[label]:" chain start above freezes a
+			// footnote-shaped paragraph like any other, because the
+			// titleless def completes its destination from the line below
+			// and joining changes whether it forms. Found by FuzzFormat on
+			// " [0]:\n [^0]:0\n\"\"0" (seed issue41_def_above_footnote_body).
+			name:         "#41: non-caret def line above freezes a footnote-shaped paragraph",
+			source:       " [0]:\n[^0]:0",
+			trimmed:      []string{"[^0]:0"},
+			contentStart: 6,
+			want:         true,
+		},
+		{
+			// The caret side of the same split: a bare caret opener above
+			// a footnote-shaped paragraph stays exempt (the documented
+			// caret scope gate owns that hazard).
+			name:         "bare caret opener above a footnote-shaped paragraph stays exempt",
+			source:       "[^0]:\n[^1]: body more",
+			trimmed:      []string{"[^1]: body more"},
+			contentStart: 6,
+			want:         false,
+		},
+		{
+			// Transitive reach splits the same way: a non-caret chain
+			// start farther up the run freezes a footnote-shaped
+			// paragraph...
+			name:         "#41 transitive: non-caret def beyond the immediate neighbor freezes a footnote body",
+			source:       "[0]:\nx\n[^1]:0",
+			trimmed:      []string{"[^1]:0"},
+			contentStart: 7,
+			want:         true,
+		},
+		{
+			// ...while a bare caret opener farther up does not.
+			name:         "transitive caret reach stays exempt for a footnote body",
+			source:       "[^0]:\nx y\n[^1]: body",
+			trimmed:      []string{"[^1]: body"},
+			contentStart: 10,
+			want:         false,
+		},
+		{
+			// The same transitive caret reach still freezes a paragraph
+			// that is NOT itself footnote-shaped.
+			name:         "transitive caret reach still counts for a non-footnote paragraph",
+			source:       "[^0]:\nx y\nplain",
+			trimmed:      []string{"plain"},
+			contentStart: 10,
+			want:         true,
+		},
+		{
 			// (c): the def shape spans the boundary — label opens on the
 			// preceding raw line (via an escaped closing bracket) and
 			// closes on this paragraph's own first line. Found by
