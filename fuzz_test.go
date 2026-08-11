@@ -852,9 +852,10 @@ func hasHardBreakDeclarationRisk(src []byte) bool {
 // bug worth failing the fuzz target over.
 //
 // (Bits 16/17 of the hash once selected typography flags; typography is
-// removed, and the bits are deliberately left unused rather than
-// re-purposed so existing corpus entries keep deriving the same mode and
-// width they were minimized under.)
+// removed. Bit 17 now selects Dialect — (h>>17)%2, gfm(0) | mkdocs(1), one
+// bit since there are two dialects — and bit 16 is left unused. Mode and
+// width read their own bit ranges and are untouched, so existing corpus
+// entries keep deriving the mode and width they were minimized under.)
 func deriveOptions(src []byte) mdreflow.Options {
 	var h uint32
 	for _, b := range src {
@@ -865,7 +866,8 @@ func deriveOptions(src []byte) mdreflow.Options {
 	if mode != mdreflow.ModePara {
 		width = int((h >> 8) % 121) // 0..120: spans "unbounded"/"default" (0) through comfortably wider than most test prose.
 	}
-	return mdreflow.Options{Mode: mode, MaxWidth: width}
+	dialect := mdreflow.Dialect((h >> 17) % 2) // gfm(0) | mkdocs(1)
+	return mdreflow.Options{Mode: mode, MaxWidth: width, Dialect: dialect}
 }
 
 // FuzzFormat fuzzes Format across every testdata fixture as seed corpus
@@ -925,6 +927,23 @@ func FuzzFormat(f *testing.F) {
 		"\x00\x01\x02",
 		"a.\\\n",
 		"a.  \n",
+		// MkDocs admonition shapes (#26), each padded with trailing blank
+		// lines so its own hash derives DialectMkDocs (see deriveOptions) —
+		// otherwise a hand-picked seed only reaches the mkdocs dialect by
+		// accident of mutation. A single-paragraph body long enough to
+		// wrap under a narrow derived width:
+		"!!! note\n\n    This is a fairly long line of body text that should be long enough to wrap when reflowed under a narrow width.\n\n\n\n\n\n",
+		// A multi-paragraph body — the shape whose reflow can merge two
+		// rendered <p>s if admonitionBodies' multi-paragraph guard
+		// (internal/blockmap/blockmap.go) ever regresses:
+		"!!! note\n\n    First paragraph of the admonition body goes here and has some words.\n\n    Second paragraph of the admonition body follows right after a blank line.\n\n\n\n\n\n\n\n\n",
+		// The "???" collapsible marker variant:
+		"??? note\n\n    A collapsible admonition body with some text that may wrap across lines when reflowed.\n\n\n\n\n",
+		// A marker with a quoted title:
+		"!!! tip \"Custom Title\"\n\n    Body text under a titled admonition, long enough that reflow under a narrow width would need to wrap it across more than one line.\n",
+		// Malformed: a marker line whose title quote never closes, so
+		// admonitionMarkerRE must not match it:
+		"!!! tip \"Unterminated title\n\n    Body text that follows a marker line whose title quote never closes.\n",
 	} {
 		f.Add([]byte(s))
 	}
