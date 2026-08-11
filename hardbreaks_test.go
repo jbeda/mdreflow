@@ -99,3 +99,36 @@ func TestHardBreakSpacesCheckboxFallsBackToBackslash(t *testing.T) {
 		t.Errorf("Format not idempotent for checkbox hard break: got %q, then %q", got, twice)
 	}
 }
+
+// TestHardBreakBackslashRunFallsBackToBr regression-tests #47: a backslash
+// hard-break marker glued onto prose that itself ends in one or more
+// backslashes produces a trailing run goldmark's inline parser does not
+// read back as a hard break (only a trailing run of exactly one backslash
+// is special-cased — see attachMarker's doc comment). mdreflow falls back
+// to the "<br>" spelling at this one position instead, regardless of the
+// configured style.
+func TestHardBreakBackslashRunFallsBackToBr(t *testing.T) {
+	src := "y\\\\\n\\\n0\n"
+	got, err := mdreflow.Format([]byte(src), mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 54, HardBreaks: mdreflow.HardBreakBackslash})
+	if err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+	want := "y\\\\<br>\n0\n"
+	if string(got) != want {
+		t.Errorf("Format(backslash-run hard break, backslash style) = %q, want %q", got, want)
+	}
+
+	before := render.Normalize(renderHTML(t, []byte(src)))
+	after := render.Normalize(renderHTML(t, got))
+	if before != after {
+		t.Errorf("backslash-run hard-break fallback changed rendered HTML.\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	}
+
+	twice, err := mdreflow.Format(got, mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 54, HardBreaks: mdreflow.HardBreakBackslash})
+	if err != nil {
+		t.Fatalf("Format(Format(x)): %v", err)
+	}
+	if string(twice) != string(got) {
+		t.Errorf("Format not idempotent for backslash-run hard break: got %q, then %q", got, twice)
+	}
+}
