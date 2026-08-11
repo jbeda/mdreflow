@@ -188,7 +188,7 @@ type Segmenter interface {
 type Span struct{ Start, End int }
 ```
 
-Option enums (`Mode`, `HardBreakStyle`, and future `Dialect`) have exactly one definition, in the internal leaf package `internal/opts`, which both the root package and the pipeline packages import; the root's exported names are aliases, so the former hand-mirrored copies bridged by unchecked casts (go-quality review S4) cannot exist.
+Option enums (`Mode` and `Dialect`) have exactly one definition, in the internal leaf package `internal/opts`, which both the root package and the pipeline packages import; the root's exported names are aliases, so the former hand-mirrored copies bridged by unchecked casts (go-quality review S4) cannot exist.
 
 The built-in segmenter ships with a solid default abbreviation list; `Options.Abbreviations` (and the config file) *add* to it.
 Wholesale replacement means providing your own `Segmenter`.
@@ -204,29 +204,23 @@ The formatter, not the segmenter, owns whitespace at boundaries:
 - The double-space and backslash spellings count as breaks only when goldmark's own inline parse of the document flagged that line ending hard (`ast.Text.HardLineBreak`, read per line from the paragraph's inline tree).
   Raw trailing bytes alone cannot tell: an inline extension can consume a line's entire prose and its line ending with it, leaving no text node to carry the flag — the task-list extension does exactly this for a checkbox-only line (`"* [X]  \n0"` renders with a *soft* break; trusting the raw double-space minted a `<br>` the renderer never had, #39).
   This is the "ask goldmark, not a hand grammar" doctrine applied to break detection.
-  A literal `<br>` is exempt: it is a break wherever it parses as a tag, and it is also reflow's own normalized marker spelling, which a cluster join can manufacture from bytes no single source line carried — there is no per-line flag to consult for it.
+  A literal `<br>` is exempt: it is a break wherever it parses as a tag, and its spelling can also be manufactured by a cluster join from bytes no single source line carried — there is no per-line flag to consult for it.
 
-Hard breaks are preserved but *normalized* to a configurable style:
-
-```go
-type HardBreakStyle int
-const (
-    HardBreakBr        HardBreakStyle = iota // default
-    HardBreakSpaces
-    HardBreakBackslash
-)
-```
-
-`<br>` is deliberately the default: it makes the invisible visible.
-An accidental double-space hard break survives, but shows up loudly in the diff as `<br>`, prompting the author to remove it or keep it knowingly.
-For authors who habitually type two spaces after periods, the opt-in `StripSentenceTerminalBreaks` option treats a trailing double-space *immediately after sentence-terminal punctuation* as accidental and removes it (a documented, flag-reversible exception to render preservation).
-Hard breaks anywhere else are always respected.
+**Hard breaks keep the source's own spelling** (amendment 2026-08-11).
+The three spellings are not interchangeable: `<br>` is raw HTML — goldmark's default configuration strips it, and not every downstream pipeline treats raw HTML the same as Markdown syntax — while a trailing double-space and a trailing backslash are both ordinary, context-sensitive CommonMark syntax.
+Normalizing every preserved hard break to one configured style meant mdreflow could introduce raw HTML the author never wrote, and fuzzing found four bugs (#40, #47, #49, #52) living in the narrow contexts where the configured spelling didn't actually work at its landing position — each needing a bespoke guard.
+The policy instead emits the spelling the source used, with one promotion: two trailing spaces are invisible and routinely stripped by editors in transit, so they are promoted to a backslash.
+Where the promoted backslash cannot work at its landing position — directly after an even, non-zero run of trailing backslashes, where one more would leave three or more (literal text, not a break) — the fallback is two trailing spaces, never `<br>`: mdreflow never introduces a spelling the source didn't already use.
+A source-authored `<br>` is always kept, canonicalized to lowercase, un-self-closed spelling (`<Br />` and `<BR>` both emit `<br>`) since a cluster join can manufacture a `<br>`-shaped tag from bytes no single source line carried, and a canonical spelling is needed for the pipeline to recognize its own output on the next pass.
+This removes `Options.HardBreaks`: there is no longer a style to configure.
+See [why-this-is-hard.md](why-this-is-hard.md) for the full context matrix behind this decision.
 
 ### Typography: removed (2026-08-09)
 
 mdreflow shipped opt-in smart-quote and ellipsis substitution through v0.1.4 and removed it, deliberately.
 Typography was the *only* transformation whose purpose was to change rendered output, which made it structurally at odds with everything else here: it forced the render oracle (and now the render backstop) to normalize substitutions back out of both sides — looseness real corruption could hide behind; it was the sole reason for the fuzz harness's one documented scope gate (the caret-zone/typography interaction); it required its own hand-mirrored context scanner to avoid substituting inside HTML attributes and link destinations (issue #3); and it was one of only two byte-rewriters in the pipeline.
-Removing it makes the invariant exact: **mdreflow never changes what a document renders to** (hard-break spelling normalization and the flag-reversible `StripSentenceTerminalBreaks` change source spelling, not rendering semantics, and remain the documented nuances).
+Removing it, and later removing `StripSentenceTerminalBreaks` (amendment 2026-08-11: the owner judged it unused and unnecessary), makes the invariant exact: **mdreflow never changes what a document renders to**.
+Hard-break spelling changes source bytes, not rendering semantics, and is the one place a comparison of rendered HTML needs a canonicalization rule (the `<br>` spelling normalization in `internal/render`) rather than a byte-for-byte match — a comparison-mechanism nuance, not an exception to the invariant itself.
 
 Substitution at render time is the better home for the feature — goldmark's Typographer, Hugo's smartypants, and Python-Markdown's smarty all do it without touching the source — and anyone who wants it baked into source bytes wants a full parse-and-re-emit formatter, which mdreflow is deliberately not.
 A leftover `typography:` config key is a loud config error (the YAML parse is strict), never a silent no-op.
@@ -422,7 +416,7 @@ Markdown is text; reflowing bytes that have no character interpretation was neve
 1. **Idempotency.** `Format(Format(x)) == Format(x)` for every accepted input and option set.
    This is structural, not aspirational: `Format` runs to fixpoint and falls back to the original text for anything that will not converge (see [Convergence](#convergence-reflow-runs-to-fixpoint)).
 2. **Render preservation.** Reflow does not change the rendered document, verified by comparing goldmark HTML output before and after.
-   Documented exceptions: hard-break style normalization (renders the same `<br>`, different source) and `StripSentenceTerminalBreaks`.
+   Hard-break spelling changes source bytes, not rendering semantics (see "Whitespace and hard breaks"); no other exception exists.
 3. **Byte-identical pass-through.** Everything outside reflowed paragraph prose is emitted byte-for-byte.
 4. **Check mode.** `--check` and `--diff` report unformatted files without writing, with a stable exit-code contract for CI and agents.
 
@@ -443,11 +437,9 @@ const (
 
 type Options struct {
     Mode          Mode
-    MaxWidth      int            // 0 = unbounded; otherwise >= MinMaxWidth (20); on ModeSentence enables secondary clause breaks
-    HardBreaks    HardBreakStyle // default: HardBreakBr
-    StripSentenceTerminalBreaks bool
-    Abbreviations []string       // additions to the built-in list
-    Segmenter     Segmenter      // nil = built-in
+    MaxWidth      int       // 0 = unbounded; otherwise >= MinMaxWidth (20); on ModeSentence enables secondary clause breaks
+    Abbreviations []string  // additions to the built-in list
+    Segmenter     Segmenter // nil = built-in
 }
 
 func Format(src []byte, opts Options) ([]byte, error)
@@ -464,7 +456,7 @@ func FormatReader(dst io.Writer, src io.Reader, opts Options) error
 func DefaultAbbreviations() []string
 ```
 
-Every zero value is the default (`Options{}` is valid and sensible): zero `Mode` is sentence mode, zero `MaxWidth` is unbounded, zero `HardBreakStyle` is `<br>`.
+Every zero value is the default (`Options{}` is valid and sensible): zero `Mode` is sentence mode, zero `MaxWidth` is unbounded.
 
 **The width floor** (amendment 2026-08-09): a non-zero `MaxWidth` below `MinMaxWidth` (20) is an options error, in the library and the CLI alike.
 Nearly every pathological width finding from the fuzz campaign needed single-digit widths, where geometry *forces* breaks inside constructs; no human asks for width 12.
@@ -483,7 +475,7 @@ mdreflow [flags] [path ...]
   Formatting is **in-place** when paths are given — this is a batch tool for pre-commit hooks and agents, where in-place is what you mean.
 - **stdin/stdout**: no paths (or `-`) reads stdin and writes stdout.
   This is the pipe mode, and it gives any editor with a "filter through command" binding format-on-demand without an extension.
-- **Flags**: `--mode`, `--max-width`, `--check`, `--diff`, `--stdout`, `--force`, `--config`, `--no-gitignore`, `--explain`, plus flags mirroring the hard-break options.
+- **Flags**: `--mode`, `--max-width`, `--check`, `--diff`, `--stdout`, `--force`, `--config`, `--no-gitignore`, `--explain`.
   Stdlib `flag`; the surface is one command.
 - **`--explain`** (#38): every skip site in `blockmap.build` (and `collect`'s depth cap) reports a distinct reason; the flag prints, per frozen paragraph, its line range, a stable machine-legible reason code, and a remediation hint drawn from why-this-is-hard.md's "What authors can do" section (never backslash-escaping — the zone is escape-tolerant on purpose).
   Output goes to stderr so stdout stays clean in pipe and `--diff` modes; diagnostics only, output bytes and exit codes unchanged.
@@ -500,7 +492,6 @@ Precedence: flags > config file > built-in defaults.
 ```yaml
 mode: sentence        # sentence | para | wrap
 max-width: 0
-hard-breaks: br       # br | spaces | backslash
 abbreviations:        # additions to the built-in list
   - "et al."
 exclude:              # gitignore syntax

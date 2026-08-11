@@ -27,13 +27,13 @@ import (
 //
 // html.WithUnsafe() is set because this same instance renders HTML for the
 // render-preservation property check (see format_test.go): without it,
-// goldmark replaces raw HTML — including a literal "<br>" hard-break
-// marker, which Options.HardBreaks's default style writes into reflowed
-// output — with an opaque "<!-- raw HTML omitted -->" comment, which would
-// make HardBreakBr normalization spuriously fail render preservation even
-// though it renders identically to a true hard-break node once real HTML
-// is allowed through. mdreflow's own reflow pipeline never renders
-// anything, so this only affects test/CLI rendering, not parsing.
+// goldmark replaces raw HTML — including a source-authored "<br>" hard-
+// break marker, which reflow keeps and canonicalizes — with an opaque
+// "<!-- raw HTML omitted -->" comment, which would spuriously fail render
+// preservation even though it renders identically to a true hard-break
+// node once real HTML is allowed through. mdreflow's own reflow pipeline
+// never renders anything, so this only affects test/CLI rendering, not
+// parsing.
 func New() goldmark.Markdown {
 	return goldmark.New(
 		goldmark.WithExtensions(

@@ -153,7 +153,7 @@ func TestFuzzFamilyRegressions(t *testing.T) {
 			// and judging the line alone as well as jointly.
 			name: "issue32-ordered-marker-joint-thematic-break",
 			src:  "0) * ** 770188787\n\t \t** *",
-			opts: mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 7, HardBreaks: mdreflow.HardBreakBr},
+			opts: mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 7},
 
 			checkRender: true,
 		},
@@ -168,7 +168,7 @@ func TestFuzzFamilyRegressions(t *testing.T) {
 			// same family.
 			name: "pi-nobreak-span-escape-discontinuity",
 			src:  "\r<?0\n000000000000000000000000?>",
-			opts: mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 29, HardBreaks: mdreflow.HardBreakBr},
+			opts: mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 29},
 
 			checkRender: true,
 		},

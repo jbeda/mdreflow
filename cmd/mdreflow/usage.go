@@ -96,7 +96,6 @@ Configuration (.mdreflow.yaml):
     mode: sentence          # sentence | para | wrap
     dialect: gfm            # gfm | mkdocs (mkdocs also reflows admonition bodies)
     max-width: 0            # 0 = unbounded/default; otherwise >= 20
-    hard-breaks: br         # br | spaces | backslash
     abbreviations:          # additions to the built-in list
       - "et al."
     exclude:                # gitignore syntax, matched like a .gitignore
@@ -112,11 +111,11 @@ Configuration (.mdreflow.yaml):
   name is being kept for a possible future strict profile, so passing it
   is an error that says exactly that.
 
-  These are the only config keys; --strip-sentence-terminal-breaks and
-  --explain are flag-only. (Earlier releases had a typography: key and matching flags;
-  the feature was removed, so a leftover key is an unknown-key error —
-  substitute quotes and ellipses at render time instead, e.g. goldmark
-  Typographer or smartypants.)
+  These are the only config keys; --explain is flag-only. typography:
+  and hard-breaks: are not among them, and a config carrying either is
+  an unknown-key error: delete the key. Hard-break spelling follows the
+  source rather than configuration; for quote and ellipsis substitution
+  use a render-time option such as goldmark's Typographer.
 
 Explain (--explain):
 

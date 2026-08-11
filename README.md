@@ -88,7 +88,6 @@ Unknown keys and unrecognized values are a loud error (exit 2), not a silent no-
 mode: sentence          # sentence | para | wrap
 dialect: gfm            # gfm | mkdocs (mkdocs also reflows admonition bodies)
 max-width: 0
-hard-breaks: br         # br | spaces | backslash
 abbreviations:          # additions to the built-in list
   - "et al."
 exclude:                # gitignore syntax, matched like a .gitignore
@@ -96,7 +95,7 @@ exclude:                # gitignore syntax, matched like a .gitignore
   - "generated/**"
 ```
 
-These are all the keys; `--strip-sentence-terminal-breaks` and `--explain` are flag-only.
+These are all the keys; `--explain` is flag-only.
 
 ## Excludes
 

@@ -13,19 +13,17 @@ import (
 // flags > config file > built-in defaults, and an explicitly-set flag
 // beats config even at its zero value).
 type flags struct {
-	mode                        string
-	dialect                     string
-	maxWidth                    int
-	check                       bool
-	diff                        bool
-	stdout                      bool
-	force                       bool
-	configPath                  string
-	noGitignore                 bool
-	hardBreaks                  string
-	stripSentenceTerminalBreaks bool
-	explain                     bool
-	version                     bool
+	mode        string
+	dialect     string
+	maxWidth    int
+	check       bool
+	diff        bool
+	stdout      bool
+	force       bool
+	configPath  string
+	noGitignore bool
+	explain     bool
+	version     bool
 
 	set map[string]bool // flag name -> explicitly set on the command line
 }
@@ -42,19 +40,6 @@ func parseMode(s string) (mdreflow.Mode, error) {
 		return mdreflow.ModeWrap, nil
 	default:
 		return 0, fmt.Errorf("unsupported mode %q (want one of: sentence, para, wrap)", s)
-	}
-}
-
-func parseHardBreaks(s string) (mdreflow.HardBreakStyle, error) {
-	switch s {
-	case "br":
-		return mdreflow.HardBreakBr, nil
-	case "spaces":
-		return mdreflow.HardBreakSpaces, nil
-	case "backslash":
-		return mdreflow.HardBreakBackslash, nil
-	default:
-		return 0, fmt.Errorf("unsupported hard-breaks %q (want one of: br, spaces, backslash)", s)
 	}
 }
 
@@ -143,13 +128,6 @@ func mergeOptions(f *flags, cfg *config.File) (resolvedOptions, error) {
 			opts.Mode = m
 		}
 		opts.MaxWidth = cfg.MaxWidth
-		if cfg.HardBreaks != "" {
-			hb, err := parseHardBreaks(cfg.HardBreaks)
-			if err != nil {
-				return r, fmt.Errorf("config: %w", err)
-			}
-			opts.HardBreaks = hb
-		}
 		if cfg.Dialect != "" {
 			d, err := parseDialect(cfg.Dialect)
 			if err != nil {
@@ -177,16 +155,6 @@ func mergeOptions(f *flags, cfg *config.File) (resolvedOptions, error) {
 	if f.isSet("max-width") {
 		opts.MaxWidth = f.maxWidth
 	}
-	if f.isSet("hard-breaks") {
-		hb, err := parseHardBreaks(f.hardBreaks)
-		if err != nil {
-			return r, fmt.Errorf("--hard-breaks: %w", err)
-		}
-		opts.HardBreaks = hb
-	}
-	// stripSentenceTerminalBreaks has no config-file key, so its flag
-	// value is simply the answer.
-	opts.StripSentenceTerminalBreaks = f.stripSentenceTerminalBreaks
 
 	if opts.Mode == mdreflow.ModePara && opts.MaxWidth != 0 {
 		return r, fmt.Errorf("--max-width is not valid with --mode=para (para mode always joins to a single line)")

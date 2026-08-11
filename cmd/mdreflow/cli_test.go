@@ -664,22 +664,37 @@ func TestRunStdoutFlagMultipleFilesIsUsageError(t *testing.T) {
 	}
 }
 
-// --- hard-breaks / strip-sentence-terminal-breaks flags ---
+// --- hard-break spelling ---
 
-func TestRunHardBreaksFlag(t *testing.T) {
+// TestRunHardBreakSpellingPromotion checks the CLI end to end: a
+// trailing-double-space hard break is promoted to a backslash, since the
+// hard-break spelling is now decided by the source, not a flag (there is
+// no --hard-breaks flag).
+func TestRunHardBreakSpellingPromotion(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "a.md")
-	// Two lines joined by a hard break (trailing double space): stays
-	// two lines, but the hard-break spelling is normalized.
 	writeFile(t, p, "Line one.  \nLine two.\n")
 
-	_, errOut, code := runCLI(t, []string{"--hard-breaks=backslash", p}, "")
+	_, errOut, code := runCLI(t, []string{p}, "")
 	if code != exitOK {
 		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitOK, errOut)
 	}
 	got := readFile(t, p)
 	if !strings.Contains(got, "\\\n") {
 		t.Errorf("expected a backslash hard break in output, got %q", got)
+	}
+}
+
+// TestRunHardBreaksFlagRemoved checks that --hard-breaks is rejected: the
+// flag was removed when the hard-break policy stopped being configurable.
+func TestRunHardBreaksFlagRemoved(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a.md")
+	writeFile(t, p, "Line one.\n")
+
+	_, errOut, code := runCLI(t, []string{"--hard-breaks=backslash", p}, "")
+	if code != exitUsage {
+		t.Fatalf("exit=%d, want %d; stderr=%q", code, exitUsage, errOut)
 	}
 }
 
@@ -694,7 +709,7 @@ func TestRunHelp(t *testing.T) {
 	if errOut != "" {
 		t.Errorf("--help wrote to stderr: %q", errOut)
 	}
-	for _, want := range []string{"-mode", "-max-width", "-check", "-diff", "-stdout", "-force", "-config", "-no-gitignore", "-hard-breaks", "-version", "Exit codes", "mdreflow.yaml", "Examples"} {
+	for _, want := range []string{"-mode", "-max-width", "-check", "-diff", "-stdout", "-force", "-config", "-no-gitignore", "-version", "Exit codes", "mdreflow.yaml", "Examples"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("--help output missing %q", want)
 		}

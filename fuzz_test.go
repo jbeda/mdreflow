@@ -568,7 +568,7 @@ var bareBrLineRE = regexp.MustCompile(`(?i)^[\s>]*<br\s*/?>[\s]*$`)
 // exception: a single-line paragraph whose entire content is a bare
 // "<br>" tag is already, correctly, an inline hard break in the original
 // (rendered inside a real "<p>...</p>"), so
-// writeParagraph's HardBreakBr "bare first line" safety fallback (see its
+// writeParagraph's "bare first line" safety fallback (see its
 // doc comment) does not apply — there is no following line in the same
 // paragraph for a block-vs-inline reparse difference to swallow content
 // from. But the residual, narrower risk the fallback was *also*
@@ -811,24 +811,22 @@ var declarationOpenerNoCloseRE = regexp.MustCompile(`<![A-Za-z][^>\n]*$`)
 // exception — not specific to the width-bounded modes M3 adds, but
 // exposed by M3's broader mode/width-diverse fuzzing (the pre-M3 harness
 // only ever exercised the zero-value Options{}, and this needs nothing
-// mode-specific to trigger — see below): design.md documents hard-break-
-// style normalization as a render-preservation exception on the premise
-// that it "renders the same <br>, different source" — a pure spelling
-// change. That premise silently assumes the normalized spelling can't
-// interact with *other* content, which fails for CommonMark's HTML
-// "declaration" tag type: "<!" + a letter + any run of non-">" characters
-// + ">". A dangling, unclosed "<!A" earlier on the same line as a hard
-// break renders as literal, escaped text in the source (no ">" exists
-// anywhere to complete the declaration — the line simply ends, and the
-// hard break is a structural AST node, not literal text). But
-// HardBreakBr (the default style) normalizes that hard break to the
-// literal text "<br>", whose own ">" retroactively completes the
-// declaration the source never had, turning literal "&lt;!A" into raw,
-// unescaped inline HTML: found by FuzzFormat on "0<!A  \n0" (mode
-// ModeSentence, default width — no wrapping involved at all), where
-// "0<!A<br>\n0" parses "<!A<br>" as one HTML declaration tag instead of
-// literal text followed by a break. As with the other exceptions, only
-// the render-preservation assertion is skipped for matching inputs.
+// mode-specific to trigger — see below): a preserved hard break can be
+// respelled (docs/design.md, "Hard line breaks"), and that respelling
+// silently assumed it can't interact with *other* content, which fails
+// for CommonMark's HTML "declaration" tag type: "<!" + a letter + any run
+// of non-">" characters + ">". A dangling, unclosed "<!A" earlier on the
+// same line as a hard break renders as literal, escaped text in the
+// source (no ">" exists anywhere to complete the declaration — the line
+// simply ends, and the hard break is a structural AST node, not literal
+// text). But respelling that hard break as the literal text "<br>" lets
+// its own ">" retroactively complete the declaration the source never
+// had, turning literal "&lt;!A" into raw, unescaped inline HTML: found by
+// FuzzFormat on "0<!A  \n0" (mode ModeSentence, default width — no
+// wrapping involved at all), where "0<!A<br>\n0" parses "<!A<br>" as one
+// HTML declaration tag instead of literal text followed by a break. As
+// with the other exceptions, only the render-preservation assertion is
+// skipped for matching inputs.
 func hasHardBreakDeclarationRisk(src []byte) bool {
 	lines := bytes.Split(src, []byte("\n"))
 	for i, line := range lines {
@@ -875,8 +873,7 @@ func deriveOptions(src []byte) mdreflow.Options {
 // (plus the mode-specific fixtures under testdata/modes/, which target
 // para/wrap/MaxWidth edge cases specifically), checking the guarantees
 // stated in docs/design.md's Guarantees section: no panic, idempotency,
-// and — with the documented exceptions the property test in
-// format_test.go already codifies (hard-break style normalization) —
+// and — with the documented narrow rendering-quirk exceptions below —
 // render preservation. It also checks that Format's output always parses
 // without producing a different byte-for-byte reflow of itself. Options
 // (mode and MaxWidth) are derived from src itself — see deriveOptions —
@@ -971,13 +968,12 @@ func FuzzFormat(f *testing.F) {
 		// onto does not change which of these narrow rendering quirks
 		// apply, only where reflow's own line boundaries happen to fall
 		// — see each guard function's doc comment, and hasRenderRiskyShape
-		// for why each is checked against both src and out). HardBreakBr
-		// is the input's own style only when the input already used <br>;
-		// for the other two syntaxes normalization intentionally changes
-		// the source's hard-break spelling while preserving render — see
-		// TestHardBreakStyleMatrix. To keep the fuzz oracle simple and
-		// still meaningful, compare with the same whitespace
-		// normalization format_test.go uses.
+		// for why each is checked against both src and out). A preserved
+		// hard break keeps the source's own spelling, except that two
+		// trailing spaces are promoted to a backslash — a source-spelling
+		// change that preserves render (see TestHardBreakSpellingPolicy).
+		// To keep the fuzz oracle simple and still meaningful, compare
+		// with the same whitespace normalization format_test.go uses.
 		//
 		if noteRenderOracle(src, out) {
 			before := normalizeForRender(renderHTML(t, src))
