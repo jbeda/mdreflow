@@ -224,6 +224,9 @@ At that one position mdreflow falls back to the backslash spelling instead, whic
 Prose ending in an *even*, non-zero run — an escaped literal backslash — is the case the configured spelling cannot serve, since appending lands on a run of three or more; mdreflow falls back to `<br>` there, raw HTML that parses as a break regardless of what precedes it (#47).
 An *odd* run needs no fallback: the escape-fusion rule separates the marker with a space, leaving a run of exactly one, so the configured style is kept.
 
+Both `HardBreakSpaces` and `HardBreakBackslash` share a third hazard: a marker landing on a paragraph's true final output line — nothing follows it, not even a blank line — needs a following line to be read back as a break at all; with none, the trailing spaces are insignificant whitespace and the trailing backslash is a literal character. mdreflow falls back to `<br>` at that one position regardless of the configured style, since `<br>` parses as a break wherever it sits (#49).
+This fallback is checked last and wins over the other two: a checkbox-shaped final line at a paragraph-final position, which the spaces fallback above would otherwise spell as backslash, resolves to `<br>` instead, since backslash has the same following-line requirement the configured spelling did.
+
 ### Typography: removed (2026-08-09)
 
 mdreflow shipped opt-in smart-quote and ellipsis substitution through v0.1.4 and removed it, deliberately.

@@ -155,3 +155,46 @@ func TestHardBreakBackslashRunFallsBackToBr(t *testing.T) {
 		t.Errorf("Format not idempotent for backslash-run hard break: got %q, then %q", got, twice)
 	}
 }
+
+// TestHardBreakParagraphFinalFallsBackToBr regression-tests #49: a hard
+// break landing on a paragraph's true final output line — nothing follows
+// it, not even a blank line — can only be read back as a break in the
+// "<br>" spelling. The spaces and backslash spellings both need a
+// following line to mean anything; with none they are literal text.
+// mdreflow falls back to "<br>" at this one position instead, regardless
+// of the configured style.
+func TestHardBreakParagraphFinalFallsBackToBr(t *testing.T) {
+	for _, style := range []struct {
+		name  string
+		style mdreflow.HardBreakStyle
+	}{
+		{"spaces", mdreflow.HardBreakSpaces},
+		{"backslash", mdreflow.HardBreakBackslash},
+	} {
+		t.Run(style.name, func(t *testing.T) {
+			src := "0<br>\n"
+			got, err := mdreflow.Format([]byte(src), mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 54, HardBreaks: style.style})
+			if err != nil {
+				t.Fatalf("Format: %v", err)
+			}
+			want := "0<br>\n"
+			if string(got) != want {
+				t.Errorf("Format(paragraph-final hard break, %s style) = %q, want %q", style.name, got, want)
+			}
+
+			before := render.Normalize(renderHTML(t, []byte(src)))
+			after := render.Normalize(renderHTML(t, got))
+			if before != after {
+				t.Errorf("paragraph-final hard-break fallback changed rendered HTML.\n--- before ---\n%s\n--- after ---\n%s", before, after)
+			}
+
+			twice, err := mdreflow.Format(got, mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 54, HardBreaks: style.style})
+			if err != nil {
+				t.Fatalf("Format(Format(x)): %v", err)
+			}
+			if string(twice) != string(got) {
+				t.Errorf("Format not idempotent for paragraph-final hard break: got %q, then %q", got, twice)
+			}
+		})
+	}
+}

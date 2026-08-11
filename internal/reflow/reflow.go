@@ -335,6 +335,19 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 					// any other position needs this fallback.
 					marker = "\\"
 				}
+				if lastCluster && marker != "" && marker != "<br>" {
+					// A marker landing on the paragraph's true final output
+					// line — lastCluster, and this is that cluster's own
+					// last line, so nothing follows it at all — can only be
+					// read back as a hard break in the <br> spelling: the
+					// spaces and backslash spellings both need a following
+					// line to mean anything, and with none they are literal
+					// text (#49). This runs after, and so overrides, the
+					// checkbox fallback above — the only other spelling it
+					// can produce is backslash, which fails here for the
+					// same reason.
+					marker = "<br>"
+				}
 				s = attachMarker(s, marker)
 			}
 			outLines = append(outLines, outLine{text: s})
