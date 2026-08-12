@@ -10,3 +10,6 @@ skills-lock.json
 /mdreflow
 bin/
 dist/
+
+# Gate-mode fuzz soak records (task fuzz-gate); not a build artifact worth keeping.
+fuzz-gate.log

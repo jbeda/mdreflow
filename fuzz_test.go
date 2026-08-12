@@ -8,11 +8,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"unicode/utf8"
 
 	"github.com/jbeda/mdreflow"
+	"github.com/jbeda/mdreflow/internal/render"
 )
 
 // hasHardBreakAdjacentDelimiter conservatively reports whether src has a
@@ -967,6 +969,30 @@ func FuzzFormat(f *testing.F) {
 			return
 		}
 
+		// Gate mode's hard failure: production, with both backstops on,
+		// must settle. The backstops are global switches, so this runs
+		// with them restored and before the core oracles below re-clear
+		// them. A document the convergence backstop bails on is stable
+		// by construction (it returns src), so this cannot see that
+		// case — deliberately: a document that silently does not format
+		// is a coverage loss, tiered with the recorded oracles, not the
+		// churn this check exists to forbid.
+		if gateMode {
+			mdreflow.SetConvergenceBackstop(true)
+			prod, err := mdreflow.Format(src, opts)
+			if err != nil {
+				t.Fatalf("production Format returned an error for opts %+v: %v", opts, err)
+			}
+			prodTwice, err := mdreflow.Format(prod, opts)
+			if err != nil {
+				t.Fatalf("production Format(Format(x)) returned an error: %v", err)
+			}
+			if !bytes.Equal(prodTwice, prod) {
+				t.Fatalf("PRODUCTION UNSTABLE (backstops on).\nopts: %+v\nsrc:  %q\nonce: %q\ntwice: %q", opts, src, prod, prodTwice)
+			}
+			mdreflow.SetConvergenceBackstop(false)
+		}
+
 		out, err := mdreflow.Format(src, opts)
 		if err != nil {
 			// deriveOptions only ever produces combinations Format
@@ -979,7 +1005,11 @@ func FuzzFormat(f *testing.F) {
 			t.Fatalf("Format(Format(x)) returned an error: %v", err)
 		}
 		if !bytes.Equal(twice, out) {
-			t.Fatalf("Format is not idempotent.\nopts: %+v\nsrc:  %q\nonce: %q\ntwice: %q", opts, src, out, twice)
+			if gateMode {
+				gateRecord(t, "core-not-idempotent", src, coreNotIdempotent)
+			} else {
+				t.Fatalf("Format is not idempotent.\nopts: %+v\nsrc:  %q\nonce: %q\ntwice: %q", opts, src, out, twice)
+			}
 		}
 
 		// Render preservation, with the harness's documented exceptions
@@ -998,7 +1028,11 @@ func FuzzFormat(f *testing.F) {
 			before := normalizeForRender(renderHTML(t, src))
 			after := normalizeForRender(renderHTML(t, out))
 			if before != after {
-				t.Fatalf("rendered HTML changed.\nsrc: %q\nout: %q\n--- before ---\n%s\n--- after ---\n%s", src, out, before, after)
+				if gateMode {
+					gateRecord(t, "core-render-changed", src, coreRenderChanged)
+				} else {
+					t.Fatalf("rendered HTML changed.\nsrc: %q\nout: %q\n--- before ---\n%s\n--- after ---\n%s", src, out, before, after)
+				}
 			}
 		}
 	})
@@ -1115,4 +1149,136 @@ func reportRenderSkips() {
 	for _, r := range rows {
 		fmt.Fprintf(os.Stderr, "  %-32s %d\n", r.name, r.hits)
 	}
+}
+
+// Gate mode (MDREFLOW_FUZZ_GATE=1) splits FuzzFormat's oracles into two
+// tiers, so a soak can run to its full duration while still failing hard on
+// the things that must never ship.
+//
+// Hard failures — a panic (free, any Go test fails on one), a typed-refusal
+// breach, and production instability: Format run with both backstops ON must
+// return output that formats to itself. That last one is the check the
+// default harness cannot make, because it drives the single-pass core and so
+// never asks whether the backstops rescued the document.
+//
+// Recorded, not failed: core non-idempotency and core render differences.
+// Both are real defects worth root-causing, but the backstops turn them into
+// a document that silently does not format rather than one that is corrupted
+// (docs/design.md, Convergence and the render backstop), so they do not gate
+// a release.
+//
+// The cost of not failing is that Go's fuzzing engine never minimizes or
+// persists these inputs: a failing input is minimized and written to
+// testdata/fuzz/FuzzFormat/, while a merely-interesting one lands unlabeled
+// and unminimized in the build-cache corpus, if at all. gateRecord therefore
+// does both jobs itself — shrink, then append to MDREFLOW_FUZZ_GATE_LOG.
+var gateMode = os.Getenv("MDREFLOW_FUZZ_GATE") == "1"
+
+// gateMaxRecords caps the log so a shape that recurs thousands of times in a
+// long soak cannot fill a disk; gateSeen dedups within one worker process.
+const gateMaxRecords = 200
+
+var (
+	gateSeen  sync.Map
+	gateCount atomic.Int64
+)
+
+// gateShrink greedily removes chunks while holds still reports the defect,
+// re-deriving options from each candidate so the result stays a valid seed
+// file — deriveOptions reads src's own bytes, so a shrunk input that no
+// longer derives the same options would not reproduce.
+func gateShrink(src []byte, holds func([]byte) bool) []byte {
+	cur := src
+	for chunk := len(cur) / 2; chunk >= 1; chunk /= 2 {
+		for i := 0; i+chunk <= len(cur); {
+			cand := make([]byte, 0, len(cur)-chunk)
+			cand = append(cand, cur[:i]...)
+			cand = append(cand, cur[i+chunk:]...)
+			if len(cand) > 0 && holds(cand) {
+				cur = cand
+				continue
+			}
+			i += chunk
+		}
+	}
+	return cur
+}
+
+// gateRecord shrinks src, dedups it, and appends one line to the gate log.
+// Opened per write with O_APPEND because Go runs fuzz workers as separate
+// processes, which cannot share a file handle.
+func gateRecord(t *testing.T, category string, src []byte, holds func([]byte) bool) {
+	if gateCount.Load() >= gateMaxRecords {
+		return
+	}
+	small := gateShrink(src, holds)
+	key := category + "\x00" + string(small)
+	if _, dup := gateSeen.LoadOrStore(key, true); dup {
+		return
+	}
+	if gateCount.Add(1) > gateMaxRecords {
+		return
+	}
+	path := os.Getenv("MDREFLOW_FUZZ_GATE_LOG")
+	if path == "" {
+		path = "fuzz-gate.log"
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Logf("gate: cannot open %s: %v", path, err)
+		return
+	}
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Logf("gate: closing %s: %v", path, err)
+		}
+	}()
+	fmt.Fprintf(f, "%s\t%+v\t%q\n", category, deriveOptions(small), small)
+	t.Logf("gate: recorded %s on %q", category, small)
+}
+
+// coreNotIdempotent and coreRenderChanged re-evaluate gate mode's two
+// recorded oracles against a candidate input, for gateShrink. Both re-derive
+// options from the candidate's own bytes so a shrunk result stays a valid
+// seed, and both read the render gates through the pure hasRenderRiskyShape
+// rather than noteRenderOracle, whose counters feed the skip-rate report and
+// must not be moved by shrinking. They assume the caller's backstop state —
+// the fuzz body has already cleared the convergence backstop.
+func coreNotIdempotent(b []byte) bool {
+	if !utf8.Valid(b) {
+		return false
+	}
+	opts := deriveOptions(b)
+	out, err := mdreflow.Format(b, opts)
+	if err != nil {
+		return false
+	}
+	twice, err := mdreflow.Format(out, opts)
+	if err != nil {
+		return false
+	}
+	return !bytes.Equal(twice, out)
+}
+
+func coreRenderChanged(b []byte) bool {
+	if !utf8.Valid(b) {
+		return false
+	}
+	opts := deriveOptions(b)
+	out, err := mdreflow.Format(b, opts)
+	if err != nil {
+		return false
+	}
+	if hasRenderRiskyShape(b) || hasRenderRiskyShape(out) {
+		return false
+	}
+	before, err := render.Normalized(b)
+	if err != nil {
+		return false
+	}
+	after, err := render.Normalized(out)
+	if err != nil {
+		return false
+	}
+	return before != after
 }
