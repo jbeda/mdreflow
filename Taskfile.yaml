@@ -99,9 +99,23 @@ tasks:
       - '{{ .TMP }}/mdreflow --version'
       - printf 'Two sentences here. Split please.\n' | {{ .TMP }}/mdreflow | diff - <(printf 'Two sentences here.\nSplit please.\n')
       # Pull the version through the public module proxy (makes it visible
-      # to `go install @latest`) and ask pkg.go.dev to index it. The final
-      # page check is soft: indexing can lag by minutes.
+      # to `go install @latest`). This one is a real gate: the proxy either
+      # has the version or the release did not land.
       - "curl -sf -o /dev/null https://proxy.golang.org/github.com/jbeda/mdreflow/@v/{{ .VERSION }}.info"
-      - "curl -sf -X POST -o /dev/null https://pkg.go.dev/fetch/github.com/jbeda/mdreflow@{{ .VERSION }}"
+      # Then ask pkg.go.dev to index it and wait for the page. Indexing is
+      # asynchronous, and the /fetch endpoint answers 408 ("still working on
+      # it") both while indexing and after the version is already live — so
+      # its status says nothing about success and must not gate the task.
+      # The page itself is the real signal; it is polled, and a miss is
+      # reported rather than failed, since a lagging index does not make a
+      # published release bad.
+      - cmd: |
+          curl -s -X POST -o /dev/null https://pkg.go.dev/fetch/github.com/jbeda/mdreflow@{{ .VERSION }} || true
+          for i in $(seq 1 12); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' https://pkg.go.dev/github.com/jbeda/mdreflow@{{ .VERSION }})
+            if [ "$code" = "200" ]; then echo "pkg.go.dev is serving {{ .VERSION }}"; exit 0; fi
+            sleep 15
+          done
+          echo "NOTE: pkg.go.dev has not indexed {{ .VERSION }} yet (last HTTP $code); the release itself is fine, re-check later."
       - "curl -sf -o /dev/null https://pkg.go.dev/github.com/jbeda/mdreflow@{{ .VERSION }} && echo 'pkg.go.dev indexed {{ .VERSION }}' || echo 'pkg.go.dev not showing {{ .VERSION }} yet (indexing lags; re-check in a few minutes)'"
       - echo "release {{ .VERSION }} verified"
