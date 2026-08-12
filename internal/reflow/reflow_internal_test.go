@@ -256,10 +256,37 @@ func TestDetectHardBreak(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			marker, rest := detectHardBreak(tc.content, tc.isLastLine, tc.insideSpan, tc.astHard)
+			marker, rest := detectHardBreak(tc.content, tc.isLastLine, tc.insideSpan, tc.astHard, false)
 			if marker != tc.wantMarker || rest != tc.wantRest {
 				t.Errorf("detectHardBreak(%q, isLastLine=%v, insideSpan=%v, astHard=%v) = (%q, %q), want (%q, %q)",
 					tc.content, tc.isLastLine, tc.insideSpan, tc.astHard, marker, rest, tc.wantMarker, tc.wantRest)
+			}
+		})
+	}
+}
+
+// Python-Markdown has no backslash hard break, so under the mkdocs dialect
+// two trailing spaces keep their own spelling instead of being promoted.
+// The other two spellings are unaffected: a source backslash is preserved
+// the same way every source spelling is, and "<br>" carries a break in both
+// renderers.
+func TestDetectHardBreakMkDocsKeepsDoubleSpace(t *testing.T) {
+	cases := []struct {
+		name                 string
+		content              string
+		wantMarker, wantRest string
+	}{
+		{"two trailing spaces kept", "foo  ", "  ", "foo"},
+		{"three trailing spaces kept as the two-space spelling", "foo   ", "  ", "foo"},
+		{"source backslash preserved", "foo\\", "\\", "foo"},
+		{"br tag preserved", "foo<br>", "<br>", "foo"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			marker, rest := detectHardBreak(tc.content, false, false, true, true)
+			if marker != tc.wantMarker || rest != tc.wantRest {
+				t.Errorf("detectHardBreak(%q, mkdocs=true) = (%q, %q), want (%q, %q)",
+					tc.content, marker, rest, tc.wantMarker, tc.wantRest)
 			}
 		})
 	}

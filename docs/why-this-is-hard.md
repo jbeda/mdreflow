@@ -269,6 +269,20 @@ The two HTML-context rows show why `<br>` is a different class of content from t
 Where the backslash cannot land (the escaped-backslash-run position above), the fallback is two spaces, never `<br>`: falling forward to `<br>` would repeat the exact mistake this section describes, introducing raw HTML into a document that never had any.
 A `<br>` the source already wrote is always kept; mdreflow never removes hard-break content, only respells it.
 
+### The promotion is also dialect-dependent
+
+Every row of the matrix above is measured against goldmark, and goldmark implements CommonMark.
+The `mkdocs` dialect's renderer is Python-Markdown, which predates CommonMark and never adopted the backslash break: there, a trailing backslash renders as a literal backslash character followed by an ordinary soft break.
+Only two spaces and a literal `<br>` carry a break in that renderer.
+
+So under `--dialect mkdocs` the promotion has nowhere valid to go — its only target is a spelling that does not work, and the other working spelling is the one mdreflow may never introduce.
+Two spaces are therefore left exactly as the source wrote them.
+This is the same fallback rule as the escaped-backslash-run position, applied at the level of the whole dialect rather than one line position: where the promoted backslash cannot land, keep the two spaces.
+
+This one is worth dwelling on, because nothing inside mdreflow can catch it.
+The render backstop and the fuzz harness both compare through goldmark, where a trailing backslash *is* a break — so both sides of the comparison agree, and the check passes on output that breaks the published page.
+It was found by building a real MkDocs site from a page written to contain all three spellings, which is the only instrument that can see it.
+
 ## What authors can do about a frozen paragraph
 
 The freezes are shape-based, so authors can remove the shape.

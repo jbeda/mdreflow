@@ -12,6 +12,7 @@ At release time the section is retitled to the version and the prose lead is wri
 ### Changed
 
 - **Breaking:** hard line breaks (trailing double-space, trailing backslash, `<br>`) are no longer normalized to a configured style — mdreflow now keeps the spelling the source used, promoting only a trailing double-space to a backslash (double spaces are invisible and routinely stripped by editors in transit). mdreflow no longer introduces raw HTML (`<br>`) into a document that didn't already use it.
+  Under `--dialect mkdocs` a double-space is kept as-is instead: Python-Markdown has no backslash hard break and renders one as a literal `\`, so there is no spelling to promote to.
   This fixes four bugs found in the narrow contexts where the old normalized spelling didn't actually work at its landing position (#40, #47, #49, #52). **Removed:** the `--hard-breaks` flag, `Options.HardBreaks`, `HardBreakStyle` and its constants, and the `hard-breaks:` config key.
   If your `.mdreflow.yaml` has a `hard-breaks:` key, delete it — mdreflow now refuses the file with an unknown-key error instead of silently ignoring it.
 - **Breaking:** removed the unused `--strip-sentence-terminal-breaks` flag and `Options.StripSentenceTerminalBreaks`.
@@ -22,6 +23,8 @@ At release time the section is retitled to the version and the prose lead is wri
 - Under `--dialect mkdocs`, an admonition marker is now recognized by its opening punctuation plus a class word (`!!! note`, `??? tip`, `???+ warning`) rather than by a pattern anchored to the end of the line.
   A narrow-width wrap could previously cut a line into something the old pattern read as a marker, so the next `mdreflow` run indented the line below it and output stopped being stable (#51).
   Marker lines are left alone whatever follows the class word, so Material for MkDocs's inline modifiers are handled.
+- A paragraph whose line ending folds several line-ending sequences together (a bare CR followed by a CRLF) is now left alone when the content before it ends in a hard-break spelling.
+  Normalizing those bytes to a single newline put the spelling directly against the line ending and so invented a hard break the source never had.
 - Under `--dialect mkdocs`, an admonition body is now left alone when wrapping it would put a list- or fence-shaped token at the start of a line.
   Reflow escapes such a token so it cannot change what the line parses as, but a callout body is prose only to MkDocs — every CommonMark renderer reads it as code, where the backslash is literal text.
   The body keeps its source form rather than pick one renderer over the other; bodies that wrap without needing an escape are unaffected.

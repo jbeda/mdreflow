@@ -201,6 +201,34 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 	insideSpanAfter := insideCodeSpanAfterLine(rawContents)
 	astHardAfter := astHardBreakAfterLine(p.Node, lines)
 
+	// A line ending goldmark folded several line-ending sequences into
+	// (":::\r\r\n" is one segment, not two — see stripLineEnding) is
+	// normalized to a single LF along with everything else. That is safe
+	// until the content left behind ends in a hard-break spelling that the
+	// extra CR was the only thing separating from the line ending: goldmark
+	// reads "0 \" + "\r" + "\r\n" as a literal backslash and a soft break,
+	// but the normalized "0 \" + "\n" is a hard break, so the rewrite
+	// manufactures a break the source never had. No shorter output
+	// preserves it either — one retained CR just makes the ending a CRLF
+	// and puts the backslash back against it — so the paragraph passes
+	// through untouched. Found by FuzzFormat on "0 \\\r\r\n:::" (seed
+	// 30fd42ec14ef5368) as an idempotency break; the render change behind
+	// it is the actual defect.
+	for i := 0; i < n; i++ {
+		if astHardAfter[i] {
+			continue
+		}
+		seg := lines.At(i)
+		run := string(seg.Value(source))[len(rawContents[i]):]
+		if run == "" || run == "\n" || run == "\r\n" || run == "\r" {
+			continue
+		}
+		if spellsHardBreakRaw(rawContents[i]) {
+			buf.Write(source[p.Start:p.End])
+			return
+		}
+	}
+
 	var outLines []outLine
 	var curLines []lineFrag
 
@@ -251,7 +279,7 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 			// verdict: the joined text's trailing backslash/space bytes
 			// are always that line's trailing bytes (the join preserves
 			// them), so its per-line flag is the right one to consult.
-			if m, rest := detectHardBreak(text, lastCluster, insideSpan, astHard); m != "" {
+			if m, rest := detectHardBreak(text, lastCluster, insideSpan, astHard, opts.MkDocs); m != "" {
 				marker = m
 				text = rest
 			}
@@ -323,7 +351,7 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 			continue
 		}
 
-		marker, rest := detectHardBreak(content, i == n-1, insideSpanAfter[i], astHardAfter[i])
+		marker, rest := detectHardBreak(content, i == n-1, insideSpanAfter[i], astHardAfter[i], opts.MkDocs)
 		if i == 0 && i < n-1 && trimLineSpace(rest) == "" && marker == "<br>" {
 			// Fuzz-found hazard: a paragraph's first output line, with no
 			// prose preceding a source-authored "<br>" marker, would
@@ -2359,7 +2387,7 @@ var hardBreakBrRE = regexp.MustCompile(`(?i)[ \t\r]*<br([ \t]*/)?>[ \t\r]*$`)
 // marker spelling, which a flush-time join can manufacture from bytes no
 // single source line carried ("<Br\n/>" joining to "<Br />"), where no
 // per-line AST flag exists to consult.
-func detectHardBreak(content string, isLastLine, insideSpan, astHard bool) (marker, rest string) {
+func detectHardBreak(content string, isLastLine, insideSpan, astHard, mkdocs bool) (marker, rest string) {
 	if insideSpan {
 		return "", content
 	}
@@ -2396,7 +2424,7 @@ func detectHardBreak(content string, isLastLine, insideSpan, astHard bool) (mark
 			// every spelling, so this is a normalization, not a content
 			// change; a remaining odd backslash run is still handled by
 			// attachMarker's fusion guard.
-			return markerFor(`\`), strings.TrimRight(content[:len(content)-1], " \t\r")
+			return markerFor(`\`, mkdocs), strings.TrimRight(content[:len(content)-1], " \t\r")
 		}
 
 		// Trailing spaces: two or more.
@@ -2405,7 +2433,7 @@ func detectHardBreak(content string, isLastLine, insideSpan, astHard bool) (mark
 			i--
 		}
 		if len(content)-i >= 2 {
-			return markerFor("  "), content[:i]
+			return markerFor("  ", mkdocs), content[:i]
 		}
 	}
 
@@ -2435,10 +2463,27 @@ func detectHardBreak(content string, isLastLine, insideSpan, astHard bool) (mark
 			// by FuzzFormat on "00000\<Br>".
 			return "", content
 		}
-		return markerFor("<br>"), prefix
+		return markerFor("<br>", mkdocs), prefix
 	}
 
 	return "", content
+}
+
+// spellsHardBreakRaw reports whether content's own trailing bytes spell a
+// hard break — exactly one trailing backslash, or two or more trailing
+// spaces — judged from the bytes alone, with no AST confirmation. It answers
+// "would this content, placed directly against a line ending, reparse as a
+// hard break", which is the question writeParagraph's folded-line-ending
+// check needs and the inverse of the AST veto detectHardBreak applies.
+func spellsHardBreakRaw(content string) bool {
+	if trailingBackslashCount(content) == 1 {
+		return true
+	}
+	i := len(content)
+	for i > 0 && content[i-1] == ' ' {
+		i--
+	}
+	return len(content)-i >= 2
 }
 
 // markerFor maps the spelling detectHardBreak found in the source (src) to
@@ -2448,8 +2493,20 @@ func detectHardBreak(content string, isLastLine, insideSpan, astHard bool) (mark
 // "<br>" is emitted only where the author already wrote it. Where the
 // promoted backslash cannot work at its landing position, attachMarker
 // falls back to two trailing spaces rather than to "<br>".
-func markerFor(src string) string {
-	if src == "  " {
+//
+// The promotion does not happen under the mkdocs dialect. Python-Markdown
+// never adopted CommonMark's backslash break and renders a trailing
+// backslash as a literal backslash plus an ordinary soft break, so
+// promoting there destroys a working break and prints a stray "\" into the
+// page. Only two spaces and a literal "<br>" carry a break in that
+// renderer, and "<br>" may not be introduced — leaving the two spaces
+// alone is the whole of the fallback rule ("where the promoted backslash
+// cannot land, fall back to two spaces") applied at the dialect level
+// instead of at a line position. Invisible to the render backstop and the
+// fuzz oracle, which both compare through goldmark, where the backslash
+// spelling does render as a break; measured by building a real MkDocs site.
+func markerFor(src string, mkdocs bool) string {
+	if src == "  " && !mkdocs {
 		return `\`
 	}
 	return src

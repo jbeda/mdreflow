@@ -310,6 +310,71 @@ func TestIssue51InlineModifierAdmonitionsReflow(t *testing.T) {
 	}
 }
 
+// Python-Markdown never adopted CommonMark's backslash hard break, so under
+// the mkdocs dialect two trailing spaces keep their own spelling instead of
+// being promoted to a backslash that would render as a literal "\" on the
+// published page. Under gfm the promotion still happens.
+func TestHardBreakPromotionIsDialectGated(t *testing.T) {
+	const src = "alpha  \nbeta\n"
+	for _, tc := range []struct {
+		dialect mdreflow.Dialect
+		want    string
+	}{
+		{mdreflow.DialectGFM, "alpha\\\nbeta\n"},
+		{mdreflow.DialectMkDocs, "alpha  \nbeta\n"},
+	} {
+		t.Run(tc.dialect.String(), func(t *testing.T) {
+			out, err := mdreflow.Format([]byte(src), mdreflow.Options{Mode: mdreflow.ModeSentence, Dialect: tc.dialect})
+			if err != nil {
+				t.Fatalf("Format: %v", err)
+			}
+			if string(out) != tc.want {
+				t.Errorf("got %q, want %q", out, tc.want)
+			}
+		})
+	}
+}
+
+// goldmark folds several consecutive line-ending sequences into one line
+// segment. Normalizing that run to a single LF manufactures a hard break
+// when the content left behind ends in a break spelling the extra CR was
+// separating from the line ending, so such a paragraph passes through.
+func TestFoldedLineEndingsDoNotManufactureHardBreak(t *testing.T) {
+	mdreflow.SetConvergenceBackstop(false)
+	mdreflow.SetRenderBackstop(false)
+	defer func() {
+		mdreflow.SetConvergenceBackstop(true)
+		mdreflow.SetRenderBackstop(true)
+	}()
+	o := mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 78, Dialect: mdreflow.DialectMkDocs}
+	for _, src := range []string{
+		"0 \\\r\r\n:::",
+		"a \\\r\r\n:::",
+		"0  \r\r\n:::",
+	} {
+		t.Run(src, func(t *testing.T) {
+			out, err := mdreflow.Format([]byte(src), o)
+			if err != nil {
+				t.Fatalf("Format: %v", err)
+			}
+			if string(out) != src {
+				t.Errorf("paragraph was rewritten.\nsrc: %q\nout: %q", src, out)
+			}
+		})
+	}
+	// The shape that motivated normalizing the whole run in the first place
+	// still normalizes: no hard-break spelling is left against the ending.
+	t.Run("plain folded endings still normalize", func(t *testing.T) {
+		out, err := mdreflow.Format([]byte(":::\r\r\n0"), o)
+		if err != nil {
+			t.Fatalf("Format: %v", err)
+		}
+		if string(out) != ":::\n0" {
+			t.Errorf("got %q, want %q", out, ":::\n0")
+		}
+	})
+}
+
 // An admonition body is prose to MkDocs and an indented code block to the
 // CommonMark parser mdreflow reflows against, so a backslash added to stop
 // a wrapped line from reparsing as a list is markup to one renderer and
