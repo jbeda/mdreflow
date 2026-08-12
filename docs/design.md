@@ -155,8 +155,10 @@ The first line's opening bytes are the one part of a paragraph reflow cannot mov
 
 An admonition body is left alone in two further cases, both because reflow would otherwise change what a CommonMark parser reads out of the block it sees:
 
-- **Indented past 4 spaces.** Reflow re-emits every body line at exactly the 4-space indent, so the extra whitespace — content, to the indented code block goldmark reads there — would be deleted. Bodies worth reflowing sit flush at 4.
-- **An escape would be needed.** A body is prose to MkDocs and code to CommonMark, so a backslash reflow adds to stop a wrapped line reparsing as a list or a fence is markup to the first renderer and literal text to the second; no single output preserves both renders. The paragraph backs out to its source bytes the moment an escape proves necessary (`blockmap.Paragraph.EscapeIsContent`), rather than teaching the render oracle to stop looking at admonition bodies — coverage is the cheaper thing to spend here than sight in the one area goldmark is already blind.
+- **Indented past 4 spaces.** Reflow re-emits every body line at exactly the 4-space indent, so the extra whitespace — content, to the indented code block goldmark reads there — would be deleted.
+  Bodies worth reflowing sit flush at 4.
+- **An escape would be needed.** A body is prose to MkDocs and code to CommonMark, so a backslash reflow adds to stop a wrapped line reparsing as a list or a fence is markup to the first renderer and literal text to the second; no single output preserves both renders.
+  The paragraph backs out to its source bytes the moment an escape proves necessary (`blockmap.Paragraph.EscapeIsContent`), rather than teaching the render oracle to stop looking at admonition bodies — coverage is the cheaper thing to spend here than sight in the one area goldmark is already blind.
 
 For everything else mdreflow still targets one permissive superset of dialects ("do our best on everything").
 Dialect awareness beyond the profile is a *skip-list* — constructs recognized only well enough to pass through untouched — not a set of dialect implementations.

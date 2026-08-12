@@ -78,7 +78,9 @@ The default dialect, `gfm`, is the permissive GitHub-flavored superset: GFM exte
 Docusaurus, Hugo, and MDX constructs are recognized and passed through untouched in every dialect. `--dialect mkdocs` additionally reflows MkDocs/Python-Markdown admonition bodies (`!!! note` followed by a 4-space-indented body), which CommonMark parsers can only see as indented code blocks — opt-in because reflowing one changes what a CommonMark renderer emits.
 Recognition is deliberately narrow: bodies containing a fence marker or more than one paragraph, indented past 4 spaces, or whose wrap would need a backslash escape are left alone.
 
-The dialect also decides how a hard line break is written. mdreflow keeps the spelling the source used and promotes a trailing double-space to a backslash, since double spaces are invisible and get stripped in transit — but not under `mkdocs`, where Python-Markdown has no backslash hard break and renders one as a literal `\`. There, a double-space is kept as written. Raw HTML (`<br>`) is never introduced in any dialect.
+The dialect also decides how a hard line break is written. mdreflow keeps the spelling the source used and promotes a trailing double-space to a backslash, since double spaces are invisible and get stripped in transit — but not under `mkdocs`, where Python-Markdown has no backslash hard break and renders one as a literal `\`.
+There, a double-space is kept as written.
+Raw HTML (`<br>`) is never introduced in any dialect.
 
 ## Configuration
 
