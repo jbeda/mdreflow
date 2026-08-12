@@ -114,8 +114,14 @@ Configuration (.mdreflow.yaml):
   These are the only config keys; --explain is flag-only. typography:
   and hard-breaks: are not among them, and a config carrying either is
   an unknown-key error: delete the key. Hard-break spelling follows the
-  source rather than configuration; for quote and ellipsis substitution
-  use a render-time option such as goldmark's Typographer.
+  source rather than configuration: a trailing double-space is promoted
+  to a backslash (double spaces are invisible and get stripped in
+  transit), every other spelling is kept as written, and raw HTML
+  ("<br>") is never introduced. Under --dialect mkdocs the promotion
+  does not happen — Python-Markdown has no backslash hard break and
+  renders one as a literal "\" — so a double-space is kept as-is. For
+  quote and ellipsis substitution use a render-time option such as
+  goldmark's Typographer.
 
 Explain (--explain):
 

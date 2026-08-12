@@ -147,6 +147,17 @@ The class word is required: a line that is only the punctuation, or runs it stra
 This recognition, and the boundary it produces, are mkdocs-only; under `gfm` a line starting `!!!` or `???` is ordinary prose.
 See why-this-is-hard.md's "Why the verdicts are blunt" for why the prefix match replaced an earlier, end-anchored, type-word-requiring regex.
 
+(Amendment 2026-08-12.)
+The two halves of that verdict answer to different requirements and are now separated.
+A paragraph's first line is *pinned* — never joined onto — whenever it opens with the marker punctuation at all, class word or not; only a line that also carries a class word is a marker whose body takes the 4-space indent.
+Pinning on the punctuation alone is what makes the verdict stable across passes: whether a paragraph is the lazily-joined admonition form is read from its first line, and reflow can rewrite that line, so wrapping a bare `!!!` used to pull the next word up and manufacture `!!! word` — which the following pass read as a marker and indented the body under, output that never settled.
+The first line's opening bytes are the one part of a paragraph reflow cannot move, so keying on them is verdict-stable; keeping the indent gated on a real class word preserves the rule above, since indenting under a bare `!!!` would turn ordinary prose into an indented code block.
+
+An admonition body is left alone in two further cases, both because reflow would otherwise change what a CommonMark parser reads out of the block it sees:
+
+- **Indented past 4 spaces.** Reflow re-emits every body line at exactly the 4-space indent, so the extra whitespace — content, to the indented code block goldmark reads there — would be deleted. Bodies worth reflowing sit flush at 4.
+- **An escape would be needed.** A body is prose to MkDocs and code to CommonMark, so a backslash reflow adds to stop a wrapped line reparsing as a list or a fence is markup to the first renderer and literal text to the second; no single output preserves both renders. The paragraph backs out to its source bytes the moment an escape proves necessary (`blockmap.Paragraph.EscapeIsContent`), rather than teaching the render oracle to stop looking at admonition bodies — coverage is the cheaper thing to spend here than sight in the one area goldmark is already blind.
+
 For everything else mdreflow still targets one permissive superset of dialects ("do our best on everything").
 Dialect awareness beyond the profile is a *skip-list* — constructs recognized only well enough to pass through untouched — not a set of dialect implementations.
 Each rule is tagged by origin so dialect profiles can subset the existing rules rather than require new machinery:
@@ -213,6 +224,14 @@ The three spellings are not interchangeable: `<br>` is raw HTML — goldmark's d
 Normalizing every preserved hard break to one configured style meant mdreflow could introduce raw HTML the author never wrote, and fuzzing found four bugs (#40, #47, #49, #52) living in the narrow contexts where the configured spelling didn't actually work at its landing position — each needing a bespoke guard.
 The policy instead emits the spelling the source used, with one promotion: two trailing spaces are invisible and routinely stripped by editors in transit, so they are promoted to a backslash.
 Where the promoted backslash cannot work at its landing position — directly after an even, non-zero run of trailing backslashes, where one more would leave three or more (literal text, not a break) — the fallback is two trailing spaces, never `<br>`: mdreflow never introduces a spelling the source didn't already use.
+
+The promotion is also gated on the dialect (amendment 2026-08-12).
+Python-Markdown predates CommonMark and never adopted the backslash break: under the mkdocs dialect a trailing backslash renders as a literal backslash followed by an ordinary soft break, so promoting there destroys a working break and prints a stray `\` into the page.
+Only two trailing spaces and a literal `<br>` carry a break in that renderer, and `<br>` may never be introduced, so the promotion has no valid target and the source's two spaces are kept.
+This is the same fallback rule as the escaped-backslash-run position, applied at the level of a whole dialect rather than one line position.
+
+This class of defect is invisible to both safety nets: the render backstop and the fuzz oracle compare through goldmark, where the backslash spelling *is* a break, so both sides of the comparison agree on output that breaks the published page.
+Only a real `mkdocs build` diff can see it, which makes the release procedure's probe page load-bearing rather than a nicety.
 A source-authored `<br>` is always kept, canonicalized to lowercase, un-self-closed spelling (`<Br />` and `<BR>` both emit `<br>`) since a cluster join can manufacture a `<br>`-shaped tag from bytes no single source line carried, and a canonical spelling is needed for the pipeline to recognize its own output on the next pass.
 This removes `Options.HardBreaks`: there is no longer a style to configure.
 See [why-this-is-hard.md](why-this-is-hard.md) for the full context matrix behind this decision.
