@@ -122,7 +122,7 @@ The numbers follow Unix convention (diff-style 1, usage-error 2), so severity do
 ```yaml
 repos:
   - repo: https://github.com/jbeda/mdreflow
-    rev: v0.1.7 # or any commit
+    rev: v0.2.0 # or any commit
     hooks:
       - id: mdreflow # formats staged Markdown in place
       # - id: mdreflow-check  # or: fail the commit instead of rewriting

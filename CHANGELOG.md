@@ -9,6 +9,29 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+## v0.2.0 (2026-08-12)
+
+mdreflow no longer has an opinion about how you encode a hard line break.
+
+It used to normalize every hard break — trailing double-space, trailing backslash, `<br>` — to one configured style.
+The three encodings turned out not to be interchangeable: each fails at certain positions, and `<br>` is raw HTML, a different class of content than the Markdown around it.
+Normalizing to a single style therefore produced breaks that didn't work where they landed, which is where four of this release's fixes came from.
+
+The rule now: a hard break keeps the encoding the source used.
+The one exception is a trailing double-space, promoted to a backslash — double spaces are invisible in an editor and routinely stripped in transit.
+That promotion does not happen under `--dialect mkdocs`, where Python-Markdown has no backslash break and renders one as a literal `\`; there the double-space is kept as written. mdreflow never introduces raw HTML into a document that didn't already contain it, and where a backslash can't land, the fallback is two spaces, never `<br>`.
+
+The other theme is MkDocs admonitions under `--dialect mkdocs`.
+Markers are now recognized by their opening punctuation plus a class word rather than by a pattern matching the whole line, so narrow-width wrapping can no longer manufacture something that reads as a marker and destabilizes output.
+Admonitions carrying inline modifiers or non-alphabetic types now get their bodies reflowed instead of being silently skipped, and a body that reflow cannot rewrite without changing what a CommonMark parser reads out of it is left alone rather than reflowed at the cost of one renderer or the other.
+
+Act on these when upgrading:
+
+- Delete any `hard-breaks:` key from `.mdreflow.yaml`.
+  It is now an unknown-key error rather than a silently ignored line — and this repo's own README and `--help` shipped `hard-breaks: br` in their sample config, so a config copied from here will fail until the line goes.
+- Remove `--hard-breaks` and `--strip-sentence-terminal-breaks` from any invocation; both are gone with no replacement.
+- Library callers: `Options.HardBreaks`, `HardBreakStyle` and its constants, and `Options.StripSentenceTerminalBreaks` are removed.
+
 ### Changed
 
 - **Breaking:** hard line breaks (trailing double-space, trailing backslash, `<br>`) are no longer normalized to a configured style — mdreflow now keeps the spelling the source used, promoting only a trailing double-space to a backslash (double spaces are invisible and routinely stripped by editors in transit). mdreflow no longer introduces raw HTML (`<br>`) into a document that didn't already use it.
