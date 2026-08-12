@@ -386,11 +386,18 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 		precededByNonBlankLine = trimLineSpace(prevLine) != ""
 	}
 
+	// Rendered into a local buffer so an EscapeIsContent paragraph can be
+	// abandoned wholesale once an escape proves necessary: the escape is
+	// only discovered here, line by line, and backing out one line would
+	// leave the rest of the paragraph reflowed around bytes that must not
+	// move. Writing p's own source range reproduces it byte-for-byte, the
+	// same pass-through a paragraph blockmap never handed over gets.
+	var para bytes.Buffer
 	for i, ol := range outLines {
 		if i > 0 {
-			buf.WriteByte('\n')
+			para.WriteByte('\n')
 			if !ol.verbatim {
-				buf.WriteString(p.ContPrefix)
+				para.WriteString(p.ContPrefix)
 			}
 		}
 		if !ol.verbatim && !ol.noEscape {
@@ -421,10 +428,16 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 			} else {
 				prevNonBlank = trimLineSpace(outLines[i-1].text) != ""
 			}
-			ol.text = escapeBlockInterrupt(ol.text, i == 0, prefix, prevNonBlank)
+			escaped := escapeBlockInterrupt(ol.text, i == 0, prefix, prevNonBlank)
+			if p.EscapeIsContent && escaped != ol.text {
+				buf.Write(source[p.Start:p.End])
+				return
+			}
+			ol.text = escaped
 		}
-		buf.WriteString(ol.text)
+		para.WriteString(ol.text)
 	}
+	buf.Write(para.Bytes())
 	if lastLineHasNewline {
 		buf.WriteByte('\n')
 	}

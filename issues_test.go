@@ -310,6 +310,46 @@ func TestIssue51InlineModifierAdmonitionsReflow(t *testing.T) {
 	}
 }
 
+// An admonition body is prose to MkDocs and an indented code block to the
+// CommonMark parser mdreflow reflows against, so a backslash added to stop
+// a wrapped line from reparsing as a list is markup to one renderer and
+// literal text to the other. Neither render can be sacrificed, so the whole
+// paragraph backs out to its source bytes as soon as an escape is needed.
+func TestAdmonitionBodyBacksOutOfEscape(t *testing.T) {
+	mdreflow.SetRenderBackstop(false)
+	mdreflow.SetConvergenceBackstop(false)
+	defer func() {
+		mdreflow.SetRenderBackstop(true)
+		mdreflow.SetConvergenceBackstop(true)
+	}()
+	// At width 10 every token lands on its own line, so "12." opens one and
+	// would be escaped; at width 40 it stays mid-line and the body reflows.
+	const src = "!!! note\n\n    1 a 9a7#ez lclY8w&oya %zC)+x+zote n(ver ine 12.\n"
+	t.Run("backs out when an escape is needed", func(t *testing.T) {
+		o := mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 10, Dialect: mdreflow.DialectMkDocs}
+		out, err := mdreflow.Format([]byte(src), o)
+		if err != nil {
+			t.Fatalf("Format: %v", err)
+		}
+		if !bytes.Equal(out, []byte(src)) {
+			t.Errorf("body reflowed with an escape instead of backing out.\nout: %q", out)
+		}
+	})
+	t.Run("still reflows when no escape is needed", func(t *testing.T) {
+		o := mdreflow.Options{Mode: mdreflow.ModeWrap, MaxWidth: 40, Dialect: mdreflow.DialectMkDocs}
+		out, err := mdreflow.Format([]byte(src), o)
+		if err != nil {
+			t.Fatalf("Format: %v", err)
+		}
+		if bytes.Equal(out, []byte(src)) {
+			t.Errorf("body did not reflow.\nsrc: %q", src)
+		}
+		if bytes.Contains(out, []byte(`\.`)) {
+			t.Errorf("body carries an escape.\nout: %q", out)
+		}
+	})
+}
+
 // Reflow must not manufacture an admonition marker. A paragraph opening
 // with the marker punctuation but no class word ("!!!" alone) is not a
 // marker, so its lines used to join freely — and a wrap that pulled the

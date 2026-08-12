@@ -61,6 +61,15 @@ type Paragraph struct {
 	// and must be emitted byte-for-byte; package reflow never joins across
 	// it.
 	Boundary []bool
+	// EscapeIsContent marks a paragraph that is prose only to the dialect's
+	// own renderer, and an indented code block to the CommonMark parser
+	// mdreflow reflows against — the MkDocs admonition body admonitionBodies
+	// recognizes. A backslash reflow adds to keep a wrapped line from
+	// reparsing as a list or a fence is markup to MkDocs and literal text to
+	// CommonMark, so the two renders cannot both be preserved. Package
+	// reflow backs the whole paragraph out to its source bytes rather than
+	// emit an escape here; see writeParagraph.
+	EscapeIsContent bool
 }
 
 // SkipReason says which guard froze a paragraph — which distinct branch
@@ -1448,10 +1457,11 @@ func admonitionBodies(cb *ast.CodeBlock, source []byte, mkdocs bool) []Paragraph
 	}
 	last := lines.At(lines.Len() - 1)
 	return []Paragraph{{
-		Node:       cb,
-		Start:      first.Start,
-		End:        last.Stop,
-		ContPrefix: contPrefix,
-		Boundary:   make([]bool, lines.Len()),
+		Node:            cb,
+		Start:           first.Start,
+		End:             last.Stop,
+		ContPrefix:      contPrefix,
+		Boundary:        make([]bool, lines.Len()),
+		EscapeIsContent: true,
 	}}
 }
