@@ -365,6 +365,21 @@ definitions, fuzz-found), and the content profile is the
 opposite: a footnote body is real prose. Two protections replace the guard
 pile for the caret case:
 
+**The neighbor check asks the parser, not the label** (amendment 2026-08-14, issue #58).
+The caret discriminator answers the wrong question for the line *above* a paragraph.
+No footnote extension is registered in package `gm`, so `[^1]: /url` is an ordinary link reference definition to goldmark, able to take its title from the line below exactly as `[docs]: /url` is; excluding it by label shape let sentence mode split the paragraph beneath and feed the definition its own first line, deleting that prose from the page.
+The def-chain-start fact is therefore set by parsing the line in isolation (`gm.IsCompleteLinkRefDefLine`) as well as by the shape regexes.
+Asking the parser is what preserves issue #41's coverage rather than reverting it: a real footnote body (`[^1]: some ordinary prose`) is not a definition to goldmark and answers false, so back-to-back footnote layouts still reflow, while only caret lines that genuinely are definitions (`[^1]: /url`, `[^1]: one`) newly freeze the paragraph below.
+Widening the regexes instead would have frozen every paragraph containing a `[^…]:` shape — every footnote body in every document.
+
+**A paragraph that manufactures a definition falls back alone** (amendment 2026-08-14, issue #58).
+The mirror hazard is not visible in the input at all: a break landing inside a paragraph can strand a `label]:` fragment at a line start and form a definition that never existed, swallowing the prose around it.
+There is nothing dangerous to inspect beforehand, so the parser is asked about the *candidate output* instead — `gm.FormsNewLinkRefDef` compares the definitions the paragraph's source bytes form against those its reflowed lines form, and any addition means reflow invented one.
+The fallback is scoped to the one paragraph, which is the point: the document-level render backstop returns `src`, so a single bad paragraph silently costs the file every other paragraph's reflow.
+It is verdict-stable by construction — the answer is a function of the paragraph's own source bytes, and a paragraph that falls back emits exactly those bytes, so the next pass re-derives it and settles.
+The check is deliberately narrow rather than a per-paragraph render comparison: definition formation is decided by the lines the definition occupies, whereas a render diff at this scope would be unsound, since a reference *link* resolves against definitions elsewhere in the document and a paragraph containing `[foo]` renders differently alone than in place.
+For the same reason the window matters: a definition formed from the line above plus the paragraph's first line is invisible inside the paragraph, which is why the neighbor check above is a separate protection rather than one this subsumes.
+
 The exemption applies to a paragraph's *own* shape only — the zone's
 neighbor checks have no footnote carve-out (issue #41 removed the one they
 had). None is needed: a complete footnote-body line (`[^1]: body text`, the

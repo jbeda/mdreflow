@@ -178,10 +178,29 @@ func TestInLinkRefDefZone(t *testing.T) {
 			// with no special case: a COMPLETE footnote-body line above
 			// ("[^1]: first") sets none of the neighbor facts, so nothing
 			// fires (see inLinkRefDefZone's no-exemption comment).
-			name:         "back-to-back footnote bodies stay eligible (complete def line above sets no facts)",
+			// A caret label whose body is a bare word IS a complete
+			// definition to goldmark — no footnote extension is
+			// registered — so it can absorb a title from the line below
+			// exactly like "[docs]: /url". Verified against the
+			// pre-#58 build: "[^1]: first" above a paragraph opening
+			// with a quoted sentence deleted that sentence from the
+			// page. Multi-word footnote bodies are not definitions and
+			// still keep #41's coverage; see the case below.
+			name:         "#58: a caret def line that really is a definition freezes the paragraph below",
 			source:       "[^1]: first\n[^2]: second",
 			trimmed:      []string{"[^2]: second"},
 			contentStart: 12,
+			want:         true,
+		},
+		{
+			// #41's coverage, kept: an ordinary footnote body is not a
+			// definition to goldmark (its "body" is not a valid
+			// destination+title), so it sets no fact and the footnote
+			// below it stays eligible.
+			name:         "#41 kept: prose footnote body above does not freeze the next footnote",
+			source:       "[^1]: some ordinary body prose\n[^2]: more ordinary body prose",
+			trimmed:      []string{"[^2]: more ordinary body prose"},
+			contentStart: 30,
 			want:         false,
 		},
 		{

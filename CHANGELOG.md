@@ -14,6 +14,9 @@ On a real 272-file MkDocs docset the upgrade reformatted 203 files (75%) and add
 Nothing renders differently — the change moves line breaks inside paragraphs, which HTML collapses — but a repo running `mdreflow --check` in CI will go red until the formatter is run once.
 Run `mdreflow .` and commit the result as its own change, so the reflow does not ride along in an unrelated diff.
 
+- A paragraph next to a footnote-style `[^1]:` definition, or one whose own text could be split into a definition, no longer stops the whole file from formatting.
+  Reflow could feed such a definition its title, or manufacture one mid-paragraph, deleting prose from the rendered page; the safety check that compares renders caught it and returned the file untouched, so the file silently stopped formatting while `--check` reported it clean (#58).
+  Both cases are now detected by asking the Markdown parser, and only the affected paragraph is left alone instead of the entire file.
 - Sentence mode now starts a new line for a sentence that opens with inline code or emphasis (`` `code` ``, `**bold**`, `*italic*`, `_italic_`), instead of joining it onto the sentence before it.
   A sentence opening with a link already split; these now behave the same way.
   Whether a delimiter opens a real code span or emphasis run is settled by the Markdown parse, so a stray `` ` `` or `*` in prose still joins as it always did, and a sentence opening with a code span written in three or more backticks stays joined rather than becoming a code fence.

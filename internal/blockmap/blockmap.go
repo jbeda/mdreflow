@@ -25,6 +25,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/jbeda/mdreflow/internal/gm"
 	"github.com/jbeda/mdreflow/internal/segment"
 	"github.com/yuin/goldmark/ast"
 	gfmast "github.com/yuin/goldmark/extension/ast"
@@ -205,7 +206,7 @@ func scanLineFacts(source []byte) map[int]lineFacts {
 		}
 		line := bytes.TrimRight(source[ls:end], "\r")
 		f := lineFacts{
-			chainStart:      defChainStartRE.Match(line),
+			chainStart:      defChainStartRE.Match(line) || parsesAsDefLine(line),
 			orphanCloser:    orphanDefCloserRE.Match(line),
 			bareCaretOpener: bareCaretOpenerRE.Match(line),
 			defAbove:        seen,
@@ -219,6 +220,36 @@ func scanLineFacts(source []byte) map[int]lineFacts {
 		ls = end + 1
 	}
 	return m
+}
+
+// containerPrefixRE matches the blockquote/list-marker prefix
+// defChainStartRE tolerates before a definition opener. parsesAsDefLine
+// strips it so the remainder can be parsed on its own.
+var containerPrefixRE = regexp.MustCompile(`^[ \t>]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+[ \t>]*)*`)
+
+// parsesAsDefLine reports whether line, with any container prefix removed,
+// is a complete link reference definition to goldmark itself.
+//
+// This is the label-shape-agnostic half of the def-chain-start fact, and it
+// is what closes issue #58. The regexes beside it exclude caret labels, on
+// the reasoning that "[^1]:" is a footnote and a footnote body is prose —
+// but no footnote extension is registered in package gm, so goldmark reads
+// "[^1]: /url" as an ordinary definition whose title may sit on the line
+// below. Sentence mode splitting that paragraph then feeds the definition
+// its own first line, which disappears from the rendered page.
+//
+// Asking the parser rather than widening the regexes is what keeps issue
+// #41's coverage: a real footnote body ("[^1]: some ordinary prose") is not
+// a definition to goldmark and answers false, so back-to-back footnote
+// layouts still reflow. Only caret lines that genuinely are definitions —
+// a bare destination, "[^1]: /url" or "[^1]: one" — newly set the fact, and
+// those are live definition machinery whatever the label looks like.
+//
+// The verdict reads only the line above a paragraph, which is inside the
+// definition run and so is never reflowed, keeping it stable across passes.
+func parsesAsDefLine(line []byte) bool {
+	rest := line[len(containerPrefixRE.Find(line)):]
+	return gm.IsCompleteLinkRefDefLine(string(rest))
 }
 
 // maxContainerDepth caps how many List/Blockquote container levels deep a

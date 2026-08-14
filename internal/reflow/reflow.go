@@ -73,10 +73,33 @@ func Format(source []byte, doc ast.Node, seg Segmenter, opts Options) []byte {
 	paras := blockmap.ParagraphsForDialect(doc, source, opts.MkDocs)
 
 	var out bytes.Buffer
+	var pb bytes.Buffer
 	cursor := 0
 	for _, p := range paras {
 		out.Write(source[cursor:p.Start])
-		writeParagraph(&out, p, source, seg, opts)
+		pb.Reset()
+		writeParagraph(&pb, p, source, seg, opts)
+		// Per-paragraph render guard: reflow may have manufactured a link
+		// reference definition that the source paragraph did not have, which
+		// deletes the swallowed prose from the rendered page (issue #58).
+		//
+		// The hazard cannot be seen in the input — it is created by the
+		// break — so the parser is asked about the candidate output instead
+		// (gm.FormsNewLinkRefDef). When it fires, only this paragraph falls
+		// back to its source bytes; the rest of the document still reflows.
+		// That is the whole point of doing it here rather than leaning on
+		// Format's whole-document render backstop, which returns src and so
+		// silently costs the file every other paragraph's reflow.
+		//
+		// Stable across passes by construction: the verdict is a function of
+		// this paragraph's own source bytes, and a paragraph that falls back
+		// emits those same bytes, so the next pass re-derives the same
+		// answer and settles.
+		if gm.FormsNewLinkRefDef(source[p.Start:p.End], pb.Bytes()) {
+			out.Write(source[p.Start:p.End])
+		} else {
+			out.Write(pb.Bytes())
+		}
 		cursor = p.End
 	}
 	out.Write(source[cursor:])
@@ -1836,12 +1859,7 @@ func escapeBlockInterrupt(line string, isFirstLine bool, firstLinePrefix string,
 // path for ordinary prose. An already-escaped "\[label]:" line parses as
 // a paragraph and correctly answers false, so escapes never stack.
 func isCompleteLinkRefDefLine(line string) bool {
-	if !strings.Contains(line, "]:") {
-		return false
-	}
-	doc := gm.New().Parser().Parse(text.NewReader([]byte(line)))
-	first := doc.FirstChild()
-	return first != nil && first.Kind() == ast.KindLinkReferenceDefinition && first.NextSibling() == nil
+	return gm.IsCompleteLinkRefDefLine(line)
 }
 
 // escapeAfterIndent backslash-escapes line's first non-space/tab byte —
