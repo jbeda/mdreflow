@@ -6,10 +6,15 @@
 package gm
 
 import (
+	"bytes"
+	"strings"
+
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer/html"
+	"github.com/yuin/goldmark/text"
 	"github.com/yuin/goldmark/util"
 )
 
@@ -76,4 +81,93 @@ func NewInline() goldmark.Markdown {
 		)),
 		goldmark.WithExtensions(inlineExtensions...),
 	)
+}
+
+// IsCompleteLinkRefDefLine reports whether line, parsed on its own, is
+// exactly one complete link reference definition and nothing else.
+//
+// It is deliberately empirical rather than a hand-mirrored grammar: what
+// counts as a definition turns on goldmark's own implementation details
+// (up to 3 columns of indent and \f accepted as separator whitespace, yet
+// \f inside a destination token continues it — the skip-before and
+// end-of-token whitespace classes simply differ), so the question is put
+// to the same parser whose reparse the callers exist to control.
+//
+// It is also label-shape-agnostic, which is the point at the blockmap call
+// site: no footnote extension is registered in New, so "[^1]: /url" is an
+// ordinary definition to goldmark and exactly as able to swallow the line
+// below it as "[docs]: /url" is, while "[^1]: ordinary body prose" is not
+// a definition at all and stays reflowable.
+//
+// The "]:" pre-filter keeps the parse off the hot path for ordinary prose.
+// An already-escaped "\[label]:" line parses as a paragraph and correctly
+// answers false, so escapes never stack.
+func IsCompleteLinkRefDefLine(line string) bool {
+	if !strings.Contains(line, "]:") {
+		return false
+	}
+	doc := New().Parser().Parse(text.NewReader([]byte(line)))
+	first := doc.FirstChild()
+	return first != nil && first.Kind() == ast.KindLinkReferenceDefinition && first.NextSibling() == nil
+}
+
+// LinkRefDefs returns the set of link reference definitions src forms, each
+// rendered as a "label\x00destination\x00title" key.
+//
+// goldmark records definitions in the parser context rather than the AST
+// (only its duplicate-label handling leaves one behind as a node), and
+// parser.Reference carries no source position — only label, destination and
+// title. So this cannot answer "is there a definition at offset N"; it
+// answers "which definitions exist", which is what comparing a paragraph
+// before and after reflow needs.
+func LinkRefDefs(src []byte) map[string]struct{} {
+	ctx := parser.NewContext()
+	New().Parser().Parse(text.NewReader(src), parser.WithContext(ctx))
+	out := make(map[string]struct{})
+	for _, r := range ctx.References() {
+		out[string(r.Label())+"\x00"+string(r.Destination())+"\x00"+string(r.Title())] = struct{}{}
+	}
+	return out
+}
+
+// FormsNewLinkRefDef reports whether after holds a link reference definition
+// that before did not — the structural signature of reflow manufacturing a
+// definition out of prose, or feeding an existing one a title.
+//
+// This is checked on reflow's *candidate output* rather than on its input,
+// which is what distinguishes it from IsCompleteLinkRefDefLine. The hazard
+// does not exist in the source: a paragraph's own bytes are inert until a
+// break lands inside them and strands a "label]:" fragment at a line start,
+// or splits a following paragraph so its first line reads as a title. There
+// is nothing dangerous to inspect beforehand, so the parser has to be asked
+// about the text reflow proposes to emit.
+//
+// The comparison window must contain every line the definition would occupy.
+// A paragraph's own bytes are enough for a definition manufactured *inside*
+// it by a break, which is what this call site checks. They are not enough
+// when the definition sits on the line above and the paragraph's first line
+// becomes its title: nothing forms within the paragraph alone, so that case
+// is caught earlier, by the def-chain-start fact in package blockmap.
+//
+// What makes even the narrow window sound is that definition formation is
+// decided by the lines involved and nothing else. A general render
+// comparison at this scope would not be: a reference *link* resolves against
+// definitions elsewhere in the document, so a paragraph containing "[foo]"
+// renders differently alone than it does in place.
+//
+// Both directions of difference are not equivalent, and only this one is
+// checked: a definition appearing is corruption (prose leaves the page),
+// while one disappearing cannot happen, since reflow never joins a
+// definition line into a paragraph.
+func FormsNewLinkRefDef(before, after []byte) bool {
+	if bytes.Equal(before, after) || !bytes.Contains(after, []byte("]:")) {
+		return false
+	}
+	was := LinkRefDefs(before)
+	for k := range LinkRefDefs(after) {
+		if _, existed := was[k]; !existed {
+			return true
+		}
+	}
+	return false
 }

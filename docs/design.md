@@ -51,7 +51,8 @@ All modes are one pipeline — join lines, compute break points, emit — differ
 Continuation lines inside list items and blockquotes are re-indented to match their container.
 
 Width-constrained modes measure candidate lines against the cluster-global no-break spans via a per-cluster prefix table (`widthMeasurer` in `internal/reflow`), built once and queried in O(1); the escape simulation (`escapeBlockInterrupt`) is evaluated exactly only inside the narrow width band where it can change the verdict.
-An earlier implementation re-parsed every candidate prefix from scratch, which was roughly cubic (about 30 seconds for a 2000-word paragraph); the rewrite was verified against it by a full-corpus differential run (fixtures plus all fuzz seeds, byte-identical) and the truncated-prefix vs. global-span measurement question is documented on `widthMeasurer`. `BenchmarkFormat` pins the scaling; width-constrained modes must stay near-linear in paragraph size.
+An earlier implementation re-parsed every candidate prefix from scratch, which was roughly cubic (about 30 seconds for a 2000-word paragraph); the rewrite was verified against it by a full-corpus differential run (fixtures plus all fuzz seeds, byte-identical) and the truncated-prefix vs. global-span measurement question is documented on `widthMeasurer`.
+`BenchmarkFormat` pins the scaling; width-constrained modes must stay near-linear in paragraph size.
 
 ## Architecture
 
@@ -87,7 +88,12 @@ Document-level, not per-paragraph: the known divergence modes merge or re-split 
 "We could not safely flow this" is expressed as a no-op, never as churn.
 
 The backstop is for users; internally it is treated as a bug detector.
-The test and fuzz harnesses disable it (test-only switch) and drive the single-pass core, so any input that needs the backstop shows up as a failing idempotency oracle to be root-caused — never silently absorbed.
+The test and fuzz harnesses disable it (test-only switch) and drive the core directly, so an input that needs the backstop shows up as a failing idempotency oracle to be root-caused rather than silently absorbed.
+
+What the oracle requires is that the core *settles*, within a bound strictly tighter than the backstop's own (`coreConvergePasses` against `maxFormatPasses`), not that it settles on the first pass.
+A planner bug that never converges, or cycles between two outputs, still fails the oracle — that is the shape the backstop would otherwise paper over by returning the document unformatted.
+Single-pass convergence remains the goal and the default disposition for any divergence; where a root-cause fix would cost more reflow coverage than the divergence costs, the divergence is documented instead, and the gate soak reports the share of inputs that needed a second pass so the class stays visible as a number that can be watched across a change.
+See "Emphasis openers are allowed to cost a second pass" under Sentence segmentation for the one such exception and the priority argument behind it.
 
 ### Render preservation is also structural: the render backstop
 
@@ -125,7 +131,8 @@ Post the width-measurement fix a pass is milliseconds even on large documents; t
 
 ### Dialects: renderer profiles, and the skip-list
 
-(Amendment 2026-08-09, with PR #19 as the first consumer.) `Options.Dialect` — a single-select enum mirroring `Mode`'s shape, with `--dialect` and a `dialect:` config key parsed loudly like `mode` — names the renderer profile a tree targets.
+(Amendment 2026-08-09, with PR #19 as the first consumer.)
+`Options.Dialect` — a single-select enum mirroring `Mode`'s shape, with `--dialect` and a `dialect:` config key parsed loudly like `mode` — names the renderer profile a tree targets.
 A dialect is a bundle, not a feature flag.
 It selects:
 
@@ -135,7 +142,9 @@ It selects:
 3. Eventually, which of the skip-list rules below even apply — a construct the profile's parser cannot produce stops being a hazard *automatically* under the render backstop: with tables off, a manufactured delimiter-shaped line is prose on both sides of the comparison.
    Over-cautious guards therefore cost coverage, never correctness, and can be narrowed per-dialect lazily or not at all.
 
-The zero value, `DialectGFM` (`--dialect gfm`), is exactly the permissive GFM-plus-footnotes configuration the parser has always hardcoded — existing behavior, renamed rather than changed. `commonmark` is deliberately *reserved* for a future strict CommonMark profile (GFM extensions off) rather than aliased to the default: aliasing it now would make the name unavailable for the one profile it accurately describes. `mkdocs` layers admonition-body recognition on the GFM base and drops the linkify extension from its goldmark configuration: Python-Markdown has no GFM autolinking, so a bare URL is plain prose to the target — and because the span computation and the render backstop both use the profile's configuration (see "No-break spans: ask goldmark"), bare URLs automatically stop being protected or compared as links under this dialect, with no per-dialect guard logic anywhere.
+The zero value, `DialectGFM` (`--dialect gfm`), is exactly the permissive GFM-plus-footnotes configuration the parser has always hardcoded — existing behavior, renamed rather than changed.
+`commonmark` is deliberately *reserved* for a future strict CommonMark profile (GFM extensions off) rather than aliased to the default: aliasing it now would make the name unavailable for the one profile it accurately describes.
+`mkdocs` layers admonition-body recognition on the GFM base and drops the linkify extension from its goldmark configuration: Python-Markdown has no GFM autolinking, so a bare URL is plain prose to the target — and because the span computation and the render backstop both use the profile's configuration (see "No-break spans: ask goldmark"), bare URLs automatically stop being protected or compared as links under this dialect, with no per-dialect guard logic anywhere.
 Dropping linkify cannot let reflow split a URL in any mode: every break candidate is a whitespace run, and a bare URL contains none, so reflow only ever moves the whitespace *around* the token — which autolinks (or doesn't) identically at line start, mid-line, or line end.
 The only behavior linkify actually governs in span computation is code-span pairing around a backtick inside a bare URL, a shape near-nonexistent in real prose.
 Its true target renderer (Python-Markdown) is not CommonMark and cannot be modeled by our oracle, so its recognitions must stay narrow and are verified externally (full `mkdocs build` diffs), per the render-backstop section's divergence caveat.
@@ -187,6 +196,45 @@ The one construct post-parse rules cannot recover is a multi-line JSX opening ta
 
 Regex/punctuation splitting plus an abbreviation exception list — the approach every shipping tool uses (flowmark, mdslw, rumdl), and the approach whose known failure modes are documented in their issue trackers, which double as our test spec.
 The flowmark #68 lesson is baked in: sentence-terminal punctuation must be recognized through trailing inline markup (`` `code`. ``, `**bold**.`, quotes, parens).
+
+**A sentence may also open with inline markup** (amendment 2026-08-12).
+The mirror of the flowmark #68 case: a sentence beginning with a code span or an emphasis run is a sentence start, so `` `code` opens the second one. `` splits from the sentence before it exactly as a plain word would.
+The character allow-set that decides this — uppercase, digit, opening quote, opening bracket — cannot express the rule, because the deciding fact is what the following bytes *parse as*, not which byte leads them.
+Adding `` ` ``, `*` and `_` to the set is the wrong fix twice over: it accepts a backtick that opens no code span at all, and it accepts one whose delimiter run is three or more, which becomes a fenced-code-block opener the moment the break puts it at a line start.
+
+So the opener is AST-confirmed, the same doctrine no-break spans and hard-break detection already follow: a leading `` ` ``, `*` or `_` is a cheap byte-level prefilter, and the candidate is only accepted when the `gm.NewInline()` parse reports a code span or emphasis node beginning at exactly that offset.
+An unmatched delimiter parses as plain text and is correctly refused.
+The lowercase-word case keeps joining, which is what keeps `e.g. foo` intact.
+
+Fence-shaped openers are refused before they are ever proposed, not after.
+The guard against a break landing immediately before a fenced-code-block opener shape moves from `filterUnsafeLineEnds`, which only width-based cuts reach, to `filterLineStartHazards`, which every candidate reaches — a following-line hazard belongs with the other following-line hazards.
+Leaving it where it was would have let the render backstop catch the fence instead, and that is a bad outcome rather than a safe one: the backstop reverts the whole file and returns `src`, so `Format(src) == src` and `--check` reports clean while every unrelated reflow in that file is silently dropped.
+Refusing the candidate keeps the failure in the one paragraph that earned it.
+
+`*` and `_` need no such guard at the landing position: a list marker requires a following space and a thematic break requires a line of nothing but markers and whitespace, while emphasis requires non-whitespace immediately after the opening delimiter, so an emphasis run at a line start can be neither.
+
+**Emphasis openers are allowed to cost a second pass** (amendment 2026-08-12).
+Emphasis pairing is not a local fact.
+CommonMark decides whether a delimiter can open or close from the characters on either side of its run, so a run with whitespace on both sides is inert — it can neither open nor close, and every other delimiter in the paragraph is left partnerless.
+Strand that run alone on a line and `escapeBlockInterrupt` escapes it as a thematic break, which puts a backslash against it; the run now has punctuation on its left and a line ending on its right, which makes it a legal closer, which retroactively promotes a distant delimiter into a real emphasis opener.
+Pass 1 sees no opener and pass 2 sees one.
+Found by the fuzz gate on `   ! _!___0   __________` and `0!x99!  **0yy! ~~* ** *`, both at ModeSentence with a width, where reflow's own cut strands and escapes a run.
+
+This is the one place the pipeline deliberately declines to converge in a single pass.
+Two guards were tried and both were withdrawn: refusing an opener whenever the cluster held three or more `*`/`_`, and refusing only when such a run was *strandable* (whitespace on both sides, looking through a backslash).
+The first silently disabled the fix for any paragraph containing `***bold italic***`.
+The second missed that a thematic break may space its markers out, so `** *` is three markers and not a two-run, and the fuzzer found the same instability through that shape within one soak.
+Each guard predicted where escaping would land; the escape sites are thematic breaks, fence openers, bullets and setext underlines, and any of them can put a backslash against an emphasis delimiter, so the guard would have to model all of them and stay correct as they change.
+
+The priority order settles it.
+Not changing rendered output and settling on re-run are hard requirements; reflowing wherever possible ranks above converging in one pass, which ranks above never reverting on the render check.
+A guard here spends the higher goal to buy the lower one.
+Both hard requirements already hold without it, structurally rather than by prediction: the convergence backstop runs the pipeline to fixpoint and returns the source untouched if it cannot settle, and the render backstop returns the source untouched if the HTML would change.
+Measured against an unguarded build over every known reproducer, production output was byte-identical to `main` — same reformatted count, same reverted count, zero unstable — and roughly 19M fuzz executions produced no `core-render-changed` record from this class, only `core-not-idempotent`.
+The residual cost is one extra `formatOnce`, and `Format` already loops to fixpoint unconditionally, so no user-visible run is added.
+
+The core idempotency oracle therefore has a documented exception here rather than a bug to root-cause, which is a narrowing of the rule stated under Convergence: divergences are still root-caused by default, and this class is exempt because every candidate fix cost more reflow coverage than the divergence does.
+Code spans are unaffected either way, having no thematic-break shape to be escaped into.
 
 Segmentation is behind a public interface so it is independently testable and swappable (an NLP segmenter, or something smarter, can be plugged in without touching the pipeline):
 
@@ -316,6 +364,21 @@ but an ordinary definition labeled `^…`, and is classified with the
 definitions, fuzz-found), and the content profile is the
 opposite: a footnote body is real prose. Two protections replace the guard
 pile for the caret case:
+
+**The neighbor check asks the parser, not the label** (amendment 2026-08-14, issue #58).
+The caret discriminator answers the wrong question for the line *above* a paragraph.
+No footnote extension is registered in package `gm`, so `[^1]: /url` is an ordinary link reference definition to goldmark, able to take its title from the line below exactly as `[docs]: /url` is; excluding it by label shape let sentence mode split the paragraph beneath and feed the definition its own first line, deleting that prose from the page.
+The def-chain-start fact is therefore set by parsing the line in isolation (`gm.IsCompleteLinkRefDefLine`) as well as by the shape regexes.
+Asking the parser is what preserves issue #41's coverage rather than reverting it: a real footnote body (`[^1]: some ordinary prose`) is not a definition to goldmark and answers false, so back-to-back footnote layouts still reflow, while only caret lines that genuinely are definitions (`[^1]: /url`, `[^1]: one`) newly freeze the paragraph below.
+Widening the regexes instead would have frozen every paragraph containing a `[^…]:` shape — every footnote body in every document.
+
+**A paragraph that manufactures a definition falls back alone** (amendment 2026-08-14, issue #58).
+The mirror hazard is not visible in the input at all: a break landing inside a paragraph can strand a `label]:` fragment at a line start and form a definition that never existed, swallowing the prose around it.
+There is nothing dangerous to inspect beforehand, so the parser is asked about the *candidate output* instead — `gm.FormsNewLinkRefDef` compares the definitions the paragraph's source bytes form against those its reflowed lines form, and any addition means reflow invented one.
+The fallback is scoped to the one paragraph, which is the point: the document-level render backstop returns `src`, so a single bad paragraph silently costs the file every other paragraph's reflow.
+It is verdict-stable by construction — the answer is a function of the paragraph's own source bytes, and a paragraph that falls back emits exactly those bytes, so the next pass re-derives it and settles.
+The check is deliberately narrow rather than a per-paragraph render comparison: definition formation is decided by the lines the definition occupies, whereas a render diff at this scope would be unsound, since a reference *link* resolves against definitions elsewhere in the document and a paragraph containing `[foo]` renders differently alone than in place.
+For the same reason the window matters: a definition formed from the line above plus the paragraph's first line is invisible inside the paragraph, which is why the neighbor check above is a separate protection rather than one this subsumes.
 
 The exemption applies to a paragraph's *own* shape only — the zone's
 neighbor checks have no footnote carve-out (issue #41 removed the one they
@@ -602,7 +665,8 @@ Recorded so the design doesn't preclude them; none are commitments.
 - **Markdown embedded in YAML/JSON values** — the original wishlist item, now judged a large scope expansion of uncertain value.
   The hard part is knowing *which* fields are Markdown; the shape would be caller-supplied yq/jq-style path selectors plus comment-preserving YAML node surgery, with mdreflow formatting the extracted strings.
   The bytes-in/bytes-out library API is the only accommodation made now: it keeps this buildable from outside.
-- **Per-file options in front matter** — a reserved key (e.g. `mdreflow: {mode: para}`) slotting into the precedence chain as flags > front matter > config > defaults.
+- **Per-file options in front matter** — a reserved key (e.g.
+  `mdreflow: {mode: para}`) slotting into the precedence chain as flags > front matter > config > defaults.
 - **`--dialect` flag** — subsets of the tagged skip-list rules.
 - **Content sniffing for unknown extensions** — gated on observed need.
 - **GitHub Action, Homebrew tap, editor extensions** — distribution beyond goreleaser + pre-commit.

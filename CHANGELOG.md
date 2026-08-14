@@ -9,6 +9,18 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+**Expect a one-time reflow across your docs on this upgrade.** Sentence mode now splits before a sentence that opens with inline code or emphasis, which is common in technical prose, so most files that use it will pick up new line breaks the first time you run this version.
+On a real 272-file MkDocs docset the upgrade reformatted 203 files (75%) and added about 1,200 line breaks; the built site was unchanged.
+Nothing renders differently — the change moves line breaks inside paragraphs, which HTML collapses — but a repo running `mdreflow --check` in CI will go red until the formatter is run once.
+Run `mdreflow .` and commit the result as its own change, so the reflow does not ride along in an unrelated diff.
+
+- A paragraph next to a footnote-style `[^1]:` definition, or one whose own text could be split into a definition, no longer stops the whole file from formatting.
+  Reflow could feed such a definition its title, or manufacture one mid-paragraph, deleting prose from the rendered page; the safety check that compares renders caught it and returned the file untouched, so the file silently stopped formatting while `--check` reported it clean (#58).
+  Both cases are now detected by asking the Markdown parser, and only the affected paragraph is left alone instead of the entire file.
+- Sentence mode now starts a new line for a sentence that opens with inline code or emphasis (`` `code` ``, `**bold**`, `*italic*`, `_italic_`), instead of joining it onto the sentence before it.
+  A sentence opening with a link already split; these now behave the same way.
+  Whether a delimiter opens a real code span or emphasis run is settled by the Markdown parse, so a stray `` ` `` or `*` in prose still joins as it always did, and a sentence opening with a code span written in three or more backticks stays joined rather than becoming a code fence.
+
 ## v0.2.0 (2026-08-12)
 
 mdreflow no longer has an opinion about how you encode a hard line break.
@@ -36,7 +48,8 @@ Act on these when upgrading:
 
 - **Breaking:** hard line breaks (trailing double-space, trailing backslash, `<br>`) are no longer normalized to a configured style — mdreflow now keeps the spelling the source used, promoting only a trailing double-space to a backslash (double spaces are invisible and routinely stripped by editors in transit). mdreflow no longer introduces raw HTML (`<br>`) into a document that didn't already use it.
   Under `--dialect mkdocs` a double-space is kept as-is instead: Python-Markdown has no backslash hard break and renders one as a literal `\`, so there is no spelling to promote to.
-  This fixes four bugs found in the narrow contexts where the old normalized spelling didn't actually work at its landing position (#40, #47, #49, #52). **Removed:** the `--hard-breaks` flag, `Options.HardBreaks`, `HardBreakStyle` and its constants, and the `hard-breaks:` config key.
+  This fixes four bugs found in the narrow contexts where the old normalized spelling didn't actually work at its landing position (#40, #47, #49, #52).
+  **Removed:** the `--hard-breaks` flag, `Options.HardBreaks`, `HardBreakStyle` and its constants, and the `hard-breaks:` config key.
   If your `.mdreflow.yaml` has a `hard-breaks:` key, delete it — mdreflow now refuses the file with an unknown-key error instead of silently ignoring it.
 - **Breaking:** removed the unused `--strip-sentence-terminal-breaks` flag and `Options.StripSentenceTerminalBreaks`.
   If you set this option or flag, remove it; there is no replacement.

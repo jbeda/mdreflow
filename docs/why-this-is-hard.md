@@ -213,7 +213,8 @@ The fix is the same blunt move: read a bounded prefix — punctuation, whitespac
 Nothing constrains what follows, which also repaired a second defect: the type-word requirement rejected real syntax, since Material for MkDocs's inline modifiers (`!!! note inline end "Title"`) never matched it and those admonitions' bodies were silently skipped from reflow entirely.
 The measured cost is a paragraph opening `!!! ` or `??? ` no longer reflowing under the mkdocs dialect, however the rest of the line reads — narrower coverage of a rare paragraph opener, traded for a guaranteed fixpoint.
 
-Blunt does not mean unbounded, and the boundary is worth stating precisely, because a first attempt at this rule matched the punctuation alone and that was too blunt. `!!!bang`, `!!!!x`, `???01010` and a bare `!!!` then counted as markers and claimed the indented block beneath them.
+Blunt does not mean unbounded, and the boundary is worth stating precisely, because a first attempt at this rule matched the punctuation alone and that was too blunt.
+`!!!bang`, `!!!!x`, `???01010` and a bare `!!!` then counted as markers and claimed the indented block beneath them.
 Where that block is an indented code block rather than prose, treating it as an admonition body reflows and escapes its contents — `0)` becomes `0\)` — which is a render change, not a coverage loss.
 Requiring whitespace and one more byte after the punctuation costs nothing in fixpoint terms, since it is still a bounded prefix, and it keeps the rule from claiming blocks that were never admonition bodies at all.
 
@@ -237,7 +238,8 @@ The consequence for correctness work: every hazard analysis is per- dialect, and
 ## The three hard-break spellings are not interchangeable
 
 CommonMark gives a hard line break three spellings — two trailing spaces, a trailing backslash, a literal `<br>` — and it is tempting to treat them as three names for one thing, freely convertible.
-They are not. `<br>` is raw HTML: a different class of content from the other two, which are Markdown syntax proper.
+They are not.
+`<br>` is raw HTML: a different class of content from the other two, which are Markdown syntax proper.
 The other two are themselves not equivalent to each other: each is recognized only in the specific narrow contexts CommonMark's grammar allows, and the contexts do not overlap completely.
 An earlier version of mdreflow normalized every preserved hard break to one configured spelling, on the assumption that the three were interchangeable.
 Fuzzing found four bugs (#40, #47, #49, #52) living in exactly the positions where that assumption failed: the configured spelling did not actually produce a break at its landing position, so the normalization silently changed what the document rendered to.

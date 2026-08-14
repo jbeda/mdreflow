@@ -1,6 +1,8 @@
 # Agent instructions for mdreflow
 
-`docs/design.md` is canonical: read it before changing behavior, and land design changes there before code. `docs/m0-spike-findings.md` explains how dialect constructs map to goldmark's AST. `HANDOFF.md` (gitignored, may be absent) holds session-continuity notes.
+`docs/design.md` is canonical: read it before changing behavior, and land design changes there before code.
+`docs/m0-spike-findings.md` explains how dialect constructs map to goldmark's AST.
+`HANDOFF.md` (gitignored, may be absent) holds session-continuity notes.
 
 ## Navigate with gopls, not grep
 
