@@ -535,40 +535,16 @@ func computeLines(text string, seg Segmenter, opts Options) []string {
 //     an input with a lone mid-prose '\r', wrapped in ModeWrap, which lost
 //     content on reparse once the accidental "\r\n" changed how the line
 //     was split.
-//   - A *following* line that would itself open with a fenced-code-block
-//     opener shape (3+ backticks/tildes): escapeBlockInterrupt backslash-
-//     escapes every backtick/tilde of such a run individually wherever it
-//     lands at a line start (see its own doc comment for why every one,
-//     not just the first). That per-character escaping can retroactively
-//     change what segment.CodeSpans considers a *matched* code span
-//     elsewhere in the very same cluster text: an unmatched, dangling
-//     single backtick earlier in the text — one with no real partner
-//     anywhere, so codeSpans correctly does not protect anything around
-//     it — can spuriously "close" against one of the escaped run's
-//     individual backticks once they exist as separate length-1 runs,
-//     manufacturing a code span (and its no-break protection) that was
-//     never there when this candidate was first evaluated. Found by
-//     FuzzFormat on ModeSentence/MaxWidth input
-//     "!Xb0A!`C0B7“\t```0" (an unmatched backtick early on, then a
-//     fence-opener-shaped "```0" later): cutting at the tab was safe on
-//     the *pre-escape* text (no code span spanned it, since the fence
-//     run's length-3 backtick run didn't match the earlier length-1
-//     unmatched one), but the very act of that cut placed "```0" at a
-//     fresh line start, which escapeBlockInterrupt then escaped into
-//     three separate length-1 backtick runs — one of which reparsed as
-//     spuriously matching the earlier dangling backtick, newly protecting
-//     the space this same cut relied on being unprotected, so a second
-//     reformat pass no longer found any safe candidate at all and left
-//     the whole line unwrapped. Refusing to cut immediately before a
-//     fence-opener-shaped suffix in the first place sidesteps the
-//     escape-driven code-span reshuffling entirely, rather than trying to
-//     predict its effect on unrelated backticks elsewhere in the text.
 //
-// All three are instances of the same underlying risk: a width-based cut
-// can land anywhere a word or clause boundary exists, unlike a sentence
-// break (which only ever lands after recognized sentence-terminal
-// punctuation) or the original source's own line breaks (which mdreflow
-// never introduces mid-word).
+// Both are instances of the same underlying risk: a width-based cut can
+// land anywhere a word or clause boundary exists, unlike a sentence break
+// (which only ever lands after recognized sentence-terminal punctuation)
+// or the original source's own line breaks (which mdreflow never
+// introduces mid-word).
+//
+// Hazards concerning what sits at the *start* of the following line are
+// not here; they apply to every candidate, and live in
+// filterLineStartHazards, which this delegates to on the way out.
 //
 // text must be the same string breaks's Start/End positions index into.
 func filterUnsafeLineEnds(text string, breaks []segment.Span) []segment.Span {
@@ -606,10 +582,6 @@ func filterUnsafeLineEnds(text string, breaks []segment.Span) []segment.Span {
 		if trailingBackslashCount(before) == 1 || strings.HasSuffix(before, "\r") {
 			continue
 		}
-		after := text[b.End:]
-		if backtickFenceStart.MatchString(after) || tildeFenceStart.MatchString(after) {
-			continue
-		}
 		out = append(out, b)
 	}
 	return filterLineStartHazards(text, out)
@@ -628,7 +600,7 @@ var linkifyTokenStart = regexp.MustCompile(
 
 // filterLineStartHazards removes candidate breaks whose *following* text
 // would mean something different once it sits at the start of a fresh
-// line than it does mid-line. Two such hazards exist, and both apply to
+// line than it does mid-line. Three such hazards exist, and all apply to
 // sentence breaks as well as width-based cuts — unlike the rules in
 // filterUnsafeLineEnds, which concern what a cut leaves at a line's
 // *end* and which only a width-based cut can reach.
@@ -663,6 +635,42 @@ var linkifyTokenStart = regexp.MustCompile(
 // "07\tAA91AA@A001AA.0", where cutting at the tab produced a mailto link
 // the source never had.
 //
+// # Fenced-code-block openers
+//
+// A following line opening with a fenced-code-block opener shape (3+
+// backticks/tildes) is refused. escapeBlockInterrupt backslash-escapes
+// every backtick/tilde of such a run individually wherever it lands at a
+// line start (see its own doc comment for why every one, not just the
+// first). That per-character escaping can retroactively change what
+// segment.CodeSpans considers a *matched* code span elsewhere in the very
+// same cluster text: an unmatched, dangling single backtick earlier in the
+// text — one with no real partner anywhere, so codeSpans correctly does
+// not protect anything around it — can spuriously "close" against one of
+// the escaped run's individual backticks once they exist as separate
+// length-1 runs, manufacturing a code span (and its no-break protection)
+// that was never there when this candidate was first evaluated. Found by
+// FuzzFormat on ModeSentence/MaxWidth input "!Xb0A!`C0B7“\t```0" (an
+// unmatched backtick early on, then a fence-opener-shaped "```0" later):
+// cutting at the tab was safe on the *pre-escape* text (no code span
+// spanned it, since the fence run's length-3 backtick run didn't match the
+// earlier length-1 unmatched one), but the very act of that cut placed
+// "```0" at a fresh line start, which escapeBlockInterrupt then escaped
+// into three separate length-1 backtick runs — one of which reparsed as
+// spuriously matching the earlier dangling backtick, newly protecting the
+// space this same cut relied on being unprotected, so a second reformat
+// pass no longer found any safe candidate at all and left the whole line
+// unwrapped. Refusing to cut immediately before a fence-opener-shaped
+// suffix in the first place sidesteps the escape-driven code-span
+// reshuffling entirely, rather than trying to predict its effect on
+// unrelated backticks elsewhere in the text.
+//
+// A sentence break reaches this too, since a sentence may open with a code
+// span (segment.inlineOpenerOffsets) and a code span's delimiter run can be
+// three or more backticks. Refusing the candidate here is what keeps that
+// opener rule from ever proposing a break the render backstop would have to
+// veto — and a backstop veto is the worse outcome, since it reverts the
+// whole file and leaves --check reporting clean (docs/design.md).
+//
 // The test is deliberately one-sided: a cut always puts the token at a
 // line start, where linkify always fires, so the only possible flip is
 // off -> on, and it happens exactly when the byte the cut consumes last
@@ -680,6 +688,9 @@ func filterLineStartHazards(text string, breaks []segment.Span) []segment.Span {
 	for _, b := range breaks {
 		after := text[b.End:]
 		if blockmap.MarkerLineStart(after) {
+			continue
+		}
+		if backtickFenceStart.MatchString(after) || tildeFenceStart.MatchString(after) {
 			continue
 		}
 		if b.End > b.Start && text[b.End-1] != ' ' && linkifyTokenStart.MatchString(after) {

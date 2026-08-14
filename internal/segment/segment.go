@@ -71,8 +71,10 @@ func New(extra []string) *Segmenter {
 // byte spans, in order.
 //
 // A candidate break is a run of terminal punctuation followed by
-// whitespace, then a character that plausibly starts a new sentence
-// (uppercase letter, digit, opening quote, or opening bracket/paren).
+// whitespace, then something that plausibly starts a new sentence: a
+// character in the allow-set (uppercase letter, digit, opening quote, or
+// opening bracket/paren), or a code span or emphasis run confirmed by the
+// goldmark inline parse (see inlineOpenerOffsets).
 // Candidates are suppressed when the token ending at the punctuation is a
 // known abbreviation, or is a single capital letter (an initial, e.g. "J."
 // in "J. Beda"). Because a candidate requires whitespace immediately after
@@ -80,6 +82,10 @@ func New(extra []string) *Segmenter {
 // the next word ("e.g.foo") never match in the first place.
 func (s *Segmenter) Breaks(text string) []Span {
 	var out []Span
+	// Parsed at most once per call, and only if some candidate's leading
+	// byte is delimiter-shaped: the overwhelmingly common paragraph pays
+	// nothing for this.
+	var openers map[int]struct{}
 	for _, m := range terminalRun.FindAllStringIndex(text, -1) {
 		m0, e0 := m[0], m[1]
 
@@ -102,12 +108,31 @@ func (s *Segmenter) Breaks(text string) []Span {
 		// stops being recognized as one on a second pass, which is an
 		// idempotency break: found by FuzzFormat on "[0]!  [0]:".
 		next := text[e1:]
+		off := e1
 		if len(next) >= 2 && next[0] == '\\' && isASCIIPunctByte(next[1]) {
 			next = next[1:]
+			off++
 		}
 		r, _ := utf8.DecodeRuneInString(next)
 		if !startsSentence(r) {
-			continue
+			// The allow-set cannot see a sentence opening with inline
+			// markup, because the deciding fact is what the bytes parse
+			// as, not which byte leads them. The leading byte only
+			// decides whether the question is worth a parse; the parse
+			// decides the answer (docs/design.md, "A sentence may also
+			// open with inline markup").
+			if !isInlineOpenerByte(next[0]) {
+				continue
+			}
+			if openers == nil {
+				openers = inlineOpenerOffsets(text)
+				if openers == nil {
+					openers = map[int]struct{}{}
+				}
+			}
+			if _, isOpener := openers[off]; !isOpener {
+				continue
+			}
 		}
 
 		// Token immediately preceding the punctuation run, e.g. "Mr." or

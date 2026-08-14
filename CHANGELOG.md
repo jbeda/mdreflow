@@ -9,6 +9,10 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+- Sentence mode now starts a new line for a sentence that opens with inline code or emphasis (`` `code` ``, `**bold**`, `*italic*`, `_italic_`), instead of joining it onto the sentence before it.
+  A sentence opening with a link already split; these now behave the same way.
+  Whether a delimiter opens a real code span or emphasis run is settled by the Markdown parse, so a stray `` ` `` or `*` in prose still joins as it always did, and a sentence opening with a code span written in three or more backticks stays joined rather than becoming a code fence.
+
 ## v0.2.0 (2026-08-12)
 
 mdreflow no longer has an opinion about how you encode a hard line break.
@@ -36,7 +40,8 @@ Act on these when upgrading:
 
 - **Breaking:** hard line breaks (trailing double-space, trailing backslash, `<br>`) are no longer normalized to a configured style — mdreflow now keeps the spelling the source used, promoting only a trailing double-space to a backslash (double spaces are invisible and routinely stripped by editors in transit). mdreflow no longer introduces raw HTML (`<br>`) into a document that didn't already use it.
   Under `--dialect mkdocs` a double-space is kept as-is instead: Python-Markdown has no backslash hard break and renders one as a literal `\`, so there is no spelling to promote to.
-  This fixes four bugs found in the narrow contexts where the old normalized spelling didn't actually work at its landing position (#40, #47, #49, #52). **Removed:** the `--hard-breaks` flag, `Options.HardBreaks`, `HardBreakStyle` and its constants, and the `hard-breaks:` config key.
+  This fixes four bugs found in the narrow contexts where the old normalized spelling didn't actually work at its landing position (#40, #47, #49, #52).
+  **Removed:** the `--hard-breaks` flag, `Options.HardBreaks`, `HardBreakStyle` and its constants, and the `hard-breaks:` config key.
   If your `.mdreflow.yaml` has a `hard-breaks:` key, delete it — mdreflow now refuses the file with an unknown-key error instead of silently ignoring it.
 - **Breaking:** removed the unused `--strip-sentence-terminal-breaks` flag and `Options.StripSentenceTerminalBreaks`.
   If you set this option or flag, remove it; there is no replacement.

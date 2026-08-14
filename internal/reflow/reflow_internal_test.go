@@ -1,6 +1,10 @@
 package reflow
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/jbeda/mdreflow/internal/segment"
+)
 
 // TestIsThematicBreak tables the CommonMark thematic-break rule documented
 // on isThematicBreak's own doc comment: up to 3 leading spaces, then 3+ of
@@ -354,6 +358,41 @@ func TestEscapeBlockInterrupt(t *testing.T) {
 			if got != tc.want {
 				t.Errorf("escapeBlockInterrupt(%q, isFirstLine=%v, firstLinePrefix=%q, prevLineNonBlank=%v) = %q, want %q",
 					tc.line, tc.isFirstLine, tc.firstLinePrefix, tc.prevLineNonBlank, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestFilterLineStartHazardsFenceOpener pins the fence-opener hazard at
+// its new home. It sits in filterLineStartHazards, not
+// filterUnsafeLineEnds, because a sentence break reaches it: a sentence
+// may open with a code span (segment.inlineOpenerOffsets) whose delimiter
+// run is three or more backticks, which becomes a fenced-code-block
+// opener the moment the break puts it at a line start.
+//
+// segment.TestBreaksFenceShapedCodeSpanStillOffered is the other half:
+// the segmenter does offer that candidate, so this filter is the only
+// thing refusing it.
+func TestFilterLineStartHazardsFenceOpener(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		gap  segment.Span
+		kept bool
+	}{
+		{"backtick fence opener refused", "Ends here. ```lit``` next.", segment.Span{Start: 10, End: 11}, false},
+		{"tilde fence opener refused", "Ends here. ~~~lit~~~ next.", segment.Span{Start: 10, End: 11}, false},
+		{"two backticks kept", "Ends here. ``lit`` next.", segment.Span{Start: 10, End: 11}, true},
+		{"one backtick kept", "Ends here. `lit` next.", segment.Span{Start: 10, End: 11}, true},
+		{"emphasis kept", "Ends here. **Bold** next.", segment.Span{Start: 10, End: 11}, true},
+		{"plain word kept", "Ends here. Word next.", segment.Span{Start: 10, End: 11}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := filterLineStartHazards(tc.text, []segment.Span{tc.gap})
+			if kept := len(got) == 1; kept != tc.kept {
+				t.Errorf("filterLineStartHazards(%q, %v) kept=%v, want kept=%v",
+					tc.text, tc.gap, kept, tc.kept)
 			}
 		})
 	}
