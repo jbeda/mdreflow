@@ -9,6 +9,11 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+**Expect a one-time reflow across your docs on this upgrade.** Sentence mode now splits before a sentence that opens with inline code or emphasis, which is common in technical prose, so most files that use it will pick up new line breaks the first time you run this version.
+On a real 272-file MkDocs docset the upgrade reformatted 203 files (75%) and added about 1,200 line breaks; the built site was unchanged.
+Nothing renders differently — the change moves line breaks inside paragraphs, which HTML collapses — but a repo running `mdreflow --check` in CI will go red until the formatter is run once.
+Run `mdreflow .` and commit the result as its own change, so the reflow does not ride along in an unrelated diff.
+
 - Sentence mode now starts a new line for a sentence that opens with inline code or emphasis (`` `code` ``, `**bold**`, `*italic*`, `_italic_`), instead of joining it onto the sentence before it.
   A sentence opening with a link already split; these now behave the same way.
   Whether a delimiter opens a real code span or emphasis run is settled by the Markdown parse, so a stray `` ` `` or `*` in prose still joins as it always did, and a sentence opening with a code span written in three or more backticks stays joined rather than becoming a code fence.
