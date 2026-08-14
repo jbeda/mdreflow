@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1089,6 +1090,10 @@ func FuzzFormat(f *testing.F) {
 			// accepts (see its doc comment); an error here is a bug.
 			t.Fatalf("Format returned an error for opts %+v: %v", opts, err)
 		}
+		// The denominator for the recorded tier's rates: counted here, once
+		// the input is known to be in-domain and formattable, so it matches
+		// the set the two oracles below actually judge.
+		gateInputs.Add(1)
 
 		twice, err := mdreflow.Format(out, opts)
 		if err != nil {
@@ -1109,7 +1114,9 @@ func FuzzFormat(f *testing.F) {
 		// teeth: a planner bug that never settles, or that cycles
 		// between two outputs, still fails here — that is the shape the
 		// convergence backstop would have to paper over by returning the
-		// document unformatted.
+		// document unformatted. Only a bounded, self-correcting second
+		// pass is tolerated, and gate mode counts every one so the class
+		// stays visible as a rate rather than becoming invisible slack.
 		if !bytes.Equal(twice, out) {
 			settled := out
 			passes := 1
@@ -1292,25 +1299,106 @@ func reportRenderSkips() {
 // testdata/fuzz/FuzzFormat/, while a merely-interesting one lands unlabeled
 // and unminimized in the build-cache corpus, if at all. gateRecord therefore
 // does both jobs itself — shrink, then append to MDREFLOW_FUZZ_GATE_LOG.
-var gateMode = os.Getenv("MDREFLOW_FUZZ_GATE") == "1"
-
-// coreConvergePasses bounds how many single-pass core reformats the
-// idempotency oracle will wait for before calling the input unsettled.
+// A release soak only counts them. Minimizing and logging every occurrence
+// is triage work, and triage only pays off during a deliberate drive-down of
+// one class: the two known families recur thousands of times per soak, so the
+// log is dominated by shapes already filed and unfixed, and nothing reads it.
+// Counting instead yields the one number a soak can honestly report — what
+// share of inputs needed a second pass, or changed render — which is a
+// same-corpus before/after signal around a change, not a quality metric for
+// real documents (the corpus is adversarial fragments; see docs/design.md).
 //
-// It is deliberately smaller than Format's own maxFormatPasses: the core
-// must settle strictly sooner than the production backstop would give up,
-// or the oracle stops being able to distinguish "converges on pass 2" from
-// "converges only because the backstop bailed out and returned src".
-const coreConvergePasses = 3
+// Hunt mode is the opposite trade and is opt-in per category, since the
+// oracle that fired is known at the call site for free while the *family* —
+// #58, #60, emphasis openers — is not, and recovering it is exactly what
+// minimizing buys.
+var gateMode = os.Getenv("MDREFLOW_FUZZ_GATE") == "1" || huntCategory != ""
 
-// gateMaxRecords caps the log so a shape that recurs thousands of times in a
-// long soak cannot fill a disk; gateSeen dedups within one worker process.
+// huntCategory names the one category to minimize, dedup and log
+// ("core-multipass" or "core-render-changed"); empty means count only.
+// Setting it implies gate mode.
+var huntCategory = os.Getenv("MDREFLOW_FUZZ_HUNT")
+
+// huntExclude suppresses shapes already known, matched as plain substrings
+// against the *shrunk* form — raw fuzz inputs hit such substrings by
+// coincidence, minimized ones do not. Comma-separated, e.g. `]:,* [` to mute
+// #58 and #60 while hunting whatever else shares their category. A hunt's
+// first pass produces this list; every later pass consumes it.
+var huntExclude = func() []string {
+	raw := os.Getenv("MDREFLOW_FUZZ_HUNT_EXCLUDE")
+	if raw == "" {
+		return nil
+	}
+	return strings.Split(raw, ",")
+}()
+
+// gateMaxRecords caps the hunt log so a shape that recurs thousands of times
+// cannot fill a disk; gateSeen dedups within one worker process. Neither
+// applies when counting, which is uncapped by design — a capped counter has
+// no denominator.
 const gateMaxRecords = 200
 
 var (
 	gateSeen  sync.Map
 	gateCount atomic.Int64
+
+	gateInputs      atomic.Int64 // inputs the recorded oracles evaluated
+	gateMultipass   atomic.Int64
+	gateRenderDelta atomic.Int64
 )
+
+// gateCounter returns the counter for a category.
+func gateCounter(category string) *atomic.Int64 {
+	if category == "core-multipass" {
+		return &gateMultipass
+	}
+	return &gateRenderDelta
+}
+
+// reportGateCounts appends this process's recorded-tier tallies to the gate
+// log, including the render oracle's checked/dark split and the per-gate
+// breakdown of what went dark.
+//
+// The dark split is not decoration: the render-changed count can only come
+// from inputs the oracle actually ran on, so it is the only honest
+// denominator for that rate — dividing by every evaluated input understates
+// it by whatever share went dark, which is roughly half.
+//
+// TestMain calls it after the run.
+//
+// It writes to the log rather than stderr for the same reason gateRecord
+// does: under -fuzz the fuzz body runs in worker *processes*, whose stderr
+// the coordinator does not surface, and whose counters therefore cannot be
+// summed in memory. The coordinator itself never evaluates an input, so its
+// own tally is zero and it emits nothing. A soak leaves one line per worker,
+// and the totals are the column sums — see the fuzz-gate task, which prints
+// them.
+func reportGateCounts() {
+	if !gateMode {
+		return
+	}
+	n := gateInputs.Load()
+	if n == 0 {
+		return
+	}
+	path := os.Getenv("MDREFLOW_FUZZ_GATE_LOG")
+	if path == "" {
+		path = "fuzz-gate.log"
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+	fmt.Fprintf(f, "gate-counts\tinputs=%d\tmultipass=%d\trender-changed=%d\trender-checked=%d\trender-dark=%d\n",
+		n, gateMultipass.Load(), gateRenderDelta.Load(),
+		renderOracleRuns.Load()-renderOracleSkips.Load(), renderOracleSkips.Load())
+	for i, g := range renderGates {
+		if hits := renderGateHits[i].Load(); hits > 0 {
+			fmt.Fprintf(f, "gate-dark\t%s\t%d\n", g.name, hits)
+		}
+	}
+}
 
 // gateShrink greedily removes chunks while holds still reports the defect,
 // re-deriving options from each candidate so the result stays a valid seed
@@ -1318,8 +1406,13 @@ var (
 // longer derives the same options would not reproduce.
 func gateShrink(src []byte, holds func([]byte) bool) []byte {
 	cur := src
+	probes := 0
 	for chunk := len(cur) / 2; chunk >= 1; chunk /= 2 {
 		for i := 0; i+chunk <= len(cur); {
+			if probes >= gateShrinkMaxProbes {
+				return cur
+			}
+			probes++
 			cand := make([]byte, 0, len(cur)-chunk)
 			cand = append(cand, cur[:i]...)
 			cand = append(cand, cur[i+chunk:]...)
@@ -1333,14 +1426,53 @@ func gateShrink(src []byte, holds func([]byte) bool) []byte {
 	return cur
 }
 
+// coreConvergePasses bounds how many single-pass core reformats the
+// idempotency oracle will wait for before calling the input unsettled.
+//
+// It is deliberately smaller than Format's own maxFormatPasses: the core
+// must settle strictly sooner than the production backstop would give up,
+// or the oracle stops being able to distinguish "converges on pass 2" from
+// "converges only because the backstop bailed out and returned src".
+const coreConvergePasses = 3
+
+// gateShrinkMaxProbes bounds gateShrink's delta-debugging work, in calls to
+// holds (each of which reformats a candidate).
+//
+// Without a bound the loop is superlinear in input size: the fine-grained
+// passes issue up to one probe per byte, and every accepted shrink restarts
+// the inner scan without advancing. On a multi-kilobyte input that runs to
+// thousands of probes at roughly a millisecond each, which overruns the
+// deadline Go's fuzzing gives a single input — the worker is killed and the
+// whole run dies as "fuzzing process hung or terminated unexpectedly: exit
+// status 2", with no record written and no indication which oracle fired.
+// Reproduced on an unmodified tree, so this bounds a pre-existing harness
+// limit rather than any one change's fallout.
+//
+// The budget is spent large-chunk-first, which is where nearly all the size
+// reduction is: a bounded run still collapses a multi-kilobyte input to a
+// legible record and only gives up the last fine-grained byte-shaving. A
+// coarser record is a fair trade for a gate that can actually finish, and
+// the shrink is a triage aid, not an oracle — correctness never depends on
+// how small the recorded input gets.
+const gateShrinkMaxProbes = 1000
+
 // gateRecord shrinks src, dedups it, and appends one line to the gate log.
 // Opened per write with O_APPEND because Go runs fuzz workers as separate
 // processes, which cannot share a file handle.
 func gateRecord(t *testing.T, category string, src []byte, holds func([]byte) bool) {
+	gateCounter(category).Add(1)
+	if category != huntCategory {
+		return // counting only: no shrink, no dedup, no cap
+	}
 	if gateCount.Load() >= gateMaxRecords {
 		return
 	}
 	small := gateShrink(src, holds)
+	for _, ex := range huntExclude {
+		if ex != "" && strings.Contains(string(small), ex) {
+			return // a family already known and deliberately muted
+		}
+	}
 	key := category + "\x00" + string(small)
 	if _, dup := gateSeen.LoadOrStore(key, true); dup {
 		return

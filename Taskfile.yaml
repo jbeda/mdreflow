@@ -45,11 +45,42 @@ tasks:
       - go test -fuzz=FuzzFormat -fuzztime={{ .FUZZTIME }} .
 
   fuzz-gate:
-    desc: "Release-gate fuzz soak (FUZZTIME=300s default): fails only on panics, typed-refusal breaches, and production instability; records core idempotency/render findings to fuzz-gate.log"
+    desc: "Release-gate fuzz soak (FUZZTIME=300s default): fails only on panics, typed-refusal breaches, and production instability; reports the rate of inputs needing a second pass or changing render"
     cmds:
       - rm -f fuzz-gate.log
       - MDREFLOW_FUZZ_GATE=1 go test -fuzz=FuzzFormat -fuzztime={{ .FUZZTIME }} .
-      - cmd: 'test -s fuzz-gate.log && { echo "--- recorded (non-gating) findings ---"; cat fuzz-gate.log; } || echo "no non-gating findings recorded"'
+      - silent: true
+        cmd: |
+          awk -F'\t' '
+          /^gate-counts/ {
+            for (i = 2; i <= NF; i++) { split($i, kv, "="); tot[kv[1]] += kv[2] }
+            workers++
+          }
+          /^gate-dark/ { dark[$2] += $3 }
+          END {
+            if (!workers) { print "no gate counts recorded"; exit }
+            n = tot["inputs"]
+            checked = tot["render-checked"]
+            printf "--- recorded tier (non-gating), %d worker(s) ---\n", workers
+            printf "inputs evaluated: %d\n", n
+            printf "needed a 2nd pass to settle: %d (%.3f%%)\n", tot["multipass"], 100*tot["multipass"]/n
+            if (checked > 0)
+              printf "render changed: %d (%.3f%% of the %d checked)\n", tot["render-changed"], 100*tot["render-changed"]/checked, checked
+            printf "render oracle dark: %d of %d (%.1f%%) — exempt shapes, never compared\n", tot["render-dark"], n, 100*tot["render-dark"]/n
+            for (g in dark) printf "    %-32s %d\n", g, dark[g]
+            print  "(same-corpus before/after signal only — the corpus is adversarial"
+            print  " fragments, not representative prose; see docs/design.md)"
+          }' fuzz-gate.log
+        ignore_error: true
+
+  fuzz-hunt:
+    desc: "Focused triage soak (CATEGORY=core-multipass|core-render-changed, EXCLUDE=comma-separated substrings): minimizes, dedups and logs one category to fuzz-gate.log. Slow by design; only worth running during a deliberate drive-down."
+    requires:
+      vars: [CATEGORY]
+    cmds:
+      - rm -f fuzz-gate.log
+      - MDREFLOW_FUZZ_HUNT='{{ .CATEGORY }}' MDREFLOW_FUZZ_HUNT_EXCLUDE='{{ .EXCLUDE }}' go test -fuzz=FuzzFormat -fuzztime={{ .FUZZTIME }} .
+      - cmd: 'test -s fuzz-gate.log && { echo "--- {{ .CATEGORY }} samples ---"; grep -v "^gate-counts\|^gate-dark" fuzz-gate.log || true; } || echo "no findings recorded"'
         ignore_error: true
 
   vulncheck:

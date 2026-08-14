@@ -16,5 +16,6 @@ func TestMain(m *testing.M) {
 	mdreflow.SetWidthFloor(false)
 	code := m.Run()
 	reportRenderSkips()
+	reportGateCounts()
 	os.Exit(code)
 }
