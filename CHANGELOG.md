@@ -9,6 +9,8 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+## v0.3.0 (2026-08-14)
+
 **Expect a one-time reflow across your docs on this upgrade.** Sentence mode now splits before a sentence that opens with inline code or emphasis, which is common in technical prose, so most files that use it will pick up new line breaks the first time you run this version.
 On a real 272-file MkDocs docset the upgrade reformatted 203 files (75%) and added about 1,200 line breaks; the built site was unchanged.
 Nothing renders differently — the change moves line breaks inside paragraphs, which HTML collapses — but a repo running `mdreflow --check` in CI will go red until the formatter is run once.
