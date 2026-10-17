@@ -107,8 +107,9 @@ func TestIsFenceOpener(t *testing.T) {
 	}
 }
 
-// TestFenceOpenerRunLen checks the leading backtick/tilde run length
-// isFenceOpener and escapeBlockInterrupt's fence branch both rely on.
+// TestFenceOpenerRunLen checks the fence-opener run length
+// escapeFenceOpenerRun and escapeDeltaMax both rely on: the line's leading
+// run of one fence character, stopping at the other one.
 func TestFenceOpenerRunLen(t *testing.T) {
 	cases := []struct {
 		name string
@@ -118,7 +119,8 @@ func TestFenceOpenerRunLen(t *testing.T) {
 		{"three backticks", "```", 3},
 		{"three backticks plus info", "```go", 3},
 		{"five tildes", "~~~~~go", 5},
-		{"mixed run counts all", "``~~go", 4},
+		{"backtick run stops at a tilde", "```~go", 3},
+		{"tilde run stops at a backtick", "~~~``go", 3},
 		{"no run", "go```", 0},
 		{"empty", "", 0},
 	}
@@ -253,7 +255,8 @@ func TestDetectHardBreak(t *testing.T) {
 		{"br tag always recognized even on last line", "foo<br>", true, false, false, "<br>", "foo"},
 		{"br tag recognized without AST confirmation (raw HTML carries no flag)", "foo<br>", false, false, false, "<br>", "foo"},
 		{"br tag with whitespace before it consumed", "foo <br>", false, false, false, "<br>", "foo"},
-		{"br tag case insensitive and self closing, respelled canonically", "foo<BR/>", false, false, false, "<br>", "foo"},
+		{"self-closing br tag respelled canonically, keeping its slash", "foo<BR/>", false, false, false, "<br />", "foo"},
+		{"unslashed br tag respelled canonically", "foo<Br>", false, false, false, "<br>", "foo"},
 		{"escaped br tag not a break", `foo\<br>`, false, false, false, "", `foo\<br>`},
 		{"br tag with separating space before backslash still a break, space consumed with the marker", `foo\ <br>`, false, false, false, "<br>", `foo\`},
 		{"no hard break syntax at all", "plain text", false, false, false, "", "plain text"},
@@ -343,6 +346,8 @@ func TestEscapeBlockInterrupt(t *testing.T) {
 		{"setext underline escaped", "===", false, "", true, "\\==="},
 
 		{"fence opener backtick escaped as entity", "```go", false, "", true, "&#96;&#96;&#96;go"},
+		{"strikethrough after a backtick fence run stays", "```~x~", false, "", true, "&#96;&#96;&#96;~x~"},
+		{"code span after a tilde fence run stays", "~~~``x``", false, "", true, "\\~\\~\\~``x``"},
 		{"fence opener tilde escaped with backslash", "~~~go", false, "", true, "\\~\\~\\~go"},
 
 		{"link ref def opener escaped", "[foo]: /url", false, "", true, "\\[foo]: /url"},

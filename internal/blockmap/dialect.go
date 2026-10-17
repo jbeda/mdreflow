@@ -67,7 +67,7 @@ var skipRules = []skipRule{
 	{
 		Name:           "github-alert-marker",
 		Dialect:        "GFM",
-		Pattern:        regexp.MustCompile(`^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]`),
+		Pattern:        regexp.MustCompile(`^\[!(?i:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]`),
 		Kind:           lineBoundary,
 		BlockquoteOnly: true,
 	},
@@ -88,6 +88,33 @@ var skipRules = []skipRule{
 		Name:    "mdx-block-expr",
 		Dialect: "MDX",
 		Pattern: regexp.MustCompile(`^\{[^{}]*\}$`),
+		Kind:    wholeNodeAny,
+	},
+	{
+		// A line holding one opening, closing or self-closing tag and nothing
+		// else. MDX reads it as block JSX even directly under a paragraph or
+		// list item, where
+		// CommonMark sees lazy continuation text, and an element with
+		// expression attributes (`style={{…}}`) parses as a prose paragraph.
+		// Reflowing it changes the MDX: joined onto prose, indented into the
+		// list item, or backslash-escaped. As a boundary it keeps its bytes;
+		// in plain Markdown the only cost is that it is never joined.
+		Name:    "mdx-jsx-tag-line",
+		Dialect: "MDX",
+		Pattern: regexp.MustCompile(`^</?[A-Za-z][^<]*>$`),
+		Kind:    lineBoundary,
+	},
+	{
+		// A paragraph line that opens with a fence run once its indentation
+		// is trimmed. CommonMark reads a fence indented four or more columns
+		// past its container as lazy paragraph text, but MDX disables
+		// indented code and reads the same lines as a fenced code block.
+		// Reflowing the paragraph would join the code into prose, so the
+		// whole paragraph passes through; freezing only the fence lines
+		// would still leave the code lines between them to reflow.
+		Name:    "mdx-indented-fence",
+		Dialect: "MDX",
+		Pattern: regexp.MustCompile("^(`{3,}|~{3,})"),
 		Kind:    wholeNodeAny,
 	},
 	{
@@ -156,7 +183,12 @@ func wholeNodeSkip(trimmedLines []string) bool {
 // cannot bring about, and "export"/"import" are ordinary enough English
 // words that refusing to start a line with one would be a real
 // line-quality cost for no correctness gain.
-var markerLineStartRE = regexp.MustCompile(`^[ \t]*(:::|\{\{[<%]|\$\$|\+\+\+|\{[^{}]*\}|\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\])`)
+//
+// mdx-jsx-tag-line is absent too: it depends on where a line ends, which a
+// break candidate's leading bytes cannot tell. A line that reflow leaves
+// holding only a tag is frozen as-is on the next pass, and the text around it
+// was already laid out from a line start, so the output does not change.
+var markerLineStartRE = regexp.MustCompile(`^[ \t]*(:::|\{\{[<%]|\$\$|\+\+\+|\{[^{}]*\}|\[!(?i:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\])`)
 
 // MarkerLineStart reports whether s, placed at the start of a fresh
 // output line, could be recognized as a dialect marker by the skip-list

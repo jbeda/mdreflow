@@ -1,6 +1,9 @@
 package segment
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestNoBreakSpansDegenerateFallback checks the "whole cluster passes
 // through unbroken" fallback: text whose parse yields anything but a
@@ -115,6 +118,24 @@ func TestNoBreakSpansCodeSpanProtected(t *testing.T) {
 	spans := NoBreakSpans(text)
 	if !fullyCovered(spans, start, end) {
 		t.Fatalf("NoBreakSpans(%q) = %v, want code span [%d,%d) fully covered", text, spans, start, end)
+	}
+}
+
+// TestNoBreakSpansTagOpenerInCodeSpan checks that a tag opener inside a
+// code span protects only the code span, not the rest of the line, while
+// the same unclosed opener outside code still protects to the line's end.
+func TestNoBreakSpansTagOpenerInCodeSpan(t *testing.T) {
+	inCode := "pass `<Image` a source. Next sentence"
+	gap := strings.Index(inCode, ". Next") + 1
+	for _, sp := range NoBreakSpans(inCode) {
+		if gap >= sp.Start && gap < sp.End {
+			t.Fatalf("NoBreakSpans(%q) covers the sentence gap at %d with %v", inCode, gap, sp)
+		}
+	}
+	bare := "an <Image opener. Next sentence"
+	start := strings.Index(bare, "<")
+	if !fullyCovered(NoBreakSpans(bare), start, len(bare)) {
+		t.Fatalf("NoBreakSpans(%q) = %v, want [%d,%d) covered", bare, NoBreakSpans(bare), start, len(bare))
 	}
 }
 

@@ -180,16 +180,27 @@ Each rule is tagged by origin so dialect profiles can subset the existing rules 
 | Tables | GFM | skip block |
 | Raw HTML blocks | CommonMark | skip block |
 | JSX blocks, `{expr}` spans | MDX | skip block / no-break span |
+| Lines holding only a tag (`</Steps>`, `<RequestId />`) | MDX | immovable boundary (below) |
+| Paragraphs with a fence line indented into lazy continuation | MDX | skip block (MDX disables indented code, so it reads a fence where CommonMark reads text) |
 | `:::` directives | Docusaurus/remark | skip fence lines; interior prose reflows |
 | Math blocks (`$$`) | GFM, Docusaurus | skip block |
 | Hugo shortcodes (`{{< … >}}`, `{{% … %}}`) | Hugo | skip block / no-break span |
-| GitHub alert first-lines (`> [!NOTE]`) | GFM | marker line is an immovable boundary (it fuses into the quote's paragraph in the AST — see M0 findings); rest of quote reflows |
+| GitHub alert first-lines (`> [!NOTE]`) | GFM | marker line is an immovable boundary (it fuses into the quote's paragraph in the AST — see M0 findings); rest of quote reflows; type matched case-insensitively, as GitHub does |
 | Link reference definitions | CommonMark | skip zone (below) |
 | Footnote definitions (`[^label]:`) | GFM | body reflows; continuations indented (below) |
 | Hard line breaks | CommonMark | immovable boundary (below) |
 
 **Spike M0 outcome** (details and evidence in [m0-spike-findings.md](m0-spike-findings.md)): goldmark does not parse MDX, and many dialect constructs do land as `Paragraph` nodes — but a general line-scanning pre-pass is *not* needed.
 The block-map derivation step grows content-pattern rules instead: (1) skip whole `Paragraph` nodes whose text matches a marker regex (`:::` fences, block shortcodes, block `{expr}`, `+++` TOML front matter); (2) within a `Paragraph`, treat any `Lines()` segment matching a marker regex as an immovable boundary — this handles fences fused with prose by lazy continuation (no-blank-line `:::`, `> [!NOTE]` markers, paired shortcodes, `$$` math); (3) recognize YAML front matter ourselves via a byte-range pre-scan (originally goldmark-meta, replaced — see Dependencies); (4) inline `{expr}`/shortcodes/math are invisible to the AST (plain `Text`) and need the already-planned regex scan for no-break spans.
+**A line holding only a tag is an immovable boundary** (`mdx-jsx-tag-line`): one opening, closing or self-closing tag and nothing else.
+MDX reads such a line as block JSX even directly under a paragraph or list item, where CommonMark reads lazy continuation text.
+Joined onto the prose, `</Steps>` becomes inline JSX inside the paragraph; re-indented, `<RequestId />` moves into the list item above.
+An element whose attributes hold expressions (`style={{…}}`) is not a valid HTML tag, so CommonMark parses its line as a prose paragraph, which reflow would wrap and escape.
+The render backstop sees none of this, since goldmark reads both spellings alike.
+The rule applies in every dialect; in plain Markdown its only cost is that such a line is never joined to its neighbors.
+A tag followed by text on the same line is inline HTML or JSX in a paragraph, in both grammars, so such a line reflows as usual.
+The rule is absent from `markerLineStartRE` because it depends on where a line ends, which a break candidate cannot know; a line that reflow leaves holding only a tag is frozen as-is on the next pass.
+
 The one construct post-parse rules cannot recover is a multi-line JSX opening tag whose closing `>` sits alone on a line (goldmark consumes it as an empty blockquote) — documented as a known limitation, revisit with a narrow raw-line fence if it shows up in real content.
 
 ### Sentence segmentation
@@ -282,7 +293,9 @@ This is the same fallback rule as the escaped-backslash-run position, applied at
 
 This class of defect is invisible to both safety nets: the render backstop and the fuzz oracle compare through goldmark, where the backslash spelling *is* a break, so both sides of the comparison agree on output that breaks the published page.
 Only a real `mkdocs build` diff can see it, which makes the release procedure's probe page load-bearing rather than a nicety.
-A source-authored `<br>` is always kept, canonicalized to lowercase, un-self-closed spelling (`<Br />` and `<BR>` both emit `<br>`) since a cluster join can manufacture a `<br>`-shaped tag from bytes no single source line carried, and a canonical spelling is needed for the pipeline to recognize its own output on the next pass.
+A source-authored `<br>` is always kept, in a canonical lowercase spelling (`<BR>` emits `<br>`).
+A cluster join can manufacture a `<br>`-shaped tag from bytes no single source line carried, and the pipeline needs a canonical spelling to recognize its own output on the next pass.
+The canonical spelling keeps a self-closing slash (`<Br/>` and `<br  />` emit `<br />`): MDX parses tags as JSX, which rejects an unclosed `<br>`, while HTML renderers read the two spellings alike.
 This removes `Options.HardBreaks`: there is no longer a style to configure.
 See [why-this-is-hard.md](why-this-is-hard.md) for the full context matrix behind this decision.
 
@@ -379,6 +392,7 @@ The fallback is scoped to the one paragraph, which is the point: the document-le
 It is verdict-stable by construction — the answer is a function of the paragraph's own source bytes, and a paragraph that falls back emits exactly those bytes, so the next pass re-derives it and settles.
 The check is deliberately narrow rather than a per-paragraph render comparison: definition formation is decided by the lines the definition occupies, whereas a render diff at this scope would be unsound, since a reference *link* resolves against definitions elsewhere in the document and a paragraph containing `[foo]` renders differently alone than in place.
 For the same reason the window matters: a definition formed from the line above plus the paragraph's first line is invisible inside the paragraph, which is why the neighbor check above is a separate protection rather than one this subsumes.
+Both sides are compared with the container prefix stripped from their continuation lines, since a paragraph's own parse never sees those markers; parsed with them, a `>` prefix turns the lines into a nested quote and hides the definition.
 
 The exemption applies to a paragraph's *own* shape only — the zone's
 neighbor checks have no footnote carve-out (issue #41 removed the one they
@@ -439,6 +453,7 @@ The masking means an opener inside inline code — the common way prose mentions
 **Degenerate parses fall back to no reflow of the cluster.** If the parse yields anything but a single `Paragraph` covering the text (the paragraph parser declines an all-indented line, producing an empty document), the whole cluster is one no-break span and passes through unbroken — coverage lost on a shape that is rare and ambiguous, never correctness.
 
 **What stays regex.** Constructs invisible to goldmark keep their existing scanners, layered on top as today: inline math (`$…$`), Hugo shortcodes, MDX `{expr}`, footnote references (the profile does not enable the footnote extension), and the near-tag opener guard (`htmlTagOpenerSpans`), which deliberately protects regions goldmark *declines* to call tags — an idempotency stabilizer the AST by definition cannot provide.
+The near-tag opener guard skips an opener inside a real code span, from the same parse: `` `<Image` `` is literal text that can never become a tag, and the code span already protects itself.
 
 **Code-span queries move to the same parse.** `segment.CodeSpans` — used to decide whether a hard-break boundary or cluster join lands inside a genuine code span, and by blockmap's guard-arm masking — shares the linkify blind spot (a backtick inside a bare URL is destination content, not a delimiter, so hand-pairing runs one delimiter out of step).
 Its answers now come from `CodeSpan` nodes of the same goldmark configuration (over the paragraph's `"\n"`-joined lines, matching how goldmark's inline parser sees a paragraph).

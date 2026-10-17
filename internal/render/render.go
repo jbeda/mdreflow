@@ -58,8 +58,8 @@ var spaceBeforeBr = regexp.MustCompile(` <br>`)
 // browser renders all of these identically; goldmark's raw-HTML pass-
 // through does not normalize them, so they can differ byte-for-byte
 // without differing in rendered meaning. Reflow keeps a source-authored
-// <br> but canonicalizes its spelling to "<br>" (docs/design.md, "Hard
-// line breaks"), so this rule canonicalizes both sides of a comparison
+// <br> but canonicalizes its spelling to "<br>" or "<br />" (docs/design.md,
+// "Hard line breaks"), so this rule canonicalizes both sides of a comparison
 // the same way — found by FuzzFormat on input "\x00<Br>\n00".
 var anyBrTag = regexp.MustCompile(`(?i)<br\s*/?>`)
 

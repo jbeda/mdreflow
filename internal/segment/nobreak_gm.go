@@ -235,7 +235,7 @@ func keptRegexSpans(text string) []Span {
 			out = append(out, Span{Start: m[0], End: m[1]})
 		}
 	}
-	out = append(out, htmlTagOpenerSpans(text)...)
+	out = append(out, htmlTagOpenerSpans(text, CodeSpans(text))...)
 	return out
 }
 
@@ -293,7 +293,12 @@ var htmlTagOpenerRE = regexp.MustCompile(`</?[A-Za-z]`)
 // No AST equivalent is possible: this is an idempotency stabilizer for a
 // region the parse *declines* to call a tag, which is exactly what the
 // parse cannot be asked about.
-func htmlTagOpenerSpans(text string) []Span {
+//
+// An opener inside a code span (codeSpans) is skipped: it is literal text
+// that can never become a tag, and the code span is a no-break span of its
+// own. Without the skip, a "`<Image`" with no ">" after it on the line
+// keeps the rest of a joined paragraph from splitting into sentences.
+func htmlTagOpenerSpans(text string, codeSpans []Span) []Span {
 	var out []Span
 	lineStart := 0
 	for {
@@ -304,6 +309,9 @@ func htmlTagOpenerSpans(text string) []Span {
 		line := text[lineStart:lineEnd]
 		for _, loc := range htmlTagOpenerRE.FindAllStringIndex(line, -1) {
 			start := lineStart + loc[0]
+			if inSpan(codeSpans, start) {
+				continue
+			}
 			end := lineEnd
 			if gt := indexByteFrom(text, start, '>'); gt >= 0 && gt < lineEnd {
 				end = gt + 1
@@ -316,6 +324,16 @@ func htmlTagOpenerSpans(text string) []Span {
 		lineStart = lineEnd + 1
 	}
 	return out
+}
+
+// inSpan reports whether pos falls inside any of spans.
+func inSpan(spans []Span, pos int) bool {
+	for _, sp := range spans {
+		if pos >= sp.Start && pos < sp.End {
+			return true
+		}
+	}
+	return false
 }
 
 // indexByteFrom returns the index of the first occurrence of b in

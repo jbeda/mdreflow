@@ -9,6 +9,25 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+- A GitHub alert with a mixed-case or lowercase type, such as `> [!Note]` or `> [!tip]`, now keeps its marker on its own line.
+  GitHub matches the type case-insensitively, but mdreflow recognized only the uppercase spelling.
+  It joined the alert's first sentence onto a mixed-case marker, and GitHub then rendered a plain blockquote showing `[!Note]` as text.
+- A line that holds only a JSX or HTML tag, such as `</Steps>`, `<RequestId />` or `<img … style={{…}} />`, is now left exactly as written.
+  Directly under a paragraph or list item, mdreflow joined such a line onto the prose or indented it into the list item, and it backslash-escaped elements with expression attributes.
+  MDX reads these lines as block JSX, so each of those edits changed the page.
+  In plain Markdown such lines are no longer joined to their neighbors; nothing renders differently.
+- A hard break written as a self-closing `<br />` or `<br/>` now keeps its slash, emitted as `<br />`.
+  Every `<br>` tag was respelled unclosed, which MDX rejects because it parses tags as JSX.
+- A wrapped line that starts with a run of backticks followed by a tilde, or a run of tildes followed by backticks, keeps its strikethrough or code span.
+  To stop the line opening a code fence, mdreflow escapes its leading run, and it escaped the other character after the run too, which removed the strikethrough or broke the code span.
+  It now escapes only the fence's own character.
+- A paragraph that mentions an unclosed tag inside inline code, such as `` `<Image` `` or `` `<img` ``, now splits into sentences like any other.
+  The guard that keeps tag-like text from being split treated the opener as the start of a tag and protected the rest of the paragraph.
+- A paragraph inside a blockquote whose reflow would turn part of its text into a link reference definition is now left as written, while the rest of the file still formats.
+  The check that catches this read the reflowed lines with their `>` markers, which hid the definition; the whole-file safety check then caught it instead and left the entire file unformatted.
+- A paragraph with a code fence indented far enough to be part of the paragraph's text, such as a fence tab-indented under a list item with no blank line before it, is now left as written.
+  CommonMark reads such a fence as text, so mdreflow joined it into the prose, but MDX disables indented code and reads it as a fenced code block, which the join turned into inline code.
+
 ## v0.3.0 (2026-08-14)
 
 **Expect a one-time reflow across your docs on this upgrade.** Sentence mode now splits before a sentence that opens with inline code or emphasis, which is common in technical prose, so most files that use it will pick up new line breaks the first time you run this version.

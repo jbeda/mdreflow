@@ -1015,11 +1015,18 @@ func FuzzFormat(f *testing.F) {
 		"```\nunterminated fence",
 		"> [!NOTE]",
 		"> [!NOTE]\ntext",
+		"> [!note]\ntext",
+		"text\n</Steps>",
+		"1. a\n2. b\n<X />\n",
+		"<img a={{b:\"c d\"}} />",
+		"1. a:\n\t\t```sh\n\t\tx\n\t\t```\n",
 		"- \n- \n",
 		"1. a\n10. b\n",
 		"\x00\x01\x02",
 		"a.\\\n",
 		"a.  \n",
+		"a<br />\nb",
+		"<BR/>\nb",
 		// MkDocs admonition shapes (#26), each padded with trailing blank
 		// lines so its own hash derives DialectMkDocs (see deriveOptions) —
 		// otherwise a hand-picked seed only reaches the mkdocs dialect by
