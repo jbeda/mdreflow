@@ -43,12 +43,15 @@ Explicitly deferred or unlikely (see [Future directions](#future-directions)): f
 
 | Mode | Behavior |
 |---|---|
-| `sentence` (default) | Join each paragraph's lines, split at sentence boundaries, one sentence per line. With `--max-width N`, sentences longer than N get secondary breaks at clause boundaries (commas, semicolons), falling back to the last word boundary. Without it, long sentences stay long. |
+| `sentence` (default) | Join each paragraph's lines, split at sentence boundaries, one sentence per line. With `--max-width N`, sentences longer than N get secondary breaks at clause boundaries (a comma, semicolon, colon or dash followed by whitespace), falling back to the last word boundary. Without it, long sentences stay long. |
 | `para` | Join each paragraph to a single line. |
 | `wrap` | Classic hard wrap at `--max-width` (default 80), breaking at word boundaries only. |
 
+A clause boundary gives way to a word boundary when it sits inside emphasis (`**Terminal: Select Default Profile**`), follows a definition label (`[^2]:`), or would start the next line with a shape that needs a block-interrupt escape (`steps: 1. open`).
+
 All modes are one pipeline — join lines, compute break points, emit — differing only in the break-point strategy.
 Continuation lines inside list items and blockquotes are re-indented to match their container.
+A width limit bounds the emitted line, container prefix included: breaks are planned against the limit less the prefix's width, floored at 20 so deep nesting cannot squeeze prose into a sliver.
 
 Width-constrained modes measure candidate lines against the cluster-global no-break spans via a per-cluster prefix table (`widthMeasurer` in `internal/reflow`), built once and queried in O(1); the escape simulation (`escapeBlockInterrupt`) is evaluated exactly only inside the narrow width band where it can change the verdict.
 An earlier implementation re-parsed every candidate prefix from scratch, which was roughly cubic (about 30 seconds for a 2000-word paragraph); the rewrite was verified against it by a full-corpus differential run (fixtures plus all fuzz seeds, byte-identical) and the truncated-prefix vs. global-span measurement question is documented on `widthMeasurer`.

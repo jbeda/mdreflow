@@ -110,6 +110,33 @@ func allowedSpans(para ast.Node) []Span {
 	return out
 }
 
+// EmphasisSpans returns the byte segments of text's plain text inside
+// emphasis, strong emphasis or strikethrough, from the same gm.NewInline()
+// parse NoBreakSpans uses. A degenerate parse returns nil.
+func EmphasisSpans(text string) []Span {
+	para, ok := parseSingleParagraph(text)
+	if !ok {
+		return nil
+	}
+	var out []Span
+	var walk func(n ast.Node, inside bool)
+	walk = func(n ast.Node, inside bool) {
+		for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+			switch c.Kind() {
+			case ast.KindText:
+				if inside {
+					t := c.(*ast.Text)
+					out = append(out, Span{Start: t.Segment.Start, End: t.Segment.Stop})
+				}
+			case ast.KindEmphasis, extast.KindStrikethrough:
+				walk(c, true)
+			}
+		}
+	}
+	walk(para, false)
+	return out
+}
+
 // complement returns the byte ranges of [0,textLen) not covered by
 // allowed, which is assumed sorted and non-overlapping — true of
 // allowedSpans's output, since it visits Text nodes in document order and

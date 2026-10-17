@@ -51,6 +51,27 @@ const (
 // "unbounded" — see Options.MaxWidth's doc comment.
 const defaultWrapWidth = 80
 
+// minContentWidth equals mdreflow.MinMaxWidth.
+const minContentWidth = 20
+
+// containerWidth returns the width to plan a paragraph's breaks against:
+// the limit less its continuation prefix (list indent, "> " markers), so
+// the emitted line fits, prefix included. A list marker is as wide as its
+// continuation indent. A footnote or admonition body's prefix carries four
+// extra spaces, which only makes its first line narrower than it needs to
+// be. The result is floored at minContentWidth, or at the limit itself if
+// that is smaller (test-only widths), so deep nesting keeps room for prose.
+func containerWidth(opts Options, contPrefix string) int {
+	width := opts.MaxWidth
+	if width == 0 && opts.Mode == ModeWrap {
+		width = defaultWrapWidth
+	}
+	if width == 0 || contPrefix == "" {
+		return width
+	}
+	return max(width-runeLen(contPrefix), min(width, minContentWidth))
+}
+
 // Options configures the reflow pipeline. It mirrors the subset of
 // mdreflow.Options the pipeline needs.
 type Options struct {
@@ -345,7 +366,9 @@ func writeParagraph(buf *bytes.Buffer, p blockmap.Paragraph, source []byte, seg 
 		// on this same content, because by the time either pass reaches
 		// it, it is no longer fence-shaped at all.
 		text = escapeFenceOpenerRun(text)
-		clusterLines := computeLines(text, seg, opts)
+		clusterOpts := opts
+		clusterOpts.MaxWidth = containerWidth(opts, p.ContPrefix)
+		clusterLines := computeLines(text, seg, clusterOpts)
 		for i, s := range clusterLines {
 			if i == len(clusterLines)-1 {
 				s = attachMarker(s, marker)
@@ -1169,10 +1192,14 @@ func isWrapRunByte(b byte) bool {
 	return b == ' ' || b == '\t' || b == '\r'
 }
 
-// clauseBreaksRE matches a comma or semicolon followed by a maximal run
-// of one or more spaces, tabs, and/or bare '\r' bytes: the clause-
-// boundary candidates ModeSentence's MaxWidth prefers over a plain word
-// boundary (docs/design.md's Modes table). The punctuation itself stays
+// clauseBreaksRE matches clause punctuation (a comma, semicolon or colon,
+// an em dash, "--", or an en dash after whitespace) followed by a maximal
+// run of spaces, tabs, and/or bare '\r' bytes: the clause-boundary
+// candidates ModeSentence's MaxWidth prefers over a plain word boundary
+// (docs/design.md's Modes table). Group 1 is the punctuation, group 2 the
+// run. Without the run there is no candidate, so "10:30", "https:",
+// "2010–2020" and "cache—typically" never break: a break there would insert
+// whitespace the source never had. The punctuation itself stays
 // at the end of the preceding line; the entire following run is consumed
 // as the break, provided it contains at least one real space or tab (see
 // clauseBreaks) — a single space is not enough on its own to justify a
@@ -1180,7 +1207,7 @@ func isWrapRunByte(b byte) bool {
 // comment (a source line can carry more than one literal whitespace byte
 // here, untouched by joinClusterLines, and a run left partly uncut can
 // silently misbehave on reparse).
-var clauseBreaksRE = regexp.MustCompile(`[,;][ \t\r]+`)
+var clauseBreaksRE = regexp.MustCompile(`([,;:]|\x{2014}|--|[ \t]\x{2013})([ \t\r]+)`)
 
 // entityRefTailRE matches an HTML entity or numeric character reference
 // ending exactly at the string's end ("&" then digits/letters then ";")
@@ -1191,12 +1218,23 @@ var entityRefTailRE = regexp.MustCompile(`&#?[0-9A-Za-z]+;$`)
 // clauseBreaks returns text's clause-boundary break candidates, excluding
 // any match whose run is pure '\r' (see wordBreaks's doc comment — that
 // is not a real clause boundary), that lands inside a no-break span (e.g.
-// a comma inside inline code), or whose semicolon terminates an HTML
+// a comma inside inline code) or inside emphasis (segment.EmphasisSpans),
+// or whose semicolon terminates an HTML
 // entity/numeric character reference rather than actual prose punctuation
 // (entityRefTailRE) — e.g. "&#96;", never real clause punctuation despite
 // ending in ';'.
 //
-// The last exclusion matters beyond ordinary prose containing a literal
+// Three more exclusions keep the wider punctuation set from making output
+// worse. A colon right after "]" is "[label]:" or "[^label]:" definition
+// syntax; a break there strands the label, which the emission escapes then
+// turn into literal text, deleting the footnote unseen by the footnote-less
+// render backstop. A clause mark inside emphasis usually belongs to a name
+// ("**Terminal: Select Default Profile**"). And a candidate whose following
+// text would need escapeBlockInterrupt's escape at a line start ("steps:
+// 1. open" would become "1\. open") gives way to a word break, which keeps
+// the source free of backslashes the author never typed.
+//
+// The entity exclusion matters beyond ordinary prose containing a literal
 // reference like "caf&eacute;, more text" (a pre-existing quirk of no
 // consequence there, since the same text is present and read the same way
 // on every pass): escapeBlockInterrupt's fence-opener branch emits
@@ -1216,13 +1254,29 @@ var entityRefTailRE = regexp.MustCompile(`&#?[0-9A-Za-z]+;$`)
 // the run instead ("&#96;&#96;&#96;" / "Z C00").
 func clauseBreaks(text string) []segment.Span {
 	noBreak := segment.NoBreakSpans(text)
+	emphasis := segment.EmphasisSpans(text)
 	var out []segment.Span
-	for _, m := range clauseBreaksRE.FindAllStringIndex(text, -1) {
-		punct, start, end := m[0], m[0]+1, m[1]
-		if !strings.ContainsAny(text[start:end], " \t") || spanContains(noBreak, start) {
+	for _, m := range clauseBreaksRE.FindAllStringSubmatchIndex(text, -1) {
+		punct, start, end := text[m[2]:m[3]], m[4], m[5]
+		switch {
+		case !strings.ContainsAny(text[start:end], " \t"):
+			// A run of bare '\r' is not a break (see wordBreaks).
+			continue
+		case spanContains(noBreak, start):
+			// Inside inline code, a link, or another no-break span.
+			continue
+		case spanContains(emphasis, start):
+			// Part of an emphasized name or label.
+			continue
+		case punct == ";" && entityRefTailRE.MatchString(text[:start]):
+			// The end of an HTML entity, not prose punctuation.
+			continue
+		case punct == ":" && m[2] > 0 && text[m[2]-1] == ']':
+			// A "[label]:" or "[^label]:" definition.
 			continue
 		}
-		if text[punct] == ';' && entityRefTailRE.MatchString(text[:start]) {
+		if after := text[end:]; escapeBlockInterrupt(after, false, "", true) != after {
+			// The next line would need an escape; a word break serves.
 			continue
 		}
 		out = append(out, segment.Span{Start: start, End: end})

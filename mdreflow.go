@@ -107,9 +107,11 @@ type Options struct {
 	// deliberate, pragmatic simplification (the same starting point every
 	// shipping line-wrap tool uses); full grapheme-cluster/width-aware
 	// measurement is a documented future refinement, not implemented
-	// here. In every mode, a no-break span (inline code, a link, ...) or
-	// a single word wider than the limit overflows rather than being
-	// split.
+	// here. The limit covers the whole emitted line, container prefix
+	// (list indentation, "> " markers) included, though a deeply nested
+	// paragraph keeps at least 20 runes of text per line. In every mode, a
+	// no-break span (inline code, a link, ...) or a single word wider than
+	// the limit overflows rather than being split.
 	//
 	// A non-zero MaxWidth below MinMaxWidth (20) is an options error.
 	// Nearly every pathological width behavior the fuzz campaign found
@@ -122,8 +124,9 @@ type Options struct {
 	//
 	//   - ModeSentence: 0 (default) leaves long sentences alone. A
 	//     non-zero value adds a secondary break to any sentence longer
-	//     than MaxWidth, at the last clause boundary (a comma or
-	//     semicolon followed by a space) before the limit, falling back
+	//     than MaxWidth, at the last clause boundary (a comma,
+	//     semicolon, colon, em dash, "--", or spaced en dash followed by
+	//     whitespace) before the limit, falling back
 	//     to the last word boundary before the limit, falling back to an
 	//     overflowing single word or no-break span if neither exists.
 	//   - ModeWrap: classic hard wrap at word boundaries. 0 means 80 in

@@ -9,6 +9,16 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+- With `--max-width`, sentence mode now also breaks a long sentence after a colon or a dash (an em dash, `--`, or a spaced en dash), as well as after a comma or semicolon.
+  This avoids orphaned tails such as a lone "cache." on the last line of "…tied to a specific client — typically a browser cache."
+  A colon or dash with no space after it, as in `10:30`, `https://` or `2010–2020`, is never a break.
+  A word break is used instead when the clause break sits inside bold or italic text, such as **Terminal: Select Default Profile**, or right after a footnote or link definition label.
+  It is also used where the next line would otherwise start with something needing a backslash escape, such as `1. open` after "steps:".
+- `--max-width` now counts a line's list indentation and `> ` quote markers toward the limit, so a wrapped line inside a list item or blockquote no longer runs past it.
+  Only the text after the prefix was measured, so a line in a quote inside a list could exceed the limit by the prefix's width.
+  A deeply nested paragraph still keeps at least 20 characters of text per line.
+  Expect lines inside lists and quotes to rewrap once.
+
 ## v0.3.0 (2026-08-14)
 
 **Expect a one-time reflow across your docs on this upgrade.** Sentence mode now splits before a sentence that opens with inline code or emphasis, which is common in technical prose, so most files that use it will pick up new line breaks the first time you run this version.
