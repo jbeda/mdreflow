@@ -180,6 +180,8 @@ Each rule is tagged by origin so dialect profiles can subset the existing rules 
 | Tables | GFM | skip block |
 | Raw HTML blocks | CommonMark | skip block |
 | JSX blocks, `{expr}` spans | MDX | skip block / no-break span |
+| Template literals that span lines (`` code={`…`} ``, `` <CodeBlock>{`…`} ``) | MDX | skip the paragraphs that open or lie inside the literal (below) |
+| `import`/`export` statements over several lines | MDX | skip the paragraphs the statement spans (below) |
 | `:::` directives | Docusaurus/remark | skip fence lines; interior prose reflows |
 | Math blocks (`$$`) | GFM, Docusaurus | skip block |
 | Hugo shortcodes (`{{< … >}}`, `{{% … %}}`) | Hugo | skip block / no-break span |
@@ -191,6 +193,23 @@ Each rule is tagged by origin so dialect profiles can subset the existing rules 
 **Spike M0 outcome** (details and evidence in [m0-spike-findings.md](m0-spike-findings.md)): goldmark does not parse MDX, and many dialect constructs do land as `Paragraph` nodes — but a general line-scanning pre-pass is *not* needed.
 The block-map derivation step grows content-pattern rules instead: (1) skip whole `Paragraph` nodes whose text matches a marker regex (`:::` fences, block shortcodes, block `{expr}`, `+++` TOML front matter); (2) within a `Paragraph`, treat any `Lines()` segment matching a marker regex as an immovable boundary — this handles fences fused with prose by lazy continuation (no-blank-line `:::`, `> [!NOTE]` markers, paired shortcodes, `$$` math); (3) recognize YAML front matter ourselves via a byte-range pre-scan (originally goldmark-meta, replaced — see Dependencies); (4) inline `{expr}`/shortcodes/math are invisible to the AST (plain `Text`) and need the already-planned regex scan for no-break spans.
 The one construct post-parse rules cannot recover is a multi-line JSX opening tag whose closing `>` sits alone on a line (goldmark consumes it as an empty blockquote) — documented as a known limitation, revisit with a narrow raw-line fence if it shows up in real content.
+
+**A template literal that spans lines freezes its paragraphs.** A code sample passed to a component as a template literal, as an attribute (`` code={`…`} ``), as children (`` <CodeBlock>{`…`}</CodeBlock> ``) or inside an object, spans lines, and its whitespace is the code.
+Reflowing the paragraph that holds it joins those lines, and where the literal holds blank lines, each one ends a goldmark paragraph, so the rest of the literal becomes paragraphs that read as prose.
+So a paragraph is frozen when it opens a literal that runs past the end of its line (`{`, optional whitespace, a backtick, with an even number of backticks before the `{` so that it is not inside a code span), or when it leaves the count of unescaped backticks odd with a `{` before the unmatched one.
+The second case starts a chain: the walk keeps counting in the raw source, and while the count is odd, each paragraph that starts there is inside the literal and passes through byte-for-byte; the first paragraph that starts with the count even is handled as usual.
+A literal on one line is left to reflow, which never breaks inside what goldmark reads as a code span, so prose such as "N × {`Before`, `After`}" still reflows.
+Counting backticks rather than lexing JavaScript keeps this a skip rule, not a second grammar to drift from MDX's.
+Its one guard against a miscount is the code fence: a line opening with an unescaped run of three backticks cannot be inside a real template literal, so it ends the chain, and a count thrown off by a backtick in a quoted string stops there instead of running on out of phase.
+A blank line elsewhere in an expression, between attributes or inside an object literal, keeps the old handling; a miscount before a fence freezes prose that could have reflowed; neither changes a render.
+The rule is idempotent: every paragraph it reads is frozen, and the blocks between them never reflow.
+
+**An import/export statement freezes the paragraphs it spans.** MDX reads a line that starts at column 1, outside any container, with `import ` or `export ` as the start of an ESM block of JavaScript, which runs to a blank line, or past it while the code there is incomplete.
+The `mdx-import-export` skip rule froze a paragraph only when every line starts with `import` or `export`, so a statement over several lines, such as an object, a function or a styled-components template, was reflowed into broken JavaScript.
+So the paragraph that starts such a block is frozen, and so is each following top-level paragraph that continues the statement: one whose first line is indented or opens with a closing bracket, as code after a blank line inside a statement almost always does.
+The first paragraph that does neither ends the block.
+Telling incomplete code from complete would take a JavaScript parser; the approximation can only freeze an indented paragraph that follows a complete statement, or end the block early, where the rest reflows as before.
+A top-level paragraph that opens with `import ` as prose is frozen too, which matches MDX: it reads that line as JavaScript as well, and fails to parse it.
 
 ### Sentence segmentation
 

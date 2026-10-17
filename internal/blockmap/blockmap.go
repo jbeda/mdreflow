@@ -121,6 +121,13 @@ const (
 	// SkipTableAdjacency: the paragraph sits directly under a GFM table
 	// with no blank line between them.
 	SkipTableAdjacency
+	// SkipTemplateLiteral: the paragraph opens, or starts inside, an MDX
+	// template literal that holds a blank line — a code sample, which
+	// goldmark splits into paragraphs at each blank line (see literalChain).
+	SkipTemplateLiteral
+	// SkipImportExport: the paragraph starts or continues an MDX
+	// import/export statement (see esmChain).
+	SkipImportExport
 )
 
 // Skip records one frozen paragraph: the byte range its raw source lines
@@ -148,7 +155,7 @@ func Paragraphs(doc ast.Node, source []byte) []Paragraph {
 func ParagraphsForDialect(doc ast.Node, source []byte, mkdocs bool) []Paragraph {
 	var out []Paragraph
 	fmEnd := frontMatterEnd(source)
-	collect(doc, source, false, 0, fmEnd, scanLineFacts(source), &out, nil, mkdocs)
+	collect(doc, source, false, 0, fmEnd, scanLineFacts(source), &out, nil, mkdocs, &literalChain{}, &esmChain{})
 	return out
 }
 
@@ -161,7 +168,7 @@ func SkipsForDialect(doc ast.Node, source []byte, mkdocs bool) []Skip {
 	var out []Paragraph
 	var skips []Skip
 	fmEnd := frontMatterEnd(source)
-	collect(doc, source, false, 0, fmEnd, scanLineFacts(source), &out, &skips, mkdocs)
+	collect(doc, source, false, 0, fmEnd, scanLineFacts(source), &out, &skips, mkdocs, &literalChain{}, &esmChain{})
 	return skips
 }
 
@@ -281,7 +288,11 @@ const maxContainerDepth = 2
 // through untouched — no reflow is always render-preserving by
 // construction. Found by FuzzFormat on "000000000000000000\n>* >! 0"
 // (blockquote > list > blockquote, three levels).
-func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int, facts map[int]lineFacts, out *[]Paragraph, skips *[]Skip, mkdocs bool) {
+//
+// lit and esm follow, across the whole walk, an MDX template literal that
+// holds a blank line and an MDX import/export statement; see literalChain
+// and esmChain.
+func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int, facts map[int]lineFacts, out *[]Paragraph, skips *[]Skip, mkdocs bool, lit *literalChain, esm *esmChain) {
 	// recordSkip reports c's line range under reason to the skips
 	// collector (nil when the caller only wants the eligible set). An
 	// empty node has no source range to report; front-matter interiors
@@ -302,12 +313,32 @@ func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int,
 		})
 	}
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+		if _, ok := c.(*ast.HTMLBlock); ok {
+			// Never reflowed, but it can open a template literal: "<Tabs>"
+			// alone on a line starts an HTML block that runs to the next
+			// blank line, taking a "<Tab code={`…" line below it along.
+			lit.inside(c, source)
+			continue
+		}
 		if cb, ok := c.(*ast.CodeBlock); ok {
 			*out = append(*out, admonitionBodies(cb, source, mkdocs)...)
 			continue
 		}
 		switch c.(type) {
 		case *ast.Paragraph, *ast.TextBlock:
+			// Both chains see every paragraph they apply to, so each keeps
+			// its own state, whichever freezes it. MDX reads import/export
+			// only outside containers.
+			inLiteral := lit.inside(c, source)
+			inESM := depth == 0 && esm.inside(c, source)
+			if inLiteral {
+				recordSkip(c, SkipTemplateLiteral)
+				continue
+			}
+			if inESM {
+				recordSkip(c, SkipImportExport)
+				continue
+			}
 			if depth > maxContainerDepth {
 				// Pass through byte-for-byte; see collect's doc comment.
 				recordSkip(c, SkipDeepNesting)
@@ -347,7 +378,7 @@ func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int,
 		case *ast.List:
 			childDepth++
 		}
-		collect(c, source, childInBQ, childDepth, fmEnd, facts, out, skips, mkdocs)
+		collect(c, source, childInBQ, childDepth, fmEnd, facts, out, skips, mkdocs, lit, esm)
 	}
 }
 

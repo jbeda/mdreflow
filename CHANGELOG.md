@@ -9,6 +9,11 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+- An MDX template literal that spans lines, such as a code sample passed as `` code={`…`} `` or `` <CodeBlock>{`…`}</CodeBlock> ``, is now left exactly as written.
+  Its lines were joined, and the text after each blank line in it was reflowed as a prose paragraph, which rewrote the code the page shows.
+- An MDX `import` or `export` statement over several lines, such as an exported function, object or styled-components template, is now left exactly as written.
+  Only a paragraph whose every line starts with `import` or `export` was left alone, so the statement's other lines were joined into JavaScript that MDX could not parse.
+
 ## v0.3.0 (2026-08-14)
 
 **Expect a one-time reflow across your docs on this upgrade.** Sentence mode now splits before a sentence that opens with inline code or emphasis, which is common in technical prose, so most files that use it will pick up new line breaks the first time you run this version.

@@ -33,6 +33,12 @@ const (
 	// SkipUnterminatedTag: the paragraph opens with an HTML/JSX tag whose
 	// closing ">" is on a later line.
 	SkipUnterminatedTag SkipReason = "unterminated-tag"
+	// SkipTemplateLiteral: the paragraph opens, or lies inside, an MDX
+	// template literal that holds a blank line, such as a code sample.
+	SkipTemplateLiteral SkipReason = "template-literal"
+	// SkipImportExport: the paragraph starts or continues an MDX
+	// import/export statement.
+	SkipImportExport SkipReason = "import-export"
 	// SkipTableAdjacency: the paragraph sits directly under a table with
 	// no blank line between them.
 	SkipTableAdjacency SkipReason = "table-adjacency"
@@ -111,6 +117,18 @@ var skipWording = map[blockmap.SkipReason]FrozenParagraph{
 		Detail: `paragraph opens with an HTML/JSX tag whose closing ">" is on a later line`,
 		Remediation: `Close the tag on the line it opens on, move it into a fenced code block, ` +
 			`or format the paragraph by hand — mdreflow preserves it byte-for-byte.`,
+	},
+	blockmap.SkipTemplateLiteral: {
+		Reason: SkipTemplateLiteral,
+		Detail: "paragraph opens, or lies inside, an MDX template literal that holds a blank line (code={`…`})",
+		Remediation: `Nothing to fix: the literal, such as a code sample, is not prose, ` +
+			`and mdreflow preserves it byte-for-byte.`,
+	},
+	blockmap.SkipImportExport: {
+		Reason: SkipImportExport,
+		Detail: `paragraph starts or continues an MDX import/export statement`,
+		Remediation: `Nothing to fix: the statement is JavaScript, not prose, ` +
+			`and mdreflow preserves it byte-for-byte.`,
 	},
 	blockmap.SkipTableAdjacency: {
 		Reason: SkipTableAdjacency,

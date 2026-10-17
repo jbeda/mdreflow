@@ -1,6 +1,7 @@
 package blockmap
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/yuin/goldmark/ast"
@@ -958,5 +959,184 @@ func TestMaskCodeSpansIsLinkifyAware(t *testing.T) {
 	const want = "see http://e.m/` and `xxxx` and http://x.example/` tail"
 	if got := maskCodeSpans(lines)[0]; got != want {
 		t.Fatalf("maskCodeSpans(%q)[0] = %q, want %q", line, got, want)
+	}
+}
+
+func TestSkipTemplateLiteral(t *testing.T) {
+	cases := []struct {
+		name     string
+		src      string
+		reasons  []SkipReason
+		eligible []string
+	}{
+		{
+			name:     "attribute literal across blank lines",
+			src:      "<A\n  c={`one\n\ntwo three\n\nfour`}\n/>\n\nsix seven\n",
+			reasons:  []SkipReason{SkipTemplateLiteral, SkipTemplateLiteral, SkipTemplateLiteral},
+			eligible: []string{"six seven"},
+		},
+		{
+			name:     "children literal after a tag that closes on its line",
+			src:      "<CodeBlock lang=\"css\">{`\n:root {\n  a: b;\n}\n\n.x {\n  c: d;\n}\n`}</CodeBlock>\n\nafter it\n",
+			reasons:  []SkipReason{SkipTemplateLiteral, SkipTemplateLiteral},
+			eligible: []string{"after it"},
+		},
+		{
+			// "<Tabs>" starts an HTML block, which takes the "<Tab" line along;
+			// the block never reflows, and the paragraph after its blank line
+			// is inside the literal it opens.
+			name:     "a component nested under a tag-only line",
+			src:      "<Tabs>\n<Tab code={`one\n\ntwo`} />\n</Tabs>\n\nafter it\n",
+			reasons:  []SkipReason{SkipTemplateLiteral},
+			eligible: []string{"after it"},
+		},
+		{
+			name:     "a literal closes and the next opens in one paragraph",
+			src:      "<A\n  a={`x\n\ny`}\n  b={`z\n\nw`}\n/>\n\nafter it\n",
+			reasons:  []SkipReason{SkipTemplateLiteral, SkipTemplateLiteral, SkipTemplateLiteral},
+			eligible: []string{"after it"},
+		},
+		{
+			name:     "an escaped backtick does not close the literal",
+			src:      "<A\n  c={`a \\` b\n\nc \\` d\n\ne`}\n/>\n\nafter it\n",
+			reasons:  []SkipReason{SkipTemplateLiteral, SkipTemplateLiteral, SkipTemplateLiteral},
+			eligible: []string{"after it"},
+		},
+		{
+			// "# done`}" is a heading to goldmark, not a paragraph, but its
+			// backtick still closes the literal.
+			name:     "a backtick outside any paragraph is counted",
+			src:      "<A\n  c={`x\n\n# done`}\n\nafter it\n",
+			reasons:  []SkipReason{SkipTemplateLiteral},
+			eligible: []string{"after it"},
+		},
+		{
+			// The quoted backtick makes the count odd after the literal has
+			// closed, so "prose one" is frozen needlessly; the code fence ends
+			// the chain before "prose two".
+			name:     "a code fence ends a chain a quoted backtick threw off",
+			src:      "<A c={`x`} d='`'\n/>\n\nprose one\n\n```js\nlet a = 1\n```\n\nprose two\n",
+			reasons:  []SkipReason{SkipTemplateLiteral, SkipTemplateLiteral},
+			eligible: []string{"prose two"},
+		},
+		{
+			name:     "a literal within one paragraph that spans lines",
+			src:      "<CodeBlock language=\"bash\">{`docker run \\\n  -p 80:80 \\\n  nginx`}</CodeBlock>\n\nafter it\n",
+			reasons:  []SkipReason{SkipTemplateLiteral},
+			eligible: []string{"after it"},
+		},
+		{
+			name:     "a literal opened inside an object",
+			src:      "<Sandpack files={{\n  \"index.js\": `const a = 1\n\nconst b = 2`,\n}} />\n\nafter it\n",
+			reasons:  []SkipReason{SkipTemplateLiteral, SkipTemplateLiteral},
+			eligible: []string{"after it"},
+		},
+		{
+			// Code spans in braces, on one line: reflow never breaks inside a
+			// code span, so the paragraph stays eligible.
+			name:     "a one-line literal in prose",
+			src:      "Runs N × {`Before`, `After`} once. Then\nit stops.\n",
+			reasons:  nil,
+			eligible: []string{"Runs N × {`Before`, `After`} once. Then\nit stops."},
+		},
+		{
+			name:     "inline code holding a brace is prose",
+			src:      "Use `{` and `}` here.\n",
+			reasons:  nil,
+			eligible: []string{"Use `{` and `}` here."},
+		},
+		{
+			name:     "a blank line outside any literal is handled as before",
+			src:      "<A\n  b=\"1\"\n\n  c=\"2\"\n/>\n\nafter it\n",
+			reasons:  []SkipReason{SkipUnterminatedTag},
+			eligible: []string{"c=\"2\"\n/>", "after it"},
+		},
+		{
+			name:     "a literal that never closes freezes the rest",
+			src:      "<A\n  c={`x\n\ny\n\nz\n",
+			reasons:  []SkipReason{SkipTemplateLiteral, SkipTemplateLiteral, SkipTemplateLiteral},
+			eligible: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(tc.src)
+			doc := gm.New().Parser().Parse(text.NewReader(src))
+			var reasons []SkipReason
+			for _, sk := range SkipsForDialect(doc, src, false) {
+				reasons = append(reasons, sk.Reason)
+			}
+			if !slices.Equal(reasons, tc.reasons) {
+				t.Errorf("skip reasons = %v, want %v", reasons, tc.reasons)
+			}
+			var eligible []string
+			for _, p := range ParagraphsForDialect(doc, src, false) {
+				eligible = append(eligible, string(src[p.Start:p.End]))
+			}
+			if !slices.Equal(eligible, tc.eligible) {
+				t.Errorf("eligible paragraphs = %q, want %q", eligible, tc.eligible)
+			}
+		})
+	}
+}
+
+func TestSkipImportExport(t *testing.T) {
+	cases := []struct {
+		name     string
+		src      string
+		reasons  []SkipReason
+		eligible []string
+	}{
+		{
+			name:     "a statement over several lines",
+			src:      "export const meta = {\n  title: 'A',\n}\n\nOne. Two.\n",
+			reasons:  []SkipReason{SkipImportExport},
+			eligible: []string{"One. Two."},
+		},
+		{
+			name:     "a function body with a blank line",
+			src:      "export function A() {\n  const a = 1\n\n  return a\n}\n\nOne. Two.\n",
+			reasons:  []SkipReason{SkipImportExport, SkipImportExport},
+			eligible: []string{"One. Two."},
+		},
+		{
+			name:     "a closing bracket after a blank line continues the statement",
+			src:      "export const a = [\n  1,\n\n]\n\nOne. Two.\n",
+			reasons:  []SkipReason{SkipImportExport, SkipImportExport},
+			eligible: []string{"One. Two."},
+		},
+		{
+			// MDX reads this as JavaScript too, and fails to parse it.
+			name:     "any top-level line starting with import and a space",
+			src:      "import the module first.\nThen run it.\n",
+			reasons:  []SkipReason{SkipImportExport},
+			eligible: nil,
+		},
+		{
+			name:     "an indented line is not at column 1",
+			src:      "  export const a = 1\nand prose.\n",
+			reasons:  nil,
+			eligible: []string{"export const a = 1\nand prose."},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(tc.src)
+			doc := gm.New().Parser().Parse(text.NewReader(src))
+			var reasons []SkipReason
+			for _, sk := range SkipsForDialect(doc, src, false) {
+				reasons = append(reasons, sk.Reason)
+			}
+			if !slices.Equal(reasons, tc.reasons) {
+				t.Errorf("skip reasons = %v, want %v", reasons, tc.reasons)
+			}
+			var eligible []string
+			for _, p := range ParagraphsForDialect(doc, src, false) {
+				eligible = append(eligible, string(src[p.Start:p.End]))
+			}
+			if !slices.Equal(eligible, tc.eligible) {
+				t.Errorf("eligible paragraphs = %q, want %q", eligible, tc.eligible)
+			}
+		})
 	}
 }
