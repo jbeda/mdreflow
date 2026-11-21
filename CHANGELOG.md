@@ -9,6 +9,9 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+- A `$` inside inline code, such as `` `$HOME` `` or `` `$(...)` ``, no longer counts as an inline-math delimiter.
+  Paired with the next `$` on the line, it kept all the text between them from being split, so a paragraph that mentions two shell variables could stay one long line in sentence mode or overrun `--max-width`, and a real `$...$` formula after one could be split.
+
 ## v0.3.0 (2026-08-14)
 
 **Expect a one-time reflow across your docs on this upgrade.** Sentence mode now splits before a sentence that opens with inline code or emphasis, which is common in technical prose, so most files that use it will pick up new line breaks the first time you run this version.
