@@ -180,6 +180,7 @@ Each rule is tagged by origin so dialect profiles can subset the existing rules 
 | Tables | GFM | skip block |
 | Raw HTML blocks | CommonMark | skip block |
 | JSX blocks, `{expr}` spans | MDX | skip block / no-break span |
+| Code fences opened inside an HTML block (`<Playground>` then `` ```css ``) | MDX | skip the paragraphs inside the fence (below) |
 | `:::` directives | Docusaurus/remark | skip fence lines; interior prose reflows |
 | Math blocks (`$$`) | GFM, Docusaurus | skip block |
 | Hugo shortcodes (`{{< … >}}`, `{{% … %}}`) | Hugo | skip block / no-break span |
@@ -191,6 +192,16 @@ Each rule is tagged by origin so dialect profiles can subset the existing rules 
 **Spike M0 outcome** (details and evidence in [m0-spike-findings.md](m0-spike-findings.md)): goldmark does not parse MDX, and many dialect constructs do land as `Paragraph` nodes — but a general line-scanning pre-pass is *not* needed.
 The block-map derivation step grows content-pattern rules instead: (1) skip whole `Paragraph` nodes whose text matches a marker regex (`:::` fences, block shortcodes, block `{expr}`, `+++` TOML front matter); (2) within a `Paragraph`, treat any `Lines()` segment matching a marker regex as an immovable boundary — this handles fences fused with prose by lazy continuation (no-blank-line `:::`, `> [!NOTE]` markers, paired shortcodes, `$$` math); (3) recognize YAML front matter ourselves via a byte-range pre-scan (originally goldmark-meta, replaced — see Dependencies); (4) inline `{expr}`/shortcodes/math are invisible to the AST (plain `Text`) and need the already-planned regex scan for no-break spans.
 The one construct post-parse rules cannot recover is a multi-line JSX opening tag whose closing `>` sits alone on a line (goldmark consumes it as an empty blockquote) — documented as a known limitation, revisit with a narrow raw-line fence if it shows up in real content.
+
+**A code fence opened inside an HTML block freezes the paragraphs inside it.** A line holding only a tag, such as `<Playground>`, opens a CommonMark HTML block that runs to the next blank line, so a fence directly under it is HTML.
+After the first blank line inside the fence, goldmark reads the code as paragraphs, which reflow would join.
+MDX has no HTML blocks: it reads the tag as JSX and the fence as code.
+So when an HTML block leaves a fence open, the walk follows that fence through the raw lines below, and each paragraph that starts inside it passes through byte-for-byte; the first paragraph or HTML block that starts outside the fence ends the chain.
+Only fence lines are read: a run of three or more backticks or tildes opens a fence, and a bare run of the same character at least as long closes it, at any indentation, since MDX disables indented code.
+The fence's closing line opens a fence to goldmark, which runs to the next bare fence line; where that line opens another fence to MDX, its code is paragraphs to goldmark, and the chain freezes those too.
+The rule applies in every dialect.
+In plain Markdown the HTML block is real and the frozen paragraphs render the same either way, so the only cost is that they are not reflowed.
+The rule is idempotent: the chain reads only the HTML block, the paragraphs it freezes and the blocks between them, none of which reflow.
 
 ### Sentence segmentation
 

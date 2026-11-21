@@ -1,6 +1,8 @@
 package blockmap
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/yuin/goldmark/ast"
@@ -958,5 +960,46 @@ func TestMaskCodeSpansIsLinkifyAware(t *testing.T) {
 	const want = "see http://e.m/` and `xxxx` and http://x.example/` tail"
 	if got := maskCodeSpans(lines)[0]; got != want {
 		t.Fatalf("maskCodeSpans(%q)[0] = %q, want %q", line, got, want)
+	}
+}
+
+// TestFenceChain checks fenceChain's doc comment: a paragraph is frozen
+// exactly when it starts inside a code fence an HTML block left open, and
+// the first paragraph outside the fence reflows.
+func TestFenceChain(t *testing.T) {
+	cases := []struct {
+		name   string
+		src    string
+		frozen []string // the first line of each frozen paragraph, in order
+	}{
+		{"fence under a tag line", "<P>\n```css\n.a {}\n\n.b {\n}\n```\n</P>\n", []string{".b {"}},
+		{"tilde fence", "<P>\n~~~\na\n\nb c\n~~~\n</P>\n", []string{"b c"}},
+		{"indented fence in a list item", "- x\n\n  <P>\n  ```\n  a\n\n  b c\n  ```\n  </P>\n", []string{"b c"}},
+		{"several paragraphs inside the fence", "<P>\n```\na\n\nb\n\nc\n```\n\nprose\n", []string{"b", "c"}},
+		{"a fence closed inside the HTML block starts nothing", "<P>\n```\na\n```\n</P>\n\nprose\n", nil},
+		{"a blank line before the fence starts nothing", "<P>\n\n```\na\n\nb\n```\n", nil},
+		{"a shorter run does not close the fence", "<P>\n````\na\n\nb\n```\nx\n```\n\nc\n````\n", []string{"b", "c"}},
+		{"the other fence character does not close the fence", "<P>\n```\na\n\nb\n~~~\nx\n~~~\n\nc\n```\n", []string{"b", "c"}},
+		{"a run with an info string does not close the fence", "<P>\n```\na\n\nb\n```js\nx\n```\n\nprose\n", []string{"b"}},
+		{"backticks in the info string are not a fence", "<P>\n```a`\n\nb\n", nil},
+		{"the chain follows the next bare fence", "<P>\n```\na\n\nb\n```\n</P>\n\nprose\n\n```\nc\n\nd\n```\n\nend\n", []string{"b", "c", "d"}},
+		{"plain prose after an HTML block reflows", "<div>\nx\n</div>\n\nprose here\n", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := []byte(tc.src)
+			doc := gm.New().Parser().Parse(text.NewReader(b))
+			var got []string
+			for _, s := range SkipsForDialect(doc, b, false) {
+				if s.Reason != SkipFenceInHTMLBlock {
+					continue
+				}
+				first, _, _ := strings.Cut(string(b[s.Start:s.End]), "\n")
+				got = append(got, first)
+			}
+			if !slices.Equal(got, tc.frozen) {
+				t.Errorf("frozen = %q, want %q", got, tc.frozen)
+			}
+		})
 	}
 }

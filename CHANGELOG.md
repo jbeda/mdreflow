@@ -9,6 +9,11 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+- Code in a fence directly under a line holding only a JSX or HTML tag, such as `<Playground>` then `` ```css ``, is now left exactly as written.
+  CommonMark reads the tag line as the start of an HTML block that takes the fence line with it and ends at the first blank line, so mdreflow reflowed the code after that blank line as prose.
+  MDX has no HTML blocks and reads the fence as code, so the reflow changed the code the page shows.
+  In plain Markdown the frozen lines render the same as before; they are no longer reflowed.
+
 ## v0.3.0 (2026-08-14)
 
 **Expect a one-time reflow across your docs on this upgrade.** Sentence mode now splits before a sentence that opens with inline code or emphasis, which is common in technical prose, so most files that use it will pick up new line breaks the first time you run this version.
