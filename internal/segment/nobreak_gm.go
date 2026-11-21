@@ -2,6 +2,7 @@ package segment
 
 import (
 	"regexp"
+	"strings"
 
 	"github.com/jbeda/mdreflow/internal/gm"
 	"github.com/yuin/goldmark/ast"
@@ -268,9 +269,9 @@ var htmlTagOpenerRE = regexp.MustCompile(`</?[A-Za-z]`)
 // htmlTagOpenerSpans returns, for every same-line inline-HTML tag opener
 // ("<" or "</" followed by a letter), the byte range from that opener
 // through the next ">" on the same line (or through the line's end, if
-// none) — regardless of whether that stretch actually satisfies
-// CommonMark's precise tag grammar, and regardless of whether the
-// ask-goldmark parse recognized it as a RawHTML node.
+// the next ">" is on a later line) — regardless of whether that stretch
+// actually satisfies CommonMark's precise tag grammar, and regardless of
+// whether the ask-goldmark parse recognized it as a RawHTML node.
 //
 // This broader, opener-to-next-">" span exists specifically to keep a
 // *break point* out of a "maybe a tag" region even when the parse
@@ -293,6 +294,14 @@ var htmlTagOpenerRE = regexp.MustCompile(`</?[A-Za-z]`)
 // No AST equivalent is possible: this is an idempotency stabilizer for a
 // region the parse *declines* to call a tag, which is exactly what the
 // parse cannot be asked about.
+//
+// An opener with no ">" anywhere after it in text protects only its own
+// word, up to the first space, tab or '\r'. Every tag reading of an
+// opener needs a ">" after it, and reflow never adds a ">" to a
+// paragraph's text, so no pass can supply one: the stretch after such an
+// opener is plain text on every pass, and a break in it is as stable as
+// any other. Protecting that stretch instead would keep the rest of a
+// joined paragraph on one line, past any width limit.
 func htmlTagOpenerSpans(text string) []Span {
 	var out []Span
 	lineStart := 0
@@ -305,7 +314,12 @@ func htmlTagOpenerSpans(text string) []Span {
 		for _, loc := range htmlTagOpenerRE.FindAllStringIndex(line, -1) {
 			start := lineStart + loc[0]
 			end := lineEnd
-			if gt := indexByteFrom(text, start, '>'); gt >= 0 && gt < lineEnd {
+			switch gt := indexByteFrom(text, start, '>'); {
+			case gt < 0:
+				if ws := strings.IndexAny(text[start:lineEnd], " \t\r"); ws >= 0 {
+					end = start + ws
+				}
+			case gt < lineEnd:
 				end = gt + 1
 			}
 			out = append(out, Span{Start: start, End: end})

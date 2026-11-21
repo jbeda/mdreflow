@@ -118,6 +118,32 @@ func TestNoBreakSpansCodeSpanProtected(t *testing.T) {
 	}
 }
 
+// TestHTMLTagOpenerSpansEnd checks where each opener's span ends: at the
+// next ">" on its line, at the line's end when the next ">" is on a later
+// line, and at the end of the opener's own word when no ">" follows it.
+func TestHTMLTagOpenerSpansEnd(t *testing.T) {
+	for _, tc := range []struct {
+		text, want string // want is the one span's text
+	}{
+		{"cat <<EOF and more", "<EOF"},
+		{"when n <m holds", "<m"},
+		{"x <a\tb c", "<a"},
+		{"x <a\rb c", "<a"},
+		{"ends <here", "<here"},
+		{"0y70A><A0 A= >00", "<A0 A= >"},
+		{"a <b c\nd > e", "<b c"},
+	} {
+		spans := htmlTagOpenerSpans(tc.text)
+		if len(spans) != 1 {
+			t.Errorf("htmlTagOpenerSpans(%q) = %v, want one span", tc.text, spans)
+			continue
+		}
+		if got := tc.text[spans[0].Start:spans[0].End]; got != tc.want {
+			t.Errorf("htmlTagOpenerSpans(%q) covers %q, want %q", tc.text, got, tc.want)
+		}
+	}
+}
+
 // TestCodeSpansMultiLine checks that a code span crossing a "\n" (a
 // paragraph's lines joined that way, per CodeSpans's doc comment) is
 // reported as one span spanning the join.
