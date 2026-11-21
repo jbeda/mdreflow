@@ -224,10 +224,9 @@ func isCodeSpanPad(c byte) bool {
 // tag grammar (RawHTML nodes cover well-formed tags directly; only the
 // opener-to-next-">" idempotency stabilizer below has no AST equivalent).
 func keptRegexSpans(text string) []Span {
-	var out []Span
+	out := inlineMathSpans(text, CodeSpans(text))
 	for _, re := range [...]*regexp.Regexp{
 		footnoteRefRE,
-		inlineMathRE,
 		hugoShortcodeRE,
 		curlyExprRE,
 	} {
@@ -244,10 +243,34 @@ func keptRegexSpans(text string) []Span {
 // text to it.
 var footnoteRefRE = regexp.MustCompile(`\[\^[^\]\n]+\]`)
 
-// inlineMathRE matches single-dollar inline math, "$...$". It does not
-// attempt to distinguish from a "$$" display-math delimiter; display
-// math is block-level and handled by the skip-list, not this scanner.
-var inlineMathRE = regexp.MustCompile(`\$[^$\n]+\$`)
+// inlineMathSpans returns single-dollar inline math, "$...$": each "$"
+// paired with the next "$" on the same line, with at least one byte
+// between them. It does not attempt to distinguish from a "$$"
+// display-math delimiter; display math is block-level and handled by the
+// skip-list, not this scanner.
+//
+// A "$" inside a code span (codeSpans) neither opens nor closes: it is
+// literal text, as in a shell snippet like "`$(...)`", and the code span
+// is a no-break span of its own. Without the skip, a "$" in a code span
+// pairs with the next "$" on the line and protects all the prose between.
+func inlineMathSpans(text string, codeSpans []Span) []Span {
+	var out []Span
+	open := -1
+	for i := 0; i < len(text); i++ {
+		switch {
+		case text[i] == '\n':
+			open = -1
+		case text[i] != '$' || inSpan(codeSpans, i):
+			// Not a delimiter.
+		case open >= 0 && i > open+1:
+			out = append(out, Span{Start: open, End: i + 1})
+			open = -1
+		default:
+			open = i
+		}
+	}
+	return out
+}
 
 // hugoShortcodeRE matches an inline Hugo shortcode, "{{< ... >}}" or
 // "{{% ... %}}".
@@ -316,6 +339,16 @@ func htmlTagOpenerSpans(text string) []Span {
 		lineStart = lineEnd + 1
 	}
 	return out
+}
+
+// inSpan reports whether pos falls inside any of spans.
+func inSpan(spans []Span, pos int) bool {
+	for _, sp := range spans {
+		if pos >= sp.Start && pos < sp.End {
+			return true
+		}
+	}
+	return false
 }
 
 // indexByteFrom returns the index of the first occurrence of b in

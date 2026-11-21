@@ -199,7 +199,8 @@ Inline, mid-sentence — plain `Text`, no marker: `{{< param foo >}}` shows up a
   line[143:145] = "$$"
 }
 ```
-No math extension is enabled in `extension.GFM`; `$$` has zero special meaning to goldmark core, so this is ordinary lazy-continuation paragraph merging, identical mechanism to the `:::`/shortcode cases. Inline `$E = mc^2$` is likewise plain `Text` with no marker.
+No math extension is enabled in `extension.GFM`; `$$` has zero special meaning to goldmark core, so this is ordinary lazy-continuation paragraph merging, identical mechanism to the `:::`/shortcode cases.
+Inline `$E = mc^2$` is likewise plain `Text` with no marker.
 
 ### GitHub alert — contradicts design.md's assumption
 

@@ -76,3 +76,22 @@ func fullyCovered(spans []Span, start, end int) bool {
 	}
 	return true
 }
+
+// TestNoBreakSpansDollarInCodeSpan checks that a "$" inside a code span
+// neither opens nor closes inline math: the prose between two such code
+// spans stays breakable, and a real "$...$" after one is still protected
+// whole rather than paired with the code span's "$".
+func TestNoBreakSpansDollarInCodeSpan(t *testing.T) {
+	twoCode := "Expand `$HOME` first. Then quote `$PATH`."
+	gap := indexOf(twoCode, ". Then") + 1
+	if isInSomeSpan(NoBreakSpans(twoCode), gap) {
+		t.Fatalf("NoBreakSpans(%q) = %v, covers the sentence gap at %d", twoCode, NoBreakSpans(twoCode), gap)
+	}
+
+	codeThenMath := "Set `$HOME`, and $E = mc^2. Extra$ holds."
+	math := "$E = mc^2. Extra$"
+	start := indexOf(codeThenMath, math)
+	if !fullyCovered(NoBreakSpans(codeThenMath), start, start+len(math)) {
+		t.Fatalf("NoBreakSpans(%q) = %v, want %q at [%d,%d) covered", codeThenMath, NoBreakSpans(codeThenMath), math, start, start+len(math))
+	}
+}
