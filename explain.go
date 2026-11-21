@@ -36,6 +36,9 @@ const (
 	// SkipTableAdjacency: the paragraph sits directly under a table with
 	// no blank line between them.
 	SkipTableAdjacency SkipReason = "table-adjacency"
+	// SkipFenceInHTMLBlock: the paragraph lies inside a code fence that
+	// opens directly under an HTML/JSX tag line, which MDX reads as code.
+	SkipFenceInHTMLBlock SkipReason = "fence-in-html-block"
 	// SkipDeepNesting: the paragraph is nested more than two container
 	// (list/blockquote) levels deep.
 	SkipDeepNesting SkipReason = "deep-nesting"
@@ -117,6 +120,12 @@ var skipWording = map[blockmap.SkipReason]FrozenParagraph{
 		Detail: `paragraph sits directly under a table with no blank line between them`,
 		Remediation: `Add a blank line between the table and the paragraph, ` +
 			`or format the paragraph by hand — mdreflow preserves it byte-for-byte.`,
+	},
+	blockmap.SkipFenceInHTMLBlock: {
+		Reason: SkipFenceInHTMLBlock,
+		Detail: `paragraph lies inside a code fence that opens directly under an HTML/JSX tag line`,
+		Remediation: `Nothing to fix in MDX: the fence holds code, and mdreflow preserves it byte-for-byte. ` +
+			`Add a blank line between the tag and the fence to make it a fence in CommonMark too.`,
 	},
 	blockmap.SkipDeepNesting: {
 		Reason: SkipDeepNesting,

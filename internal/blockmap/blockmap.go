@@ -121,6 +121,9 @@ const (
 	// SkipTableAdjacency: the paragraph sits directly under a GFM table
 	// with no blank line between them.
 	SkipTableAdjacency
+	// SkipFenceInHTMLBlock: the paragraph starts inside a code fence that
+	// opens in an HTML block, which MDX reads as code (see fenceChain).
+	SkipFenceInHTMLBlock
 )
 
 // Skip records one frozen paragraph: the byte range its raw source lines
@@ -148,7 +151,7 @@ func Paragraphs(doc ast.Node, source []byte) []Paragraph {
 func ParagraphsForDialect(doc ast.Node, source []byte, mkdocs bool) []Paragraph {
 	var out []Paragraph
 	fmEnd := frontMatterEnd(source)
-	collect(doc, source, false, 0, fmEnd, scanLineFacts(source), &out, nil, mkdocs)
+	collect(doc, source, false, 0, fmEnd, scanLineFacts(source), &out, nil, mkdocs, &fenceChain{})
 	return out
 }
 
@@ -161,7 +164,7 @@ func SkipsForDialect(doc ast.Node, source []byte, mkdocs bool) []Skip {
 	var out []Paragraph
 	var skips []Skip
 	fmEnd := frontMatterEnd(source)
-	collect(doc, source, false, 0, fmEnd, scanLineFacts(source), &out, &skips, mkdocs)
+	collect(doc, source, false, 0, fmEnd, scanLineFacts(source), &out, &skips, mkdocs, &fenceChain{})
 	return skips
 }
 
@@ -281,7 +284,10 @@ const maxContainerDepth = 2
 // through untouched — no reflow is always render-preserving by
 // construction. Found by FuzzFormat on "000000000000000000\n>* >! 0"
 // (blockquote > list > blockquote, three levels).
-func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int, facts map[int]lineFacts, out *[]Paragraph, skips *[]Skip, mkdocs bool) {
+//
+// fence follows, across the whole walk, a code fence that opens in an HTML
+// block; see fenceChain.
+func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int, facts map[int]lineFacts, out *[]Paragraph, skips *[]Skip, mkdocs bool, fence *fenceChain) {
 	// recordSkip reports c's line range under reason to the skips
 	// collector (nil when the caller only wants the eligible set). An
 	// empty node has no source range to report; front-matter interiors
@@ -302,12 +308,22 @@ func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int,
 		})
 	}
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+		if hb, ok := c.(*ast.HTMLBlock); ok {
+			// Never reflowed, but it can open a code fence that MDX reads
+			// past the blank line where the HTML block ends.
+			fence.htmlBlock(hb, source)
+			continue
+		}
 		if cb, ok := c.(*ast.CodeBlock); ok {
 			*out = append(*out, admonitionBodies(cb, source, mkdocs)...)
 			continue
 		}
 		switch c.(type) {
 		case *ast.Paragraph, *ast.TextBlock:
+			if fence.inside(c, source) {
+				recordSkip(c, SkipFenceInHTMLBlock)
+				continue
+			}
 			if depth > maxContainerDepth {
 				// Pass through byte-for-byte; see collect's doc comment.
 				recordSkip(c, SkipDeepNesting)
@@ -347,7 +363,7 @@ func collect(n ast.Node, source []byte, inBlockquote bool, depth int, fmEnd int,
 		case *ast.List:
 			childDepth++
 		}
-		collect(c, source, childInBQ, childDepth, fmEnd, facts, out, skips, mkdocs)
+		collect(c, source, childInBQ, childDepth, fmEnd, facts, out, skips, mkdocs, fence)
 	}
 }
 

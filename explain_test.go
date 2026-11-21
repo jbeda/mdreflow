@@ -61,6 +61,11 @@ func TestExplain(t *testing.T) {
 			want: []want{{1, 2, mdreflow.SkipUnterminatedTag}},
 		},
 		{
+			name: "code inside a fence directly under a tag line",
+			src:  "<Demo>\n```js\nconst a = 1;\n\nconst b = {\n  c: 2,\n};\n```\n</Demo>\n",
+			want: []want{{5, 7, mdreflow.SkipFenceInHTMLBlock}},
+		},
+		{
 			name: "control byte",
 			src:  "text with a \x01 control byte\nsecond line\n",
 			want: []want{{1, 2, mdreflow.SkipControlBytes}},
