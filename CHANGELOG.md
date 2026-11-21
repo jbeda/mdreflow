@@ -9,6 +9,9 @@ At release time the section is retitled to the version and the prose lead is wri
 
 ## Unreleased
 
+- A paragraph with a `<` directly before a letter and no `>` after it, such as `cat <<EOF` or `n <m`, now wraps at the width limit and splits into sentences (#83).
+  The guard that keeps tag-like text from being split protected everything from the `<` to the end of the paragraph, so a wrapped paragraph ran on in one overlong line.
+
 ## v0.3.0 (2026-08-14)
 
 **Expect a one-time reflow across your docs on this upgrade.** Sentence mode now splits before a sentence that opens with inline code or emphasis, which is common in technical prose, so most files that use it will pick up new line breaks the first time you run this version.
